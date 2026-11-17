@@ -117,7 +117,7 @@ export function ChatPanel({
   onNoteDismiss,
   onSkillSave,
   onSkillDismiss,
-  onTodoQueue,
+  onTodoDispatch,
   onTodoDismiss,
   onSproutTrigger,
   onSproutDismiss,
@@ -208,7 +208,7 @@ export function ChatPanel({
   onNoteDismiss: (id: string) => void;
   onSkillSave: (id: string, edited: ProposedSkill) => void;
   onSkillDismiss: (id: string) => void;
-  onTodoQueue: (id: string) => void;
+  onTodoDispatch: (id: string, mode: "run" | "queue") => void;
   onTodoDismiss: (id: string) => void;
   onSproutTrigger: (id: string) => void;
   onSproutDismiss: (id: string) => void;
@@ -798,7 +798,9 @@ export function ChatPanel({
                 key={it.id}
                 todo={it.todo}
                 state={it.state}
-                onQueue={() => onTodoQueue(it.id)}
+                {...(it.result ? { result: it.result } : {})}
+                onRun={() => onTodoDispatch(it.id, "run")}
+                onQueue={() => onTodoDispatch(it.id, "queue")}
                 onDismiss={() => onTodoDismiss(it.id)}
               />
             );

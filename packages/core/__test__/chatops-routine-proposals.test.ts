@@ -119,7 +119,7 @@ describe("routineListText sections (#885)", () => {
     expect(section("**App**")).toEqual(["• **in-app** — on — Weekdays at 7:00 AM"]);
     expect(section("**Scratch**")).toEqual(["• **chatty** — on — Weekdays at 7:00 AM"]);
     expect(section("**Needs fixing**")).toEqual([
-      "• **stray** — off — Weekdays at 7:00 AM · ⚠ step 1 folder repo isn't a registered project",
+      "• **stray** — on demand — Weekdays at 7:00 AM · ⚠ step 1 folder repo isn't a registered project",
       "• **too-wide** — on — Weekdays at 7:00 AM · ⚠ step 1 folder w holds several projects",
     ]);
     expect(text).toContain("• **ops-run** — on — Weekdays at 7:00 AM · ⚠ step 1 skill gone not found");
@@ -133,5 +133,13 @@ describe("routineListText sections (#885)", () => {
 
   test("no projects: everything under Scratch", () => {
     expect(routineListText([base], [], skills, "UTC").split("\n").slice(0, 2)).toEqual(["**Scratch**", "• **r** — on — Weekdays at 7:00 AM"]);
+  });
+
+  test("a disabled schedule sprout reads on demand; a disabled watch stays off", () => {
+    const { cron: _cron, ...noCron } = base;
+    const watch: Routine = { ...noCron, name: "w", enabled: false, watch: { kind: "feed", url: "https://x.test/feed" } };
+    const lines = routineListText([{ ...base, enabled: false }, watch], [], skills, "UTC").split("\n");
+    expect(lines[1]).toMatch(/^• \*\*r\*\* — on demand — /);
+    expect(lines[2]).toMatch(/^• \*\*w\*\* — off — /);
   });
 });

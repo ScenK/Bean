@@ -961,6 +961,7 @@ describe("propose_sprout_run", () => {
     { name: "pr-digest", description: "Summarises open PRs\nsecond line never shown" },
     { name: "bare" },
     { name: "long", description: "x".repeat(300) },
+    { name: "fixer", description: "Fixes one bug per task", takesTask: true },
   ];
   const specs: ToolSpec[] = [];
   const capture: ConverseDeps = {
@@ -981,8 +982,17 @@ describe("propose_sprout_run", () => {
     expect(desc).not.toContain("second line");
     expect(desc).toContain("- bare");
     expect(desc).toContain(`- long: ${"x".repeat(119)}…`);
+    expect(desc).toContain("- fixer (takes a task): Fixes one bug per task");
+    expect(desc).toMatch(/say which take a task/);
+    expect(desc).toMatch(/prefer a sprout marked \(takes a task\).*propose_todo.*propose_delegate/);
     expect(desc).toMatch(/always say sprout/);
-    expect((specs[0]!.parameters as { properties: { routine: { enum: string[] } } }).properties.routine.enum).toEqual(["pr-digest", "bare", "long"]);
+    expect((specs[0]!.parameters as { properties: { routine: { enum: string[] } } }).properties.routine.enum).toEqual(["pr-digest", "bare", "long", "fixer"]);
+  });
+
+  it("skips the task-taking hint when no sprout takes a task", async () => {
+    specs.length = 0;
+    await conv({ latestUserText: "hi", deps: capture, sproutCatalog: [{ name: "bare" }] });
+    expect(specs[0]!.description).not.toMatch(/prefer a sprout/);
   });
 
   it("returns the proposal for a catalog name and refuses any other", async () => {

@@ -28,6 +28,7 @@ import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index
 import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
 import { RoutineProposalStore } from "../src/chatops/routine-proposals.js";
 import { SproutRunProposalStore } from "../src/chatops/sprout-run-proposals.js";
+import type { SproutTriggerAnswer } from "../src/chatops/sprout-bridge.js";
 import { SendProposalStore } from "../src/chatops/send-proposals.js";
 import type { Destination } from "../src/destinations.js";
 import type { TriggerResult } from "../src/routine-scheduler.js";
@@ -2074,6 +2075,38 @@ test("list_todos / cancel_todo pass the member's id (own only); the owner's are 
   expect(seen).toEqual(["mia", "mia", undefined, undefined]);
 });
 
+test("background_work: the owner gets live counts; a member's DM reads no dispatches and is scoped to them", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-bot-work-"));
+  {
+    const asked: (string | undefined)[] = [];
+    const outs: string[] = [];
+    for (const who of [owner, member]) {
+      let call = 0;
+      const { deps } = withRoles({
+        chat: async (a) => {
+          if (++call === 1) return { content: "", toolCalls: [{ name: "background_work", args: {} }] };
+          outs.push(String(a.messages.at(-1)?.content ?? ""));
+          return { content: "ok", toolCalls: [] };
+        },
+      });
+      deps.backgroundWork = { file: join(dir, "bean.db"), stateFile: join(dir, ".state.json"), dispatches: (c) => { asked.push(c); return []; } };
+      deps.routines = {
+        transport: "teams", load: async () => [], save: async () => {}, create: async () => {},
+        notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+        sprouts: {
+          trigger: async () => ({ status: "started" }), facts: async () => ({ pending: 0, seeded: true }),
+          proposals: new SproutRunProposalStore(), running: async () => [{ name: "triage", runs: 1 }],
+        },
+      };
+      await buildTeamsBot(deps).onMessage({ ...who, direct: true, conversationId: `dm-${who.fromId}` }, fx());
+    }
+    // The owner's DM reads the unset conversation; the member's DM never reads (it's the owner's).
+    expect(asked).toEqual([undefined]);
+    expect(JSON.parse(outs[0]!)).toMatchObject({ running: [{ sprout: "triage", runs: 1 }] });
+    expect(JSON.parse(outs[1]!)).toEqual({ myTodos: [], dispatched: [] });
+  }
+});
+
 test("a member's forced delegate/skill proposal (not offered) is refused at runtime: no card, no IO", async () => {
   for (const converseResult of [delegateResult, { reply: "", proposedSkill: { name: "x", body: "b" } } as ConverseResult]) {
     const { deps, delegateCalls, savedSkills } = withRoles({ converseResult });
@@ -3896,7 +3929,7 @@ describe("sprout runs from chat (#636)", () => {
     expect(card).toMatchObject({ kind: "sprout-run", plan: { routine: "pr-digest", action: "run" } });
     await t.bot.onCardAction(tap("run-sprout", card.proposalId), effects);
     expect(t.triggered).toEqual([["pr-digest", "run", { channel: "c1", actor: "u1" }]]);
-    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "sprout-run", result: "Started (by u1) — I'll post here when it finishes." });
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "sprout-run", result: "Started — I'll post the result here." });
     await t.bot.onCardAction(tap("run-sprout", card.proposalId), effects);
     expect(effects.posted.at(-1)).toBe("That sprout card expired — ask me again.");
     expect(t.triggered).toHaveLength(1);
@@ -4567,5 +4600,80 @@ describe("away prepare ordering (#909 review)", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(runs).toBe(0);
     expect(made.deps.away.nextPrepare()).toBeUndefined();
+  });
+});
+
+describe("todo card: Run now and Queue (#923)", () => {
+  function setup(answer: SproutTriggerAnswer = { status: "started" }) {
+    const dispatched: unknown[][] = [];
+    const triggered: unknown[][] = [];
+    const made = withRoles({
+      chat: todoChat,
+      listTodoRoutines: async () => ["nightly"],
+      queueTodoDispatch: async (t, report) => { dispatched.push([t, report]); return { jobId: `job-${dispatched.length}`, ahead: 2 }; },
+      pendingTodos: async () => 2,
+      routines: {
+        transport: "discord", load: async () => [], save: async () => {}, create: async () => {},
+        notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+        sprouts: {
+          trigger: async (...a) => { triggered.push(a); return answer; },
+          facts: async () => ({ pending: 0, seeded: true }), proposals: new SproutRunProposalStore(),
+        },
+      },
+    });
+    return { ...made, dispatched, triggered, bot: buildTeamsBot(made.deps) };
+  }
+  const card = (effects: ReturnType<typeof fx>) => effects.cards.at(-1) as { proposalId: string; runNow?: true; ahead?: number };
+  const tap = (beanAction: string, proposalId: string, who = owner) =>
+    ({ conversationId: who.conversationId, scopeId: "s1", fromId: who.fromId, fromName: who.fromName, value: { beanAction, proposalId } });
+
+  test("owner's card offers both; Run now queues at the front with this chat as origin and asks the host by job id", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage(owner, effects);
+    expect(card(effects)).toMatchObject({ runNow: true, ahead: 2 });
+    await t.bot.onCardAction(tap("run-todo", card(effects).proposalId), effects);
+    expect(t.dispatched).toEqual([[{ routine: "nightly", text: "fix it", front: true }, { channel: owner.conversationId, actor: owner.fromId }]]);
+    expect(t.triggered).toEqual([["nightly", "todo", {}, "job-1"]]);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "todo-result", note: "Running only this task — I'll post the result here." });
+    // Two taps on one card: one effect.
+    await t.bot.onCardAction(tap("run-todo", card(effects).proposalId), effects);
+    await t.bot.onCardAction(tap("queue-todo", card(effects).proposalId), effects);
+    expect(t.dispatched).toHaveLength(1);
+    expect(t.queuedTodos).toHaveLength(0);
+  });
+
+  test("busy: the card and the reply say it runs next, not that it started", async () => {
+    const t = setup({ status: "next" });
+    const effects = fx();
+    await t.bot.onMessage(owner, effects);
+    await t.bot.onCardAction(tap("run-todo", card(effects).proposalId), effects);
+    const line = "nightly is working on another task. Yours runs next, right after it.";
+    expect(effects.updates.at(-1)?.card).toMatchObject({ note: line });
+    expect(effects.posted.at(-1)).toBe(line);
+  });
+
+  test("a member sees Queue only; a forged Run now is refused and leaves the card usable; Queue reports back in the channel", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage(member, effects);
+    expect(card(effects).runNow).toBeUndefined();
+    await t.bot.onCardAction(tap("run-todo", card(effects).proposalId, member), effects);
+    expect(t.dispatched).toHaveLength(0);
+    await t.bot.onCardAction(tap("queue-todo", card(effects).proposalId, member), effects);
+    expect(t.dispatched).toEqual([[{ routine: "nightly", text: "fix it", createdBy: "mia" }, { channel: member.conversationId, actor: "mia" }]]);
+    expect(t.triggered).toHaveLength(0);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ note: "Queued — I'll report here when it runs." });
+    expect(effects.posted.at(-1)).toContain("(2 ahead)");
+  });
+
+  test("a member's DM queues without a report (only the owner's DM is a destination)", async () => {
+    const t = setup();
+    const effects = fx();
+    const dm = { ...member, direct: true, conversationId: "dm-mia" };
+    await t.bot.onMessage(dm, effects);
+    await t.bot.onCardAction(tap("queue-todo", card(effects).proposalId, dm), effects);
+    expect(t.dispatched).toHaveLength(0);
+    expect(t.queuedTodos).toEqual([{ routine: "nightly", text: "fix it", createdBy: "mia" }]);
   });
 });

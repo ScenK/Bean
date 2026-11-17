@@ -186,6 +186,8 @@ export function ChatWindow() {
     window.bean.getPendingInterruptedRunNotices().then((n) => { if (n?.length) to()?.notices(n); });
     window.bean.onInterruptedRunNotice((n) => to()?.notices(n));
     window.bean.onDelegateEvent((e) => route(e.mountId)?.delegateEvent(e));
+    // A sprout's result goes only to the chat that holds its thread — never the shown one instead.
+    window.bean.onSproutEvent((e) => sessions.get(e.mountId)?.sproutEvent(e));
     window.bean.onLiveEvent((e) => route(e.mountId)?.liveEvent(e));
     window.bean.onMemoryUpdated((saved, from) => onMemoryUpdated(saved, from));
     // Progress for a chat that's gone is dropped, never shown in another one.

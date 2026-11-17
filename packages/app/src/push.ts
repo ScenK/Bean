@@ -12,6 +12,7 @@ import { contractRefusal } from "./channel-contract.js";
  *   avatar-window.ts straight to one BrowserWindow. No registry or IPC handler sends these. */
 export const PUSH_ROUTES = {
   [IPC.delegateEvent]: "mount",
+  [IPC.sproutEvent]: "mount",
   [IPC.liveEvent]: "mount",
   [IPC.terminalEvent]: "mount",
   [IPC.chatImageProgress]: "mount",
@@ -50,7 +51,7 @@ export interface Push {
 
 /** The host's mount pushes (`HostPush`), by kind → channel. */
 export const HOST_PUSH_CHANNELS: Record<MountPushKind, MountPush> = {
-  delegate: IPC.delegateEvent, live: IPC.liveEvent, memory: IPC.memoryUpdated, imageProgress: IPC.chatImageProgress,
+  delegate: IPC.delegateEvent, live: IPC.liveEvent, memory: IPC.memoryUpdated, imageProgress: IPC.chatImageProgress, sprout: IPC.sproutEvent,
 };
 export const hostPush = (push: Push): HostPush => (mountId, kind, payload) => push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
 

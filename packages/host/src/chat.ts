@@ -1,9 +1,9 @@
 import {
   converse, checkPdfAttachment, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  checkImageAttachments, availableModels, planSproutRun, type SproutRunBlock,
+  checkImageAttachments, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
-  DESKTOP_CHAT_MAX_BYTES, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
+  DESKTOP_CHAT_MAX_BYTES, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
 } from "@bean/core";
 import { readFile } from "node:fs/promises";
 import type { ClientId } from "./shell-ops.js";
@@ -38,6 +38,15 @@ export interface ChatHandlerDeps {
   loadRoutines?: () => Promise<Routine[]>;
   /** A sprout's pending todos and whether its watch is seeded — enables propose_sprout_run. */
   sproutFacts?: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
+  /** Enables background_work (#924): the sprouts' state file, the live run counts, and the chat
+   * threads this chat (mount) dispatched from. */
+  backgroundWork?: {
+    stateFile: string;
+    running: () => { name: string; runs: number }[] | undefined;
+    threadsOf: (mountId: string) => string[];
+  };
+  /** A routine's pending todos: a todo card's "N ahead in queue" (#923). */
+  todoAhead?: (routine: string) => number;
   /** Enables propose_send: matches the spoken destination and keeps the proposal for the Send tap. */
   proposeSend?: (destination: string, body: string) => SendCard;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
@@ -86,7 +95,15 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           classifier: { chat: deps.converse, model: deps.getModel() },
         })
       : undefined;
-    const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? [])];
+    const work = deps.backgroundWork;
+    // The desktop is the owner's own machine: background_work shows everything (no viewer).
+    const workTool = work
+      ? makeBackgroundWorkTool({
+          file: deps.dbFile, stateFile: work.stateFile, running: async () => work.running(),
+          dispatches: () => (mountId === undefined ? [] : work.threadsOf(mountId).flatMap((t) => threadDispatches(deps.dbFile, t))),
+        })
+      : undefined;
+    const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? []), ...(workTool ? [workTool] : [])];
     const result = await converse({
       history: req.history,
       latestUserText: req.message,
@@ -108,7 +125,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       liveSessionAvailable: clientId !== undefined && mountId !== undefined && (deps.liveSessionAvailable?.(clientId, mountId) ?? false),
       liveSessionHost: "desktop",
       todoRoutines,
-      sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description })) : [],
+      sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description, takesTask: r.todoDriven })) : [],
       webSearch: deps.webSearch?.() ?? false,
       runAvailable: clientId === undefined || (deps.runAvailable?.(clientId) ?? true),
       sendAvailable: deps.proposeSend !== undefined,
@@ -119,6 +136,9 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       delete result.proposedSend;
     }
     if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts);
+    if (result.proposedTodo && deps.todoAhead) {
+      try { result.proposedTodo = { ...result.proposedTodo, ahead: deps.todoAhead(result.proposedTodo.routine) }; } catch { /* the card just omits it */ }
+    }
     if (imageTool && imageTool.paths.length > 0) {
       result.generatedImages = await Promise.all(imageTool.paths.map(async (path) => ({
         path,
@@ -189,7 +209,18 @@ export interface ChatThreadSaveRequest { id: string; title: string; items: unkno
 export interface ChatThreadAck { id: string; title: string; updatedAt: string }
 /** What a chat restores: a saved thread, or `missing` when the picked one is gone (deleted or
  * pruned) — the chat opens empty with a status row. */
-export type PendingChatThread = { id: string; title: string; items: unknown[]; noteSlug: string | null } | { missing: true };
+export type PendingChatThread = { id: string; title: string; items: unknown[]; noteSlug: string | null; sprouts?: SproutOutcome[] } | { missing: true };
+
+/** A sprout run a desktop chat started (#921), as its card learns it: `status` absent = still
+ * running; `text` = the finish line + the run's brief, fenced as data (dispatchContext) — the
+ * result turn the chat loops back. Pushed (`sprout` mount push, with `mountId`) when the run's
+ * dispatch is delivered, and listed with a restored thread (`sprouts`) for the cards it holds. */
+export interface SproutOutcome { jobId: string; status?: DispatchStatus; text?: string }
+export type SproutEvent = Required<SproutOutcome> & { mountId: string };
+/** A run's admission, pushed the same way before its end (no `status`): a remote shell whose start
+ * reply a dropped link lost learns the run's job id from it (#922). The chat ignores it. */
+export interface SproutStarted { mountId: string; jobId: string; name: string }
+export type SproutPush = SproutEvent | SproutStarted;
 
 export interface ChatThreadHandlerDeps {
   saveDesktopChat: (file: string, chat: DesktopChatInput, now?: Date) => string;
@@ -203,7 +234,7 @@ export interface ChatThreadHandlerDeps {
   dbFile: string;
 }
 
-const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Chat sessions ("mounts") inside chat windows. A mount id is a renderer-made UUID attached to
  * exactly one client (push.ts); every per-chat request names it, and main keys that chat's thread
@@ -323,6 +354,11 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       const id = threads.get(key);
       if (id !== undefined) deps.deleteDesktopChat(deps.dbFile, id);
     },
+    /** The open chat (mount key) that holds this thread, if any. */
+    holderOf: holder,
+    /** The thread this chat writes, once pinned. */
+    pinnedOf: (key: string): string | undefined => threads.get(key),
+    exists: (id: string): boolean => deps.getDesktopChat(deps.dbFile, id) !== undefined,
     /** The chat mount is gone: its thread is free to delete or reopen. */
     release: (key: string): void => {
       threads.delete(key);
