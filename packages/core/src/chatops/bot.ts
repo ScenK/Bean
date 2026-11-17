@@ -47,7 +47,7 @@ import {
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import { attachNoteImages } from "../note-images.js";
 import { systemControlTool } from "../system-control.js";
-import type { RunRegistry } from "./runs.js";
+import type { RunDelegateFn, RunRegistry } from "./runs.js";
 import { LiveSessionProposalStore, type PendingLiveSession } from "./live-session-proposals.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "./live-sessions.js";
 import {
@@ -56,6 +56,8 @@ import {
   type Capability, type Role, type Roles,
 } from "./roles.js";
 import { makeAmbientCapture, type AmbientLine } from "./ambient-capture.js";
+import { awayLine, awayRefusal, awayReminder, awaySuggestion, parseAwayCommand, runAwayCommand, type Away } from "./away.js";
+import { makeAwayPrepare } from "./away-prepare.js";
 import { NOT_CHATTY, formatMuteEnd, makeChimeIn, parseChatterCommand, type Chatter, type ChatterCommand, type ChimeInFx } from "./chatter.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
@@ -258,6 +260,12 @@ export interface TeamsBotDeps {
   /** Per-channel chime-in setting and mute (`chatty on|off|status`, `quiet 30m`, `unmute`).
    * Absent = those words are ordinary turns. */
   chatter?: Chatter;
+  /** The owner's away mode on this surface (`away on|off|status`, owner's real DM only, #903).
+   * Absent = those words are ordinary turns. */
+  away?: Away;
+  /** The executor for away-mode prepare runs (#909; `runDelegate`). Absent = no prepares: the
+   * suggestion call offers no `prepare` tool. */
+  awayPrepareRun?: RunDelegateFn;
   routines?: {
     transport: "discord" | "teams";
     load: () => Promise<Routine[]>;
@@ -335,6 +343,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
    * text-only chime-in after a lull, if `chatty on` there, and feeds household memory capture
    * (#463, unless `memory off` there or config `autoMemory` is off). No-op without `deps.chatter`. */
   onAmbient: (conversationId: string, scopeId: string, fx: ChimeInFx, line: AmbientLine) => void;
+  /** A message addressed to Bean in a channel, group chat or thread (not a DM, not a live
+   * session) that may also tag the owner: the away-mode record + fixed line only (#904) — the
+   * ambient path runs the same check itself. `post` lands in the message's own conversation and
+   * never pings. Never rejects. */
+  onAwayTag: (conversationId: string, line: AmbientLine, post: (text: string) => Promise<void>) => Promise<void>;
+  /** Synchronous, for shutdown: stops a running away prepare and marks it interrupted (#909). */
+  interruptAwayPrepares: () => void;
   /** A turn the owner typed at the desktop (desk ingress, chatops/desk.ts). Checks the catalog,
    * posts the `🖥 (desk):` echo, then runs it as the owner's turn — or steers the running live
    * session. `ack` is called exactly once, as soon as the turn is accepted or refused (before the
@@ -381,6 +396,72 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     onError: (err) => console.error(`[memory] channel capture failed: ${err instanceof Error ? err.message : String(err)}`),
   });
   const noteTool = retrieveNoteTool(deps.searchNotes);
+
+  // Away mode (#904): a non-bot sender other than the owner explicitly tags the owner while away
+  // here → record the message (owner-only table), then one fixed, non-pinging line in the same
+  // conversation (and maybe Bean's labelled suggestion after it). A redelivered message is already recorded and gets nothing; a storage failure
+  // still gets the away line, minus the claim it was recorded. Never rejects.
+  // Silent read-only prepares (#909): built only with an executor; a row a dead process left
+  // running is marked interrupted here, then the persisted queue resumes.
+  const awayPrepare = deps.away && deps.awayPrepareRun
+    ? makeAwayPrepare({
+        away: deps.away, run: deps.awayPrepareRun, loadProjects: deps.loadProjects,
+        ...(deps.scratchPath ? { scratchPath: deps.scratchPath } : {}),
+        detectClis: deps.detectClis, cliModels: deps.cliModels, loadModelMemory: deps.loadModelMemory,
+      })
+    : undefined;
+  awayPrepare?.pump();
+
+  async function awayTag(conversationId: string, line: AmbientLine, post: (text: string) => Promise<void>): Promise<void> {
+    const away = deps.away;
+    const configured = deps.roles.ownerId;
+    if (!away || !configured || line.bot || !line.messageId || !line.taggedIds?.length) return;
+    try {
+      const state = away.get();
+      if (!state.on || deps.roles.roleOf({ fromId: line.fromId, fromAltId: line.fromAltId }) === "owner") return;
+      const owner = new Set(deps.catalog?.ownerIds(configured) ?? [configured]);
+      if (!line.taggedIds.some((id) => owner.has(id))) return;
+      let recorded = false;
+      try {
+        recorded = away.capture({
+          conversationId, messageId: line.messageId, senderId: line.fromId, senderName: line.name,
+          text: line.text, at: line.at, ...(line.link ? { link: line.link } : {}),
+          ...(state.since !== undefined ? { awaySince: state.since } : {}),
+        });
+        if (!recorded) return;
+      } catch (err) {
+        console.error(`[away] capture failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      await post(awayLine(deps.roles.ownerName, state.reason, recorded));
+      // Then, under the daily cap, one suggestion call: with config `webSearch` on, Bean's own
+      // labelled suggestion as a second message (#907); with a read-only CLI here, it may also
+      // queue a silent prepare (#909) — the call runs for that even with webSearch off, its text
+      // discarded. The line above never waits for it. A prepare needs this message's own row.
+      const webSearch = !!deps.webSearchEnabled?.();
+      const canPrepare = !!awayPrepare && recorded && deps.detectClis().some((c) => c === "claude" || c === "codex");
+      if ((webSearch || canPrepare) && away.claimSuggestion()) {
+        const projects = canPrepare ? (await deps.loadProjects()).map((p) => p.name) : undefined;
+        const s = await awaySuggestion({
+          chat: deps.chat, model: deps.model, ownerName: deps.roles.ownerName, text: line.text, webSearch,
+          ...(projects ? { projects } : {}),
+        });
+        if (s.prepare && awayPrepare) {
+          try {
+            const notPrepared = away.claimPrepare({
+              conversationId, messageId: line.messageId, senderId: line.fromId, ...s.prepare,
+              ...(state.since !== undefined ? { awaySince: state.since } : {}),
+            });
+            if (notPrepared === undefined) awayPrepare.pump();
+          } catch (err) {
+            console.error(`[away] prepare claim failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        if (s.text) await post(s.text);
+      }
+    } catch (err) {
+      console.error(`[away] owner-tag reply failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // DM auto-capture (#462): after the reply, the latest typed turn's facts are saved private to
   // the speaker, each with the usual Forget/Share receipt. Captures run one at a time so each
@@ -1432,6 +1513,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       return true;
     }
+    const awayCmd = deps.away ? parseAwayCommand(msg.text) : undefined;
+    if (deps.away && awayCmd) {
+      // Owner + real DM only (a Teams targeted `/` pick isn't `direct`). Everyone else hears one
+      // fixed line that never reveals the state. Never a model call.
+      const ok = msg.direct && can(speakerRole(msg).role, "away");
+      await fx.reply(ok ? runAwayCommand(deps.away, awayCmd, Date.now()) : awayRefusal(deps.roles.ownerName));
+      return true;
+    }
     const chatterCmd = deps.chatter ? parseChatterCommand(msg.text) : undefined;
     // In a DM, mute/unmute stay model turns (the owner may mean the Mac's volume).
     if (deps.chatter && chatterCmd && (chatterCmd.kind === "chatty" || chatterCmd.kind === "memory" || !msg.direct)) {
@@ -1706,7 +1795,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     onAmbient(conversationId, scopeId, fx, line) {
       chimeIn?.onAmbient(conversationId, scopeId, fx);
       channelCapture?.onLine(conversationId, scopeId, line, fx);
+      void awayTag(conversationId, line, fx.post);
     },
+
+    onAwayTag: awayTag,
+
+    interruptAwayPrepares: () => awayPrepare?.interrupt(),
 
     proposeLiveSession(args, fx): Promise<string> {
       return proposeLiveSessionFrom(args.conversationId, args.instruction, args.proposedBy, fx);
@@ -1755,7 +1849,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             }
           }
           // `new` too: a typed reset clears context like Discord's native /new; the session keeps running.
-          if (cmd === "stop" || cmd === "drivers" || cmd === "new") {
+          if (cmd === "stop" || cmd === "drivers" || cmd === "new" || (deps.away && parseAwayCommand(msg.text))) {
             await onCommand(msg, fx);
             return;
           }
@@ -1946,7 +2040,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         });
         if (result.reply) {
           deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
-          await fx.reply(result.reply);
+          // The owner talking to Bean while away here: a reminder, kept out of history.
+          await fx.reply(isOwner && deps.away?.get().on ? `${result.reply}\n\n${awayReminder(deps.away)}` : result.reply);
         }
         // Drains (splices) the collector so a later pass — the chat-target follow-up below
         // shares this same tool instance — never re-sends already-delivered images.

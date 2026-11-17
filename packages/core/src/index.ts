@@ -67,6 +67,8 @@ export * from "./chatops/resolve.js";
 export * from "./chatops/roles.js";
 export * from "./chatops/turn-cap.js";
 export * from "./chatops/chatter.js";
+export * from "./chatops/away.js";
+export * from "./chatops/away-prepare.js";
 export * from "./chatops/ambient-capture.js";
 export * from "./chatops/chunk-groups.js";
 export * from "./chatops/reminder-tools.js";

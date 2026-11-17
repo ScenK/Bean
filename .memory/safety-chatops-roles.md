@@ -58,6 +58,19 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   fixed outbox line from the scheduler host (`withFinishReply`), never step output.
 - **Send by name (#689)**: `send` (owner) — and only in the owner's real DM, checked via the
   adapter's `CardAction.direct`; see [project-chat-destinations](project-chat-destinations.md).
+- **Away mode (#903)**: `chatops/away.ts`, `chatops_away` (one row per surface, missing = off).
+  `away on [reason]|off|status` = `NEEDS.away` (owner) **and** `msg.direct` (a Teams targeted `/`
+  pick is not direct); every other use hears one fixed `awayRefusal` line that never reveals the
+  state. Keyword command, never a model call, not in `CHATOPS_COMMANDS` (typed only, no Teams
+  manifest change); Discord's thread/turn-cap exemptions reuse `parseAwayCommand`. While on, the
+  owner's addressed answers on that surface get `awayReminder` appended (not saved to history).
+  Owner tags while away (#904): [convention-chatops-away-tags](convention-chatops-away-tags.md).
+  **Paid work for guests, by design (#909)**: an owner tag from *anyone* (guest included) may start a
+  silent read-only prepare run (a claude/codex plan-mode delegate) — the one path where a non-member
+  makes Bean spend CLI time. It is bounded by code, not by role: plan mode enforced by argv
+  ([safety-plan-delegate-read-only](safety-plan-delegate-read-only.md)), persisted caps (5 queued,
+  20/surface/day, 5/sender/day, 1 running, 20 min, no retry), and output that reaches only the owner's
+  DM summary. Don't widen it to ordinary (write-capable) delegates or to a public result.
 - **Chatty setting (#444)**: `chatops/chatter.ts`, `chatops_chatty` (missing row = off), scoped like
   admins (channel, never a thread). `chatty on|off` = `NEEDS.chatty` (admin); `chatty status`,
   addressed mute (`quiet|hush|mute|be quiet|stay quiet [for] <n><unit>`, whole message only, 30 min

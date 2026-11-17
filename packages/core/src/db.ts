@@ -167,6 +167,63 @@ CREATE TABLE IF NOT EXISTS chatops_chatty (
   PRIMARY KEY (surface, scope_id)
 );
 
+-- The owner's away mode per chat surface (chatops/away.ts, #903); a missing row means off.
+-- since is epoch ms (set only while on); reason is the owner's literal text, at most 200 chars.
+CREATE TABLE IF NOT EXISTS chatops_away (
+  surface TEXT PRIMARY KEY,
+  is_on   INTEGER NOT NULL DEFAULT 0,
+  since   INTEGER,
+  reason  TEXT
+);
+
+-- Owner tags captured while away (chatops/away.ts, #904): owner-only, never a note, never searched
+-- by any tool. One row per tagged message (redelivery inserts nothing); at/away_since are epoch ms,
+-- away_since is the away period's start; text is bounded (AWAY_CAPTURE_TEXT_MAX).
+CREATE TABLE IF NOT EXISTS chatops_away_captures (
+  surface         TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  message_id      TEXT NOT NULL,
+  sender_id       TEXT NOT NULL,
+  sender_name     TEXT NOT NULL,
+  text            TEXT NOT NULL,
+  link            TEXT,
+  at              INTEGER NOT NULL,
+  away_since      INTEGER,
+  UNIQUE (surface, conversation_id, message_id)
+);
+
+-- Away suggestions made per surface per day (chatops/away.ts, #907), for the daily cap; day is the
+-- calendar date in the process's TZ, older days are pruned on claim.
+CREATE TABLE IF NOT EXISTS chatops_away_suggestions (
+  surface TEXT NOT NULL,
+  day     TEXT NOT NULL,
+  count   INTEGER NOT NULL,
+  PRIMARY KEY (surface, day)
+);
+
+-- Read-only prepare runs started from away-mode owner tags (chatops/away-prepare.ts, #909), one per
+-- capture (same surface+conversation+message key as chatops_away_captures). status: queued |
+-- running | prepared | failed | not_prepared (over a cap; reason in result) | cancelled (away off).
+-- result is the plan or the failure reason, bounded; day is the claim's date in the process's TZ
+-- (the caps count by it); created_at is epoch ms.
+CREATE TABLE IF NOT EXISTS chatops_away_prepares (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  surface         TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  message_id      TEXT NOT NULL,
+  sender_id       TEXT NOT NULL,
+  day             TEXT NOT NULL,
+  project         TEXT NOT NULL,
+  brief           TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  result          TEXT,
+  cli             TEXT,
+  session_id      TEXT,
+  project_path    TEXT,
+  created_at      INTEGER NOT NULL,
+  UNIQUE (surface, conversation_id, message_id)
+);
+
 -- One row per admitted chatops turn (chatops/turn-cap.ts), for the per-member daily cap. The
 -- platform message/interaction id is the key, so a redelivered message never counts twice.
 -- day is the calendar date in the process's TZ; older days are pruned on insert.

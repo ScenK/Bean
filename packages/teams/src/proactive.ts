@@ -12,6 +12,14 @@ export type ContinueConversation = (ref: Partial<ConversationReference>, fn: (ct
 // name the channel itself and get a fresh post per digest.
 export const bareChannelId = (id: string): string => id.split(";")[0] ?? id;
 
+/** Best-effort deep link to one message (the away capture's link, #904): a channel reply names
+ * its root post as `parentMessageId`. */
+export function messageLink(conversationId: string, messageId: string): string {
+  const parent = /;messageid=([^;]+)/.exec(conversationId)?.[1];
+  return `https://teams.microsoft.com/l/message/${encodeURIComponent(bareChannelId(conversationId))}/${encodeURIComponent(messageId)}` +
+    (parent ? `?parentMessageId=${encodeURIComponent(parent)}` : "");
+}
+
 /** The stored ref for a conversation id, retargeted to exactly that id: a channel resolves via
  * its bare id but sends to the id given (bare = new post, `;messageid=` = reply in that post).
  * Undefined = Bean has never seen the conversation. */
