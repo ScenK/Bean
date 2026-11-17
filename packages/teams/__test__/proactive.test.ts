@@ -98,8 +98,15 @@ test("cardActionOf (#689): the send card's destination reaches core; direct only
   expect(act({ id: CHANNEL, conversationType: "channel" })).toMatchObject({ direct: false, scopeId: CHANNEL });
 });
 
-test("messageLink deep-links a chat message, and a channel reply under its root post", () => {
-  expect(messageLink("19:chat@thread.v2", "171")).toBe("https://teams.microsoft.com/l/message/19%3Achat%40thread.v2/171");
-  expect(messageLink("19:ch@thread.tacv2;messageid=100", "171"))
-    .toBe("https://teams.microsoft.com/l/message/19%3Ach%40thread.tacv2/171?parentMessageId=100");
+test("messageLink opens a chat message with chat context, and a channel message under its root post", () => {
+  const chat = encodeURIComponent('{"contextType":"chat"}');
+  expect(messageLink({ id: "19:chat@thread.v2", conversationType: "groupChat" }, "171"))
+    .toBe(`https://teams.microsoft.com/l/message/19:chat@thread.v2/171?context=${chat}`);
+  expect(messageLink({ id: "19:a_b@unq.gbl.spaces" }, "171"))
+    .toBe(`https://teams.microsoft.com/l/message/19:a_b@unq.gbl.spaces/171?context=${chat}`);
+  const team = { tenant: { id: "t1" }, team: { aadGroupId: "g1" } };
+  expect(messageLink({ id: "19:ch@thread.tacv2;messageid=100", conversationType: "channel" }, "171", team))
+    .toBe("https://teams.microsoft.com/l/message/19:ch@thread.tacv2/171?tenantId=t1&groupId=g1&parentMessageId=100");
+  expect(messageLink({ id: "19:ch@thread.tacv2", conversationType: "channel" }, "171"))
+    .toBe("https://teams.microsoft.com/l/message/19:ch@thread.tacv2/171?parentMessageId=171");
 });

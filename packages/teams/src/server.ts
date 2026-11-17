@@ -234,7 +234,7 @@ function lineOf(a: Activity, text: string): AmbientLine {
     fromId: a.from.id, fromAltId: a.from.aadObjectId, name: a.from.name ?? "someone",
     text, at: Date.now(), bot: a.from.role === "bot",
     taggedIds: mentionedUsers(a).map((m) => m.id),
-    ...(a.id ? { messageId: a.id, link: messageLink(a.conversation.id, a.id) } : {}),
+    ...(a.id ? { messageId: a.id, link: messageLink(a.conversation, a.id, a.channelData) } : {}),
   };
 }
 
