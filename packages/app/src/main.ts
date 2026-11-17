@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import { buildSyncedChatHandlers } from "./synced-chats.js";
 import { buildHandshake, createHost, shellClientId, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
-import { chatopsMenuRows } from "./chatops-tray-menu.js";
+import { BOT_ORDER, botLabel, chatopsMenuRows, setTrayAway, trayAwayOn } from "./chatops-tray-menu.js";
 import { installAvatarControls } from "./avatar-window.js";
 import { createAvatarLog } from "./avatar-log.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, powerMonitor, screen, webContents } from "electron";
@@ -252,6 +252,19 @@ app.whenReady().then(async () => {
         },
       });
       if (row.error) items.push({ label: `⚠️ ${row.error}`, enabled: false });
+    }
+    // Away mode per bot (#906): bean.db state, read fresh here so a DM `away on|off` shows on the
+    // next open; independent of the bot process above. Off sends the summary to the owner's DM.
+    items.push({ type: "separator" });
+    for (const bot of BOT_ORDER) {
+      let on = false;
+      try { on = trayAwayOn(dir, bot); } catch (err) { console.error("away state read failed:", err); }
+      items.push({
+        label: `Away on ${botLabel(bot)}`,
+        type: "checkbox",
+        checked: on,
+        click: (item) => void setTrayAway(dir, bot, item.checked).catch((err: unknown) => console.error("away toggle failed:", err)),
+      });
     }
     return items;
   };

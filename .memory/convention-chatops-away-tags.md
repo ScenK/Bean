@@ -27,5 +27,10 @@ to Bean (non-DM), so tagging Bean **and** the owner gets the normal answer plus 
   with it; `closeAwayToOwnerDm` (for a toggle made elsewhere) queues it as a channel-less,
   user-less outbox message — the owner's DM only; the drains never fall back to a channel.
   Rows are kept after the summary (no retention sweep yet).
+- **Tray toggle (#906)**: the desktop tray's Chat Bots submenu has an "Away on <bot>" checkbox
+  per surface (`app/src/chatops-tray-menu.ts`), local core only (nothing in `REMOTE_OPS`; the DM
+  command covers a remote core). It reads bean.db on every menu open, is independent of the bot
+  process (start/stop never touches it), turns on with no reason (leaving a period already on
+  alone), and off goes through `closeAwayToOwnerDm`.
 - **Known gap**: a conversation bound to a live session bypasses ambient and addressed paths
   (every message is a steer), so tags there are not captured. Personal 1:1 chats never capture.
