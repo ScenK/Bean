@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { dbFile, makeAway, outboxDir, runAwayCommand } from "@bean/core";
-import { setTrayAway, trayAwayOn } from "../src/chatops-tray-menu.js";
+import { awaySurfaces, setTrayAway, trayAwayOn } from "../src/chatops-tray-menu.js";
 
 const beanHome = (): string => mkdtempSync(join(tmpdir(), "bean-tray-away-"));
 
@@ -13,6 +13,17 @@ test("the tray checkbox reads a DM change on the next open, per surface", () => 
   runAwayCommand(makeAway({ dbPath: dbFile(dir), surface: "discord" }), { kind: "on" }, 1_000);
   expect(trayAwayOn(dir, "discord")).toBe(true);
   expect(trayAwayOn(dir, "teams")).toBe(false);
+});
+
+test("the avatar's away pills list each surface with away on, in tray order", async () => {
+  const dir = beanHome();
+  expect(awaySurfaces(dir)).toEqual([]);
+  await setTrayAway(dir, "teams", true, 1_000);
+  expect(awaySurfaces(dir)).toEqual(["teams"]);
+  runAwayCommand(makeAway({ dbPath: dbFile(dir), surface: "discord" }), { kind: "on" }, 2_000);
+  expect(awaySurfaces(dir)).toEqual(["discord", "teams"]);
+  await setTrayAway(dir, "teams", false);
+  expect(awaySurfaces(dir)).toEqual(["discord"]);
 });
 
 test("on sets away with no reason, and leaves a period already on (and its reason) alone", async () => {

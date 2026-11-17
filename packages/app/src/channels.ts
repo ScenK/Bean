@@ -240,6 +240,8 @@ export const IPC = {
   // The attachment's state (host badge, reconnect bar, takeover and version banners), pulled + pushed.
   coreStatus: "bean:core-status",
   coreStatusChanged: "bean:core-status-changed",
+  // Main → avatar: the surfaces with the owner's away mode on (local core; bean.db polled by main).
+  awayChanged: "bean:away-changed",
   // A remote core's own update from About (#838): its version + a newer release + busy work, then apply.
   coreUpdateStatus: "bean:core-update-status",
   coreUpdateApply: "bean:core-update-apply",

@@ -240,6 +240,7 @@ export const CHANNEL_CONTRACT = {
   coreSwitch: shell,
   coreStatus: shell,
   coreStatusChanged: shell,
+  awayChanged: shell,
   coreTakeBack: shell,
   coreUpdateStatus: core(),
   coreUpdateApply: core(bool),

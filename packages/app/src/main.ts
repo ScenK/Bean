@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import { buildSyncedChatHandlers } from "./synced-chats.js";
 import { buildHandshake, createHost, shellClientId, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
-import { BOT_ORDER, botLabel, chatopsMenuRows, setTrayAway, trayAwayOn } from "./chatops-tray-menu.js";
+import { BOT_ORDER, awaySurfaces, botLabel, chatopsMenuRows, setTrayAway, trayAwayOn } from "./chatops-tray-menu.js";
 import { installAvatarControls } from "./avatar-window.js";
 import { createAvatarLog } from "./avatar-log.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, powerMonitor, screen, webContents } from "electron";
@@ -182,6 +182,20 @@ app.whenReady().then(async () => {
     clients: () => BrowserWindow.getAllWindows().map((w) => w.webContents),
   });
   let avatarReady = false;
+  // The avatar's away pills (local core): bean.db is written by the bots' DM `away` command and the
+  // tray toggle, so main polls it and pushes only changes — plus the current set on every avatar
+  // load, since any reload (View → Reload, Bring Bean Back) starts the page with none.
+  // ponytail: 5 s poll, up to 5 s late after a DM command; a bot→host notify if that ever matters.
+  let awayNow: ChatopsBot[] = [];
+  const pushAway = (): void => push.broadcast(IPC.awayChanged, awayNow);
+  const refreshAway = (): void => {
+    let next: ChatopsBot[];
+    try { next = awaySurfaces(dir); } catch (err) { console.error("away state read failed:", err); return; }
+    if (next.join() === awayNow.join()) return;
+    awayNow = next;
+    pushAway();
+  };
+  avatar.webContents.on("did-finish-load", pushAway);
   // Mirrors SettingsWindow.tsx's scheduleErrorClear (same 3s window): a tray-only cache of when
   // each bot's current error first appeared, so the submenu can stop showing a stale error even
   // though the host's bot state (shared with Settings) keeps it until overwritten. Updated by the
@@ -263,7 +277,7 @@ app.whenReady().then(async () => {
         label: `Away on ${botLabel(bot)}`,
         type: "checkbox",
         checked: on,
-        click: (item) => void setTrayAway(dir, bot, item.checked).catch((err: unknown) => console.error("away toggle failed:", err)),
+        click: (item) => void setTrayAway(dir, bot, item.checked).then(refreshAway, (err: unknown) => console.error("away toggle failed:", err)),
       });
     }
     return items;
@@ -795,6 +809,10 @@ app.whenReady().then(async () => {
 
     await loadAvatarWindow(avatar);
     avatarReady = true;
+    if (localCore) {
+      refreshAway();
+      setInterval(refreshAway, 5_000);
+    }
 
     // Report any delegate run interrupted by the previous quit (delegate-tasks.ts's
     // interruptAll()/main.ts's own before-quit handler leave one outbox notice per run). A

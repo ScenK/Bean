@@ -32,6 +32,9 @@ to Bean (non-DM), so tagging Bean **and** the owner gets the normal answer plus 
   command covers a remote core). It reads bean.db on every menu open, is independent of the bot
   process (start/stop never touches it), turns on with no reason (leaving a period already on
   alone), and off goes through `closeAwayToOwnerDm`.
+- **Avatar pills**: main polls the same bean.db state every 5 s (local core only) and pushes
+  changes on `awayChanged`; the avatar shows a moon + `D`/`T` pill per surface. The current set is
+  re-pushed on every avatar `did-finish-load` — a reload starts with none and the poll only sends changes.
 - **Suggestion (#907)**: after the away line, and only with config `webSearch` on, `awaySuggestion`
   makes one tool-less call (built-in web search only, 30 s timeout, no retry) whose input is a fixed
   instruction plus the fenced tagged text — never persona, memories, notes, history, the owner's

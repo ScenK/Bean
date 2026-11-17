@@ -40,6 +40,9 @@ export function trayAwayOn(dir: string, bot: ChatopsBot): boolean {
   return makeAway({ dbPath: dbFile(dir), surface: bot }).get().on;
 }
 
+/** The surfaces with away mode on, in tray order — the avatar's away pills. */
+export const awaySurfaces = (dir: string): ChatopsBot[] => BOT_ORDER.filter((bot) => trayAwayOn(dir, bot));
+
 /** The tray's Away checkbox. On: away with no reason (an away period already on — say, set from the
  * DM since the menu opened — is left alone, reason and all). Off: closes the period and queues its
  * summary for the owner's DM, never a channel (core's `closeAwayToOwnerDm`). */

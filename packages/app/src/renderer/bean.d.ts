@@ -132,6 +132,8 @@ declare global {
       /** The attachment's state: host badge, reconnect bar, takeover and version banners. */
       coreStatus(): Promise<CoreStatus>;
       onCoreStatus(cb: (s: CoreStatus) => void): void;
+      /** The surfaces with the owner's away mode on (local core only) — the avatar's away pills. */
+      onAwayChanged(cb: (bots: ChatopsBot[]) => void): void;
       /** After another machine took the core over: attach again. */
       coreTakeBack(): void;
       /** A remote core (#838): its version, a newer release if any, and what an update would stop. */

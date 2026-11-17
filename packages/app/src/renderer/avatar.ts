@@ -19,6 +19,7 @@ const tilePositions = (count: number): Point[] => computeStackPositions(count, 0
 // Peaceful, muted per-tile icon colors — the only splash of color; tile surfaces stay amber.
 const TILE_COLORS = ["#7FA88B", "#7C9CC4", "#C9976B", "#B58BB0", "#C7A24E", "#6FA8A0"];
 const DOT = '<span class="bean-petal-dot"></span>';
+const MOON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
 const ICONS: Record<string, string> = {
   chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
   skills: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg>',
@@ -95,10 +96,27 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
   hostDot.className = "bean-orb-host";
   hostDot.hidden = true;
   orbSlot.append(hostDot);
+  // The owner's away mode (#906), one pill per surface in the orb's top-right corner: a moon and
+  // the surface's initial, so Discord and Teams read apart at a glance; the full names are on the tooltip.
+  const awayPills = document.createElement("span");
+  awayPills.className = "bean-orb-away";
+  awayPills.hidden = true;
+  orbSlot.append(awayPills);
+  let coreTitle = "Bean";
+  let awayTitle = "";
+  const setTitle = (): void => { el.title = coreTitle + awayTitle; };
+  window.bean.onAwayChanged((bots) => {
+    awayPills.hidden = bots.length === 0;
+    awayPills.innerHTML = bots.map((b) =>
+      `<span class="bean-orb-away-pill">${MOON}${b === "teams" ? "T" : "D"}</span>`).join("");
+    awayTitle = bots.length ? ` · away on ${bots.map((b) => (b === "teams" ? "Teams" : "Discord")).join(" and ")}` : "";
+    setTitle();
+  });
   const showCore = (s: CoreStatus): void => {
     const host = s.kind === "remote" ? s.host : undefined;
     if (title) title.textContent = host ? `Bean · ${host}` : "Bean";
-    el.title = host ? `Bean on ${host}` : "Bean";
+    coreTitle = host ? `Bean on ${host}` : "Bean";
+    setTitle();
     hostDot.hidden = !host;
     hostDot.classList.toggle("bean-orb-host--off", s.kind === "remote" && s.state !== "attached");
   };
