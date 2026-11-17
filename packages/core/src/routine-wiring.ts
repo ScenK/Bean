@@ -107,8 +107,8 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     saveStates: (s) => saveRoutineStates(routineStateFile(dir), s),
     runRoutine: host.runOneRoutine,
     // After each run: a dispatch following a todo this run finished is now owed.
-    deliverDigest: async (r, result, brief) => {
-      const body = await host.deliverDigest(r, result, brief);
+    deliverDigest: async (r, result, brief, origin) => {
+      const body = await host.deliverDigest(r, result, brief, origin);
       void sweep();
       return body;
     },

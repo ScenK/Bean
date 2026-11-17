@@ -22,3 +22,13 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   until #921 wires the loopback.
 - `keep_brief = 0` (incognito desktop chat) → `brief` stays NULL. Delivered rows are pruned after
   30 days at start.
+- **The chatops notice is chat context (#920).** `enqueueDispatchNotice` posts the finish line +
+  brief (`displayBody`) and saves `dispatchContext` — the brief fenced as run output — with
+  `context: true`, whatever `routineDigestContext` says. The bot appends to the conversation key
+  at delivery, so a `/new` mid-run lands it in the fresh history.
+- **Sink skip.** A triggered run carries its chat origin (`RunOpts.origin`) to `deliverDigest`,
+  which drops chat sinks that resolve to it (`sameChatTarget`: transport + resolved conversation;
+  no channel on both = owner DM, except a Discord `user` sink). A run that took todos
+  (`RoutineRunResult.todoIds`) instead skips only conversations every one of its todos was
+  dispatched from (`todoDispatchOrigins`) — so a drain started from a card still reaches its sinks.
+  The saved sprout is never changed.

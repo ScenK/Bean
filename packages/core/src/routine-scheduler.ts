@@ -26,8 +26,9 @@ export interface RoutineSchedulerDeps {
    * the run's Stop (`stopRuns`). */
   runRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal) => Promise<RoutineRunResult>;
   /** `brief` = the trigger asked for the run's brief: resolve with the chat sinks' body even when
-   * the sprout has no chat sink. */
-  deliverDigest: (routine: Routine, result: RoutineRunResult, brief?: boolean) => Promise<string | void>;
+   * the sprout has no chat sink. `origin` = the chat conversation that started this run, which
+   * gets the result itself (#920). */
+  deliverDigest: (routine: Routine, result: RoutineRunResult, brief?: boolean, origin?: RunOrigin) => Promise<string | void>;
   /** Chat sinks that can't be delivered (an unknown destination name): the run is recorded
    * needs-attention with these lines appended, before the record is saved. Absent = none. */
   sinkProblems?: (routine: Routine) => string[];
@@ -54,6 +55,13 @@ export interface RoutineSchedulerDeps {
 }
 
 export interface WatchCheckResult { newItems: number; error?: string }
+
+/** The chat conversation a triggered run was started from (`channel` absent = the owner's DM). */
+export interface RunOrigin { transport: "discord" | "teams"; channel?: string }
+
+/** A triggered run's asks: `brief` = each outcome carries its run's brief; `origin` = where the
+ * result goes back to, so a chat sink resolving there is skipped (#920). */
+export interface RunOpts { brief?: boolean; origin?: RunOrigin }
 
 /** One admitted run. `id` = its RunRecord id (absent when it threw before a record existed).
  * `brief` = the chat sinks' body for this run alone, capped at RUN_BRIEF_MAX — only when the
@@ -97,9 +105,9 @@ export function withSinkProblems(result: RoutineRunResult, problems: string[]): 
 interface FillResult { runs: RunOutcome[]; stopped: boolean }
 
 /** Delivers an unstopped run and, when asked, keeps its capped brief on `run`. */
-async function deliver(deps: RoutineSchedulerDeps, routine: Routine, result: RoutineRunResult, run: RunOutcome, brief: boolean): Promise<void> {
-  const body = await deps.deliverDigest(routine, result, brief);
-  if (brief && typeof body === "string") run.brief = body.length > RUN_BRIEF_MAX ? `${body.slice(0, RUN_BRIEF_MAX - 1)}…` : body;
+async function deliver(deps: RoutineSchedulerDeps, routine: Routine, result: RoutineRunResult, run: RunOutcome, opts: RunOpts): Promise<void> {
+  const body = await deps.deliverDigest(routine, result, opts.brief ?? false, ...(opts.origin ? [opts.origin] : []));
+  if (opts.brief && typeof body === "string") run.brief = body.length > RUN_BRIEF_MAX ? `${body.slice(0, RUN_BRIEF_MAX - 1)}…` : body;
 }
 
 const outcomeOf = (result: RoutineRunResult): RunOutcome =>
@@ -219,7 +227,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   /** The single run (maxParallel 1, plain routines): one runRoutine call drains the queue.
    * Resolves with the run's status (a throw before a record exists counts as failed). A stopped
    * run is recorded but goes to no sink and triggers no post-run watch poll. */
-  async function execute(routine: Routine, ctl: AbortController, brief: boolean): Promise<FillResult> {
+  async function execute(routine: Routine, ctl: AbortController, opts: RunOpts): Promise<FillResult> {
     let run: RunOutcome = { status: "failed" };
     let stoppedRun = false;
     try {
@@ -228,7 +236,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       run = outcomeOf(result);
       stoppedRun = result.stopped === true;
       await appendAndPrune(routine.name, result.record);
-      if (!stoppedRun) await deliver(deps, routine, result, run, brief);
+      if (!stoppedRun) await deliver(deps, routine, result, run, opts);
     } catch (err) {
       console.error(`bean: routine "${routine.name}" run failed`, err);
     } finally {
@@ -241,7 +249,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   /** A maxParallel worker: claim a todo, run it as its own run, repeat until nothing's pending.
    * A lost claim ends the worker with no bubble, record or digest. Resolves with one status per
    * claimed todo. */
-  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>, ctl: AbortController, brief: boolean): Promise<FillResult> {
+  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>, ctl: AbortController, opts: RunOpts): Promise<FillResult> {
     const runs: RunOutcome[] = [];
     let stoppedRun = false;
     // A stopped worker claims nothing more; a todo whose claim was in flight at the Stop still
@@ -261,7 +269,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
           } finally {
             bump(routine.name, -1);
           }
-          if (!result.stopped) await deliver(deps, routine, result, runs[at]!, brief);
+          if (!result.stopped) await deliver(deps, routine, result, runs[at]!, opts);
         } catch (err) {
           console.error(`bean: routine "${routine.name}" todo run failed`, err);
         }
@@ -278,17 +286,17 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   /** Starts runs into the routine's free slots (maxParallel − live). The slots are taken
    * synchronously, before any await, so concurrent fills never overcommit. Resolves when the
    * started runs end, with one outcome per run they made. Each run/worker's Stop handle is
-   * registered here, with its slot. `brief` = each run's outcome carries its brief. */
-  async function fill(routine: Routine, brief = false): Promise<FillResult> {
+   * registered here, with its slot. */
+  async function fill(routine: Routine, opts: RunOpts = {}): Promise<FillResult> {
     const slots = deps.claimTodo ? parallelSlots(routine) : 1;
     const free = slots - count(routine.name);
     if (free <= 0) return { runs: [], stopped: false };
     running.set(routine.name, count(routine.name) + free);
-    if (slots === 1 || !deps.claimTodo) return execute(routine, admit(routine.name), brief);
+    if (slots === 1 || !deps.claimTodo) return execute(routine, admit(routine.name), opts);
     const claim = deps.claimTodo;
     const ctls = Array.from({ length: free }, () => admit(routine.name));
     await stamp(routine.name).catch((err: unknown) => console.error(`bean: routine "${routine.name}" stamp failed`, err));
-    const all = await Promise.all(ctls.map((ctl) => worker(routine, claim, ctl, brief)));
+    const all = await Promise.all(ctls.map((ctl) => worker(routine, claim, ctl, opts)));
     return { runs: all.flatMap((r) => r.runs), stopped: all.some((r) => r.stopped) };
   }
 
@@ -541,7 +549,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       const reason = refuseRun(routine);
       if (reason) return { started: false, reason };
       checking.delete(name); // an in-flight tick's due decision for it is now stale
-      const ran = await fill(routine, opts.brief); // no await between the check above and fill's synchronous slot grab
+      const ran = await fill(routine, opts); // no await between the check above and fill's synchronous slot grab
       return {
         started: true,
         ...(ran.runs.length ? { status: triggerOutcome(ran.runs).status, runs: ran.runs } : {}),
@@ -555,9 +563,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     },
     /** Run or check (pick with `sproutTriggerAction`), answering as soon as the run is admitted:
      * `done` resolves when every slot this call took has finished. A run also refuses a
-     * todo-driven sprout whose queue is empty (runNow would start a no-op drain). `brief` = each
-     * run's outcome carries its brief. */
-    async trigger(name: string, action: "run" | "check", opts: { brief?: boolean } = {}): Promise<TriggerResult> {
+     * todo-driven sprout whose queue is empty (runNow would start a no-op drain). */
+    async trigger(name: string, action: "run" | "check", opts: RunOpts = {}): Promise<TriggerResult> {
       const routine = (await deps.loadRoutines()).find((r) => r.name === name);
       if (!routine) return { status: "refused", reason: noSuch(name) };
       if (action === "check") return { status: "checked", result: await check(name, routine) };
@@ -567,7 +574,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       const reason = refuseRun(routine);
       if (reason) return { status: "refused", reason };
       checking.delete(name);
-      return { status: "started", done: fill(routine, opts.brief).then((r) => triggerOutcome(r.runs)) }; // fill takes its slots synchronously
+      return { status: "started", done: fill(routine, opts).then((r) => triggerOutcome(r.runs)) }; // fill takes its slots synchronously
     },
     /** Enable from review: check the source again, seed from THAT check (not the build-time
      * preview), optionally queue what's already there, then save enabled. */

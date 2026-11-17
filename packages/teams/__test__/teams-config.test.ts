@@ -70,3 +70,11 @@ test("DMs and group chats are unchanged", () => {
   const group = { id: "19:g@thread.v2", conversationType: "groupChat" };
   expect(deliveredAppend({ channel: group.id, body: "b" }, group, "b", "7")).toBeNull();
 });
+
+test("a sprout dispatch notice (context + displayBody) saves its framed body once, at the origin", () => {
+  const thread = { ...bare, id: `${bare.id};messageid=5` };
+  const notice = { channel: thread.id, context: true, displayBody: "shown", body: "framed" };
+  expect(deliveredAppend(notice, thread, "shown", "7")).toEqual({ key: thread.id, body: "framed" });
+  const dm = { id: "a:1", conversationType: "personal" };
+  expect(deliveredAppend({ context: true, displayBody: "shown", body: "framed" }, dm, "shown", "7")).toEqual({ key: "a:1", body: "framed" });
+});

@@ -114,7 +114,8 @@ export interface StepResult {
 /** `stopped`: the user stopped it mid-run — status failed, a fixed digest, and no sink gets it.
  * `footer`: code-owned text already appended to `digest` (the retro proposal line), so a chat
  * brief built from `results` can re-append it. */
-export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true; footer?: string }
+/** `todoIds` = every todo this run took, in order (absent = it took none). */
+export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true; footer?: string; todoIds?: string[] }
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
@@ -601,11 +602,13 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   const attention: string[] = [];
   let stoppedAt: number | undefined; // the step the user's Stop landed on
   let soleLabelPrefix = ""; // only meaningful when the run ends up with exactly one result
+  const todoIds: string[] = [];
 
   /** Runs the pipeline for one claimed (already `running`) todo and settles its status. */
   const runTodo = async (item: TodoItem, setStatus: NonNullable<RoutineRunnerDeps["todos"]>["setStatus"]): Promise<void> => {
     const labelPrefix = `[todo: ${item.text}] `;
     soleLabelPrefix = labelPrefix;
+    todoIds.push(item.id);
     // Drain-time gate (#283), against this run's definition: the owner may have added a delegate
     // or command step since a member queued this. Their todo text must never reach one.
     if (item.createdBy && !memberTodoEligible(routine)) {
@@ -673,7 +676,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     const digest = `${STOPPED_BY_YOU} at ${stepLabel(routine.steps, stoppedAt)}`;
     return {
       record: { id, startedAt, finishedAt: now().toISOString(), status: "failed", digest, steps: stepsOf() },
-      digest, results, stopped: true,
+      digest, results, stopped: true, ...(todoIds.length ? { todoIds } : {}),
     };
   }
 
@@ -693,5 +696,5 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     digest,
     steps: stepsOf(),
   };
-  return { record, digest, results };
+  return { record, digest, results, ...(todoIds.length ? { todoIds } : {}) };
 }

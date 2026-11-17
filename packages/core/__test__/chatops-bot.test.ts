@@ -3896,7 +3896,7 @@ describe("sprout runs from chat (#636)", () => {
     expect(card).toMatchObject({ kind: "sprout-run", plan: { routine: "pr-digest", action: "run" } });
     await t.bot.onCardAction(tap("run-sprout", card.proposalId), effects);
     expect(t.triggered).toEqual([["pr-digest", "run", { channel: "c1", actor: "u1" }]]);
-    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "sprout-run", result: "Started (by u1) — I'll post here when it finishes." });
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "sprout-run", result: "Started — I'll post the result here." });
     await t.bot.onCardAction(tap("run-sprout", card.proposalId), effects);
     expect(effects.posted.at(-1)).toBe("That sprout card expired — ask me again.");
     expect(t.triggered).toHaveLength(1);

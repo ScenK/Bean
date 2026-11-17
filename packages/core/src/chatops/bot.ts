@@ -1205,7 +1205,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     let result: string;
     try {
       const t = await sprouts.trigger(plan.routine, plan.action, { ...(pending.channel ? { channel: pending.channel } : {}), ...(action.fromId ? { actor: action.fromId } : {}) });
-      result = t.status === "started" ? `Started (by ${action.fromName}) — I'll post here when it finishes.`
+      result = t.status === "started" ? "Started — I'll post the result here."
         : t.status === "checked" ? sproutCheckText(t.result, plan.queuesNew) : `Didn't start: ${t.reason}`;
     } catch (err) {
       result = `Couldn't start: ${err instanceof Error ? err.message : String(err)}`;
