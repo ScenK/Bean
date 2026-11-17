@@ -88,7 +88,17 @@ export interface TodoProposalCardInput {
   proposalId: string;
   routine: string;
   text: string;
+  /** Pending todos a queued one would wait behind ("N ahead in queue"); absent = unknown. */
+  ahead?: number;
+  /** Offer Run now (#923): only the owner's card, on a host that runs sprouts. */
+  runNow?: boolean;
 }
+
+/** The Queue button's line on a todo card. */
+export const todoQueueLine = (ahead: number | undefined): string | undefined =>
+  ahead === undefined ? undefined : ahead === 0 ? "Queue: nothing ahead in queue" : `Queue: ${ahead} ahead in queue`;
+/** The Run now button's line on a todo card. */
+export const TODO_RUN_NOW_LINE = "Run now: runs only this task";
 
 /** "Run the X sprout" (#636): the desktop card's contents. `result` set = tapped or cancelled —
  * the card is updated in place with it and shows no buttons. */
@@ -114,6 +124,8 @@ export interface TodoResultCardInput {
   routine: string;
   queuedBy: string;
   outcome: "queued" | "cancelled";
+  /** What happens next (#923): "Running only this task…", "Queued — I'll report here…". */
+  note?: string;
 }
 
 /** A fact the remember tool saved directly (no confirm step) — the card is the receipt,

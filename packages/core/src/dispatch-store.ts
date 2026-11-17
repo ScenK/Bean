@@ -117,6 +117,24 @@ export function undeliveredDispatches(file: string): Dispatch[] {
     .all() as unknown as DispatchRow[]).map(toDispatch);
 }
 
+/** One conversation's dispatches, oldest first (open ones included). `conversation` absent = a
+ * chatops surface's owner DM. */
+export function conversationDispatches(file: string, surface: DispatchSurface, conversation?: string): Dispatch[] {
+  return (openDb(file).prepare(`${SELECT} WHERE surface = ? AND conversation IS ? ORDER BY created_at ASC`)
+    .all(surface, conversation ?? null) as unknown as DispatchRow[]).map(toDispatch);
+}
+
+/** A desktop chat thread's dispatches — what its restored sprout cards look up (#921). */
+export function threadDispatches(file: string, thread: string): Dispatch[] {
+  return conversationDispatches(file, "desktop", thread);
+}
+
+/** The origin has the result (a restored desktop chat read it): no sweep hands it off again. */
+export function markDispatchDelivered(file: string, id: string, now: () => Date = () => new Date()): void {
+  openDb(file).prepare("UPDATE sprout_dispatches SET delivered_at = ? WHERE id = ? AND status IS NOT NULL AND delivered_at IS NULL")
+    .run(now().toISOString(), id);
+}
+
 /** The line a closed dispatch posts at its origin: the fixed finish line, then its brief. */
 export function dispatchNotice(d: Dispatch): string {
   const line = sproutFinishText(d.routine, d.status ?? "failed");
@@ -199,6 +217,7 @@ export function withDispatch(
       id = openDispatch(deps.file, {
         surface: deps.surface, routine: name,
         ...(origin.channel ? { conversation: origin.channel } : {}), ...(origin.actor ? { actor: origin.actor } : {}),
+        ...(origin.keepBrief === false ? { keepBrief: false } : {}),
       }, randomUUID, deps.now);
     } catch (err) {
       console.error(`bean: recording the dispatch of "${name}" failed — no finish reply`, err);
@@ -214,6 +233,6 @@ export function withDispatch(
         return deps.deliver();
       })
       .catch((err: unknown) => console.error(`bean: finishing the dispatch of "${name}" failed`, err));
-    return t;
+    return { ...t, jobId: id };
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
+import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, applySproutEnd, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
@@ -61,6 +61,54 @@ describe("normalizeForSave", () => {
     expect(pending!.state).toBe("expired");
     expect(running).toMatchObject({ state: "done", result: "Started — see the Dashboard for how it went" });
     expect(done).toMatchObject({ state: "done", result: "Finished" });
+  });
+
+  it("an admitted sprout run keeps its job id and stays running through a save, for the restore to settle", () => {
+    const plan = { routine: "r", action: "run" as const, actionLine: "Runs its steps once now", resultsTo: "a note", paused: false, queuesNew: false };
+    const [running] = restoreItems(JSON.parse(JSON.stringify([{ kind: "sprout", id: "s1", plan, state: "running", jobId: "j1" }])));
+    expect(running).toMatchObject({ state: "running", jobId: "j1" });
+  });
+
+  it("a sprout run's end settles its card and loops the result back once", () => {
+    const plan = { routine: "digest", action: "run" as const, actionLine: "x", resultsTo: "a note", paused: false, queuesNew: false };
+    const items: ChatItem[] = [{ kind: "sprout", id: "s1", plan, state: "running", jobId: "j1" }];
+    const end = { jobId: "j1", status: "needs-attention", text: "digest needs attention ⚠" };
+    const first = applySproutEnd(items, end);
+    expect(first.items[0]).toMatchObject({ state: "done", result: "Needs attention" });
+    expect(first.loopback).toEqual({
+      text: '[sprout result for "digest"]: digest needs attention ⚠\n\nBriefly summarize this outcome for the user in your own words.',
+      display: '🌱 Sprout "digest" — needs attention', source: "loopback",
+    });
+    expect(applySproutEnd(first.items, end).loopback).toBeUndefined(); // a repeat is a no-op
+    expect(applySproutEnd(items, { ...end, jobId: "other" }).loopback).toBeUndefined();
+  });
+
+  it("a todo card run or queued (#923) settles on its result like a sprout card; a legacy queued card stays", () => {
+    const todo = { routine: "nightly", text: "fix it" };
+    const items: ChatItem[] = [
+      { kind: "todo", id: "t1", todo, state: "queued", jobId: "j1", result: "Queued" },
+      { kind: "todo", id: "t2", todo, state: "queued" },
+    ];
+    const out = applySproutEnd(items, { jobId: "j1", status: "ok", text: "nightly finished ✓" });
+    expect(out.items[0]).toMatchObject({ state: "done", result: "Finished" });
+    expect(out.loopback?.display).toBe('🌱 Sprout "nightly" — finished');
+    expect(normalizeForSave([items[1]!])[0]).toMatchObject({ state: "queued" });
+    expect(normalizeForSave([{ kind: "todo", id: "t3", todo, state: "sending" }])[0]).toMatchObject({ state: "done" });
+    expect(settleRestoredSprouts([items[0]!], [{ jobId: "j1" }]).changed).toBe(false); // still waiting in line
+  });
+
+  it("restored running sprout cards settle from main's record: ended loops back, running stays, unknown can't say", () => {
+    const plan = { routine: "r", action: "run" as const, actionLine: "x", resultsTo: "a note", paused: false, queuesNew: false };
+    const items: ChatItem[] = ["a", "b", "c"].map((j) => ({ kind: "sprout" as const, id: j, plan, state: "running" as const, jobId: j }));
+    const out = settleRestoredSprouts(items, [{ jobId: "a", status: "interrupted", text: "r was interrupted ✗" }, { jobId: "b" }]);
+    expect(out.items.map((it) => [it.id, "state" in it && it.state, it.kind === "sprout" && it.result])).toEqual([
+      ["a", "done", "Interrupted — Bean restarted before it finished, nothing was re-run"],
+      ["b", "running", undefined],
+      ["c", "done", "Started — see the Dashboard for how it went"],
+    ]);
+    expect(out.loopbacks.map((l) => l.display)).toEqual(['🌱 Sprout "r" — interrupted']);
+    expect(out.changed).toBe(true);
+    expect(settleRestoredSprouts([items[1]!], [{ jobId: "b" }]).changed).toBe(false);
   });
 
   it("restores a send card inert: pending and sending expire, a sent one stays sent", () => {

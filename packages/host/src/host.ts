@@ -8,7 +8,7 @@ import {
   loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
   makeOpenAIConverse, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
   deleteMemories, extractMemories, maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, holdSchedulerLease, enqueueOutbox,
-  answerRoutineTrigger, sproutRunFacts, withDispatch, enqueueDispatchNotice, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
+  answerRoutineTrigger, answerTodoRun, queueTodoDispatch, pendingTodoCount, resolveTodoRoutine, sproutRunFacts, withDispatch, enqueueDispatchNotice, threadDispatches, markDispatchDelivered, dispatchContext, type Dispatch, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
   loadNoteHistory, saveNoteImage, loadNoteImage, detectClis, loginShellPath, resolveCliPath, deliver, loadRoutines, saveRoutine,
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
   listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
@@ -285,9 +285,9 @@ export async function createHost(deps: HostDeps) {
     },
     // Headless: rebase each to its next slot (still no catch-up), or the scheduler's missed guard
     // would skip it forever.
-    // A dispatch's result goes back where it was asked (#919). Desktop origins: #921's loopback.
+    // A dispatch's result goes back where it was asked (#919); a desktop chat's loops back (#921).
     deliverDispatch: async (d) => {
-      if (d.surface === "desktop") return false;
+      if (d.surface === "desktop") return deliverDesktopSprout?.(d) ?? false;
       await enqueueDispatchNotice(outboxDir(dir), { ...d, surface: d.surface });
       return true;
     },
@@ -299,24 +299,44 @@ export async function createHost(deps: HostDeps) {
     } : {}),
   });
   const routineScheduler = routines.scheduler;
+  const SPROUTS_STANDBY = "Sprouts are paused on this Bean — another Bean process runs them for this data directory.";
+  // Set once the chat sessions exist; a sweep before then leaves desktop results owed.
+  let deliverDesktopSprout: ((d: Dispatch) => boolean) | undefined;
+  let threadsOfChat: ((mountKey: string) => string[]) | undefined;
+  const triggerSprout = (name: string, action: "run" | "check", opts: Parameters<typeof routineScheduler.trigger>[2]) => {
+    if (action !== "run") return routineScheduler.trigger(name, action);
+    if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
+    // Busy until the admitted run finishes, not just until it is admitted.
+    let finished: Promise<unknown> = Promise.resolve();
+    const admitted = routineScheduler.trigger(name, action, opts).then((t) => { if (t.status === "started") finished = t.done; return t; });
+    void track(admitted.then(() => finished)).catch(() => {});
+    return admitted;
+  };
+  // Run now for one queued todo (#923): busy like a sprout run, until that run ends.
+  const runTodoNow = (name: string, todoId: string): ReturnType<typeof routineScheduler.runTodo> => {
+    if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
+    let finished: Promise<unknown> = Promise.resolve();
+    const admitted = routineScheduler.runTodo(name, todoId).then((t) => { if (t.status === "started") finished = t.done; return t; });
+    void track(admitted.then(() => finished)).catch(() => {});
+    return admitted;
+  };
   // A bot's sprout-run tap (#637). The host runs the scheduler, so it also records the dispatch and
   // posts the finish reply to the asking conversation, across a restart (#919). Lease holder only.
   const answerSproutTrigger = (bot: ChatopsSurface, req: RoutineTrigger): Promise<RoutineTriggerAnswer> => answerRoutineTrigger(req, {
     load: () => loadRoutines(routinesPath),
     facts: (r) => sproutRunFacts(db, r),
     held: schedulerLease.held,
-    trigger: withDispatch(
-      (name, action, opts) => {
-        if (action !== "run") return routineScheduler.trigger(name, action);
-        if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
-        // Busy until the admitted run finishes, not just until it is admitted.
-        let finished: Promise<unknown> = Promise.resolve();
-        const admitted = routineScheduler.trigger(name, action, opts).then((t) => { if (t.status === "started") finished = t.done; return t; });
-        void track(admitted.then(() => finished)).catch(() => {});
-        return admitted;
-      },
-      { file: db, surface: bot, deliver: routines.deliverDispatches }),
+    trigger: withDispatch(triggerSprout, { file: db, surface: bot, deliver: routines.deliverDispatches }),
+    file: db,
+    runTodo: runTodoNow,
   });
+  // background_work's live counts (#924), for desktop chats and the bots: none on a standby host,
+  // whose scheduler isn't the one running sprouts.
+  const liveSprouts = (): { name: string; runs: number }[] | undefined => (schedulerLease.held()
+    ? routineScheduler.runningNames().map((name) => ({ name, runs: routineScheduler.runningCount(name) }))
+    : undefined);
+  // A desktop chat's sprout card (#921): the same recorded dispatch, its origin the chat thread.
+  const chatSproutTrigger = withDispatch(triggerSprout, { file: db, surface: "desktop", deliver: routines.deliverDispatches });
   const tools = detectTools(resolvedPath);
   const routineBuilder = createRoutineBuilder({
     loadRoutines: () => loadRoutines(routinesPath),
@@ -440,6 +460,8 @@ export async function createHost(deps: HostDeps) {
     runAvailable: (clientId) => !attachments.isClient(clientId),
     loadRoutines: () => loadRoutines(routinesPath),
     sproutFacts: (r) => sproutRunFacts(db, r),
+    todoAhead: (r) => pendingTodoCount(db, r),
+    backgroundWork: { stateFile: routineStateFile(dir), running: liveSprouts, threadsOf: (k) => threadsOfChat?.(k) ?? [] },
     proposeSend: sends.propose,
     imageGen: {
       generate: (a) => makeOpenAIImageGen(runtime.getApiKey())(a),
@@ -464,6 +486,28 @@ export async function createHost(deps: HostDeps) {
     onRelease: deps.onChatRelease,
     refuseStart,
     track,
+    // Lease holder only, like a bot's tap: the holder's start closes any other host's open dispatch.
+    sproutRun: (name, origin) => (schedulerLease.held()
+      ? chatSproutTrigger(name, "run", origin)
+      : Promise.resolve({ status: "refused" as const, reason: SPROUTS_STANDBY })),
+    // A todo card's Run now / Queue (#923): queued with its dispatch (any host may — the row follows a
+    // pending todo), then Run now asks this host's scheduler, lease holder only.
+    todoDispatch: async (todo, mode, origin) => {
+      resolveTodoRoutine(await loadRoutines(routinesPath), todo.routine); // throws a user-facing reason
+      const q = queueTodoDispatch(db, { ...todo, ...(mode === "run" ? { front: true } : {}) }, {
+        surface: "desktop", conversation: origin.channel, ...(origin.keepBrief === false ? { keepBrief: false } : {}),
+      });
+      if (mode === "queue") return { jobId: q.jobId, outcome: "queued" as const, ahead: q.ahead };
+      const a = await answerTodoRun(q.jobId, { file: db, held: schedulerLease.held, runTodo: runTodoNow });
+      return a.status === "started" ? { jobId: q.jobId, outcome: "running" as const }
+        : a.status === "next" ? { jobId: q.jobId, outcome: "next" as const }
+        : { jobId: q.jobId, outcome: "queued" as const, ahead: 0, reason: a.status === "refused" && a.reason === "standby" ? SPROUTS_STANDBY : "It couldn't start now" };
+    },
+    sproutOutcomes: (thread) => threadDispatches(db, thread).map((d) => {
+      if (d.status === undefined) return { jobId: d.id };
+      markDispatchDelivered(db, d.id);
+      return { jobId: d.id, status: d.status, text: dispatchContext(d) };
+    }),
     onChatTurn: (mountId) => {
       const id = `chat:${randomUUID()}`;
       chatTurnIds.set(mountId, id);
@@ -476,6 +520,9 @@ export async function createHost(deps: HostDeps) {
       };
     },
   });
+
+  deliverDesktopSprout = sessions.deliverSprout;
+  threadsOfChat = sessions.threadsOf;
 
   const getConfig = (): ConfigView => ({
     openaiApiKey: runtime.getApiKey(),
@@ -589,6 +636,7 @@ export async function createHost(deps: HostDeps) {
   // Last: a replayed autostart may answer a sprout tap at once, so the scheduler must exist.
   const bots = await startBots({
     ...deps.bots, dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
+    onRoutineRunning: liveSprouts,
   });
   // The owner's daily memory digest (#859): under the scheduler lease, to every bot running now.
   deps.onQuit(startMemoryDigest({

@@ -5,7 +5,7 @@ import {
   ConversationStore, maybeCompact, ProposalStore, RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink,
   parseDeskTurn, parseDeskResume, type DeskAckResult, loadCliModels, clisFile, LiveSessionProposalStore,
   LiveSessionRegistry, isLiveCli, findDelegateRun, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, dmAllowed, SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts,
+  makeRoles, dmAllowed, SproutRunProposalStore, parentSproutTrigger, parentSproutRunning, processParentPort, sproutRunFacts,
   recordDestination, sharedBotDeps, type AmbientLine,
 } from "@bean/core";
 import {
@@ -141,7 +141,10 @@ const bot = buildTeamsBot({
     // Spawned by the desktop app (its scheduler host): a sprout-run tap asks the app over IPC
     // (#637). A standalone Teams server has no scheduler, so it never offers runs.
     ...(processParentPort.connected() ? {
-      sprouts: { trigger: parentSproutTrigger(), facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore() },
+      sprouts: {
+        trigger: parentSproutTrigger(), facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore(),
+        running: parentSproutRunning(),
+      },
     } : {}),
   },
 });
