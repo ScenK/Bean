@@ -14,8 +14,8 @@ import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
-import type { SproutTriggerAnswer } from "./sprout-bridge.js";
-import { planSproutRun, sproutCheckText, type SproutOrigin, type SproutRunBlock } from "../sprout-trigger.js";
+import type { SproutTriggerClient } from "./sprout-bridge.js";
+import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
 import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
 import type { SendProposalStore } from "./send-proposals.js";
 import { cancelReminder } from "../reminders.js";
@@ -188,6 +188,13 @@ export interface TeamsBotDeps {
    * a non-owner's todo: the routine must be `memberTodoEligible` and the row is stamped with it.
    * Returns the routine queued on (for the receipt's "when"). */
   queueTodo: (routine: string, text: string, createdBy?: string) => Promise<Routine | void>;
+  /** Queues a confirmed todo with its dispatch row (#923), so its result is posted back to `report`
+   * (`channel` absent = the owner's DM) when it runs. `front` = Run now (ahead of every queued todo).
+   * Absent = queued todos don't report back. */
+  queueTodoDispatch?: (t: { routine: string; text: string; createdBy?: string; front?: boolean }, report: { channel?: string; actor?: string })
+    => Promise<{ routine?: Routine; jobId: string; ahead: number }>;
+  /** A routine's pending todos, for the card's "N ahead in queue". */
+  pendingTodos?: (routine: string) => Promise<number>;
   /** Names of routines with todoDriven=true — gates the propose_todo tool. `member` = only
    * `memberTodoEligible` ones (no delegate or command steps). */
   listTodoRoutines: (member: boolean) => Promise<string[]>;
@@ -282,7 +289,8 @@ export interface TeamsBotDeps {
      * answers at admission; the scheduler host records the dispatch and posts the finish reply to
      * `origin` (`channel` absent = the owner's DM), across a restart (#919). Absent = propose_sprout_run is never offered. */
     sprouts?: {
-      trigger: (name: string, action: "run" | "check", origin: SproutOrigin) => Promise<SproutTriggerAnswer>;
+      /** `todo` = Run now for the todo queued as `job` (#923). */
+      trigger: SproutTriggerClient;
       /** A sprout's pending todos and whether its watch is seeded, for planSproutRun. */
       facts: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
       proposals: SproutRunProposalStore;
@@ -995,7 +1003,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   }
 
   async function handleTodoAction(
-    kind: "queue-todo" | "cancel-todo",
+    kind: "run-todo" | "queue-todo" | "cancel-todo",
     proposalId: string | undefined,
     action: CardAction,
     isOwner: boolean,
@@ -1010,13 +1018,20 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fx.post("Only whoever asked for that todo (or the owner) can queue or cancel it.");
       return;
     }
+    // Run now is the owner's alone (#923); the role gate already refused anyone else's tap.
+    const sprouts = deps.routines?.sprouts;
+    const queueDispatch = deps.queueTodoDispatch;
+    if (kind === "run-todo" && (!isOwner || !sprouts || !queueDispatch)) {
+      await fx.post(isOwner ? "Run now isn't available here — tap Queue." : "Only the owner can run a task now — tap Queue.");
+      return;
+    }
     const pending = deps.todoProposals.claim(proposalId);
     if (!pending) {
       await fx.post("That todo draft expired — ask me to queue it again.");
       return;
     }
-    const resultCard = (outcome: "queued" | "cancelled"): object =>
-      deps.cards.todoResultCard({ routine: pending.todo.routine, queuedBy: actor, outcome });
+    const resultCard = (outcome: "queued" | "cancelled", note?: string): object =>
+      deps.cards.todoResultCard({ routine: pending.todo.routine, queuedBy: actor, outcome, ...(note ? { note } : {}) });
     const updateTo = async (card: object): Promise<void> => {
       if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
     };
@@ -1024,11 +1039,39 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await updateTo(resultCard("cancelled"));
       return;
     }
+    const name = pending.todo.routine;
+    const createdBy = pending.member ? pending.requesterId : undefined;
     try {
-      const routine = await deps.queueTodo(pending.todo.routine, pending.todo.text, pending.member ? pending.requesterId : undefined);
+      if (pending.report && queueDispatch) {
+        // Queued with its dispatch: the todo's own result is posted back here when it runs.
+        const q = await queueDispatch(
+          { routine: name, text: pending.todo.text, ...(createdBy ? { createdBy } : {}), ...(kind === "run-todo" ? { front: true } : {}) },
+          { ...pending.report, ...(action.fromId ? { actor: action.fromId } : {}) },
+        );
+        if (kind === "run-todo" && sprouts) {
+          let note: string;
+          try {
+            const t = await sprouts.trigger(name, "todo", {}, q.jobId);
+            note = t.status === "started" ? "Running only this task — I'll post the result here."
+              : t.status === "next" ? `${name} is working on another task. Yours runs next, right after it.`
+              : `Didn't start: ${t.status === "refused" ? t.reason : "unknown"}. It's first in the queue — I'll report here when it runs.`;
+          } catch (err) {
+            note = `Couldn't start: ${err instanceof Error ? err.message : String(err)}. It's first in the queue — I'll report here when it runs.`;
+          }
+          await updateTo(resultCard("queued", note));
+          await fx.post(note);
+          return;
+        }
+        const note = "Queued — I'll report here when it runs.";
+        await updateTo(resultCard("queued", note));
+        const when = q.routine ? todoRunHint(q.routine, new Date()) : "";
+        await fx.post(`Queued on "${name}"${q.ahead ? ` (${q.ahead} ahead)` : ""}.${when ? ` ${when}` : ""} I'll report here when it runs.`);
+        return;
+      }
+      const routine = await deps.queueTodo(name, pending.todo.text, createdBy);
       await updateTo(resultCard("queued"));
       const when = routine ? todoRunHint(routine, new Date()) : "";
-      await fx.post(`Queued on "${pending.todo.routine}".${when ? ` ${when}` : ""}`);
+      await fx.post(`Queued on "${name}".${when ? ` ${when}` : ""}`);
     } catch (err) {
       await fx.post(`Couldn't queue the todo: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1206,7 +1249,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     try {
       const t = await sprouts.trigger(plan.routine, plan.action, { ...(pending.channel ? { channel: pending.channel } : {}), ...(action.fromId ? { actor: action.fromId } : {}) });
       result = t.status === "started" ? "Started — I'll post the result here."
-        : t.status === "checked" ? sproutCheckText(t.result, plan.queuesNew) : `Didn't start: ${t.reason}`;
+        : t.status === "checked" ? sproutCheckText(t.result, plan.queuesNew) : `Didn't start: ${t.status === "refused" ? t.reason : "busy"}`;
     } catch (err) {
       result = `Couldn't start: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -2187,11 +2230,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (result.proposedTodo) {
           if (!(await permitted("todos", "queue tasks"))) return;
           const todo = result.proposedTodo;
+          // Reported back where it was asked (#923) — except a member's DM: only the owner's DM is
+          // a known destination.
+          const report = isOwner || !msg.direct ? (msg.direct ? {} : { channel: msg.conversationId }) : undefined;
           const pending = deps.todoProposals.add({
             todo, conversationId: msg.conversationId, proposedBy: msg.fromName, requesterId: msg.fromId, member: !isOwner,
+            ...(report && deps.queueTodoDispatch ? { report } : {}),
           });
+          const ahead = await deps.pendingTodos?.(todo.routine).catch(() => undefined);
+          const runNow = isOwner && deps.queueTodoDispatch !== undefined && can(role, "runRoutines") && deps.routines?.sprouts !== undefined;
           const activityId = await fx.postCard(deps.cards.todoProposalCard({
             proposalId: pending.id, routine: todo.routine, text: todo.text,
+            ...(ahead !== undefined ? { ahead } : {}), ...(runNow ? { runNow: true } : {}),
           }));
           deps.todoProposals.setCardActivityId(pending.id, activityId);
           return;
@@ -2296,7 +2346,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await handleSendAction(beanAction, action, fx);
         return;
       }
-      if (beanAction === "queue-todo" || beanAction === "cancel-todo") {
+      if (beanAction === "run-todo" || beanAction === "queue-todo" || beanAction === "cancel-todo") {
         await handleTodoAction(beanAction, proposalId, action, role === "owner", fx);
         return;
       }

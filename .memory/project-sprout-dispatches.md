@@ -7,7 +7,9 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
 - **Written only by the scheduler-lease holder.** `answerRoutineTrigger` refuses a run with
   `standby` when `held()` is false: the holder's `routine-wiring.ts` `start()` closes every open
   row as `interrupted` first thing (before any await), so a standby's row would be falsely
-  interrupted. Nothing is ever re-run.
+  interrupted. Nothing is ever re-run. Exception: a todo-linked row inserted **in one transaction
+  with its pending todo** (`queueTodoDispatch`) — start keeps those — so any process (a bot, a
+  standby desktop) may write one.
 - **Run-linked rows** (`todo_id` NULL) close at the trigger's `done` (`withDispatch`, which asks
   the scheduler for the run's brief); a brief is kept only when the trigger admitted exactly one
   run. **Todo-linked rows** close only in `updateTodoStatus`, in the same transaction as the todo,
@@ -48,3 +50,15 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   (`RoutineRunResult.todoIds`) instead skips only conversations every one of its todos was
   dispatched from (`todoDispatchOrigins`) — so a drain started from a card still reaches its sinks.
   The saved sprout is never changed.
+- **Todo cards: Run now / Queue (#923).** Both actions queue via `queueTodoDispatch` (todo + its
+  dispatch row; Run now at the front, lowest `ord`). Run now then asks the holder's
+  `scheduler.runTodo(name, todoId)`: a free slot runs exactly that todo (`claimTodoById`, a
+  `worker` with one claim and no post-run poll/drain) → `started`; every slot busy → `next` (it's at
+  the front, so the running drain/worker claims it; an in-memory `waiting` list runs it on the next
+  freed slot if the busy run was itself an exact one). Never interrupts. Bots send only the job id
+  (`routine-trigger` action `todo`, `job`), never the task text; `answerTodoRun` reads the row.
+  Run now is owner-only (`cardActionNeeds("run-todo")` = owner, re-checked before the claim).
+  A member's DM queues **without** a row (no member-DM destination). Cancel/delete of a pending
+  todo deletes its open row (else a restart would report it "interrupted"). Desktop: the todo card
+  keeps `jobId`, settles via the same `sprout` push/restore as a sprout card (`chatTodoDispatch`,
+  a `REMOTE_OPS` entry; no orphan matching for it on a dropped remote reply).

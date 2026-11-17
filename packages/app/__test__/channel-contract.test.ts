@@ -24,7 +24,7 @@ describe("service contract (#807)", () => {
 
   it("a remote shell reaches the chat's sprout dispatch (#922) and no other routines operation", () => {
     expect(Object.hasOwn(REMOTE_OPS, "chatSproutRun")).toBe(true);
-    expect(Object.keys(REMOTE_OPS).filter((op) => /^routine|sprout/i.test(op))).toEqual(["chatSproutRun"]);
+    expect(Object.keys(REMOTE_OPS).filter((op) => /^routine|sprout|todo/i.test(op))).toEqual(["chatSproutRun", "chatTodoDispatch"]);
     for (const key of Object.keys(IPC).filter((k) => k.startsWith("routines"))) expect(Object.hasOwn(REMOTE_OPS, key), key).toBe(false);
   });
 

@@ -4,7 +4,7 @@ import type {
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
 import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult, CoreListing, CoreStatus, CoreSwitchOutcome, CoreUpdateStatus, RemoteUpdateResult } from "../channels.js";
-import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, SproutPush } from "@bean/host";
+import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, SproutPush, TodoDispatchAnswer } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
 import type { InterruptedRunNotice } from "../ipc.js";
@@ -25,6 +25,8 @@ declare global {
       onDelegateEvent(cb: (e: DelegateEvent) => void): void;
       /** A sprout card's Run (#921): resolves at admission — `jobId`, or `reason` it didn't start. */
       chatSproutRun(name: string, thread: string, mountId: string): Promise<{ jobId?: string; reason?: string }>;
+      /** A todo card's Run now / Queue (#923): `jobId` names the dispatch its result returns under. */
+      chatTodoDispatch(routine: string, text: string, mode: "run" | "queue", thread: string, mountId: string): Promise<TodoDispatchAnswer | { reason: string }>;
       /** A sprout run this chat started has ended (its result turn's text). */
       onSproutEvent(cb: (e: SproutPush) => void): void;
       /** Start an agent session in this chat (mount); history is handed over as quoted context. */

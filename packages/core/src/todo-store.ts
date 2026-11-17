@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { openDb } from "./db.js";
-import { closeTodoDispatches } from "./dispatch-store.js";
+import { closeTodoDispatches, openDispatch, type DispatchSurface } from "./dispatch-store.js";
 
 export type TodoStatus = "pending" | "running" | "done" | "failed";
 
@@ -63,6 +63,47 @@ export async function addTodo(
   return item;
 }
 
+/** Where a todo's result goes back to (#923): the conversation it was queued from. */
+export interface TodoOrigin { surface: DispatchSurface; conversation?: string; actor?: string; keepBrief?: boolean }
+
+/** Queues a todo together with its dispatch row (#923), in one transaction: the row is never seen
+ * without its pending todo, so a scheduler-holder start (which keeps rows whose todo is pending)
+ * can't close it as interrupted — any process on this bean.db may call it. `front` = ahead of every
+ * queued todo (Run now). `ahead` = the routine's pending todos it waits behind. */
+export function queueTodoDispatch(
+  file: string, t: { routine: string; text: string; createdBy?: string; front?: boolean }, origin: TodoOrigin,
+  newId: () => string = randomUUID, now: () => Date = () => new Date(),
+): { todo: TodoItem; jobId: string; ahead: number } {
+  const text = t.text.trim();
+  if (!text) throw new Error("todo text is required");
+  if (!t.routine.trim()) throw new Error("todo sprout is required");
+  const db = openDb(file);
+  const item: TodoItem = {
+    id: newId(), routine: t.routine, text, status: "pending", createdAt: now().toISOString(), order: 0,
+    ...(t.createdBy ? { createdBy: t.createdBy } : {}),
+  };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const { lo, hi, pending } = db.prepare(
+      "SELECT COALESCE(MIN(ord), 1) AS lo, COALESCE(MAX(ord), 0) AS hi, SUM(status = 'pending') AS pending FROM todos WHERE routine = ?",
+    ).get(t.routine) as unknown as { lo: number; hi: number; pending: number | null };
+    item.order = t.front ? lo - 1 : hi + 1;
+    db.prepare("INSERT INTO todos (id, routine, text, status, created_at, ord, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(item.id, item.routine, item.text, item.status, item.createdAt, item.order, t.createdBy ?? null);
+    const jobId = openDispatch(file, { ...origin, routine: t.routine, todoId: item.id }, newId, now);
+    db.exec("COMMIT");
+    return { todo: item, jobId, ahead: t.front ? 0 : pending ?? 0 };
+  } catch (err) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+/** The routine's pending todos — what a new one would wait behind. */
+export function pendingTodoCount(file: string, routine: string): number {
+  return (openDb(file).prepare("SELECT COUNT(*) AS n FROM todos WHERE routine = ? AND status = 'pending'").get(routine) as unknown as { n: number }).n;
+}
+
 export async function listTodos(file: string, routine: string): Promise<TodoItem[]> {
   const rows = openDb(file).prepare(`${SELECT} WHERE routine = ? ORDER BY ord ASC, created_at ASC`)
     .all(routine) as unknown as TodoRow[];
@@ -108,6 +149,16 @@ export async function claimTodo(file: string, routine: string): Promise<TodoItem
   return row ? toItem(row) : undefined;
 }
 
+/** Exact-todo claim (Run now, #923): this one todo pending → running, or undefined when a drain
+ * already took it (or it was cancelled). */
+export async function claimTodoById(file: string, id: string): Promise<TodoItem | undefined> {
+  const row = openDb(file).prepare(
+    "UPDATE todos SET status = 'running' WHERE id = ? AND status = 'pending' " +
+    "RETURNING id, routine, text, status, created_at, finished_at, result_summary, ord, created_by",
+  ).get(id) as unknown as TodoRow | undefined;
+  return row ? toItem(row) : undefined;
+}
+
 export async function editTodoText(file: string, id: string, text: string): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("todo text is required");
@@ -136,11 +187,19 @@ export async function cancelPendingTodo(file: string, id: string, createdBy?: st
   const changed = createdBy === undefined
     ? openDb(file).prepare(del).run(id)
     : openDb(file).prepare(`${del} AND created_by = ?`).run(id, createdBy);
+  if (changed.changes > 0) dropTodoDispatch(file, id);
   return changed.changes > 0;
 }
 
 export async function deleteTodo(file: string, id: string): Promise<void> {
   openDb(file).prepare("DELETE FROM todos WHERE id = ?").run(id);
+  dropTodoDispatch(file, id);
+}
+
+/** A removed todo never runs: its still-open dispatch rows go too, so no restart later reports it
+ * as interrupted. */
+function dropTodoDispatch(file: string, id: string): void {
+  openDb(file).prepare("DELETE FROM sprout_dispatches WHERE todo_id = ? AND status IS NULL").run(id);
 }
 
 export async function clearFinishedTodos(file: string, routine: string): Promise<void> {
@@ -168,5 +227,6 @@ export async function renameTodosRoutine(file: string, from: string, to: string)
 }
 
 export async function deleteTodosForRoutine(file: string, routine: string): Promise<void> {
+  openDb(file).prepare("DELETE FROM sprout_dispatches WHERE status IS NULL AND todo_id IN (SELECT id FROM todos WHERE routine = ?)").run(routine);
   openDb(file).prepare("DELETE FROM todos WHERE routine = ?").run(routine);
 }

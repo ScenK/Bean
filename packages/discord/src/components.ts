@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, rememberedScopeLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, TODO_RUN_NOW_LINE, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -170,12 +170,15 @@ function noteResultCard(input: NoteResultCardInput): object {
 }
 
 function todoProposalCard(input: TodoProposalCardInput): object {
+  const lines = [...(input.runNow ? [TODO_RUN_NOW_LINE] : []), todoQueueLine(input.ahead)].filter((l) => l !== undefined);
   return {
     embeds: [{
       title: `Queue a todo on "${input.routine}"`,
       description: input.text,
+      ...(lines.length ? { footer: { text: lines.join(" · ") } } : {}),
     }],
     components: [row([
+      ...(input.runNow ? [{ type: BUTTON, style: 1, label: "Run now", custom_id: `bean:run-todo:${input.proposalId}` }] : []),
       { type: BUTTON, style: 3, label: "Queue", custom_id: `bean:queue-todo:${input.proposalId}` },
       { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-todo:${input.proposalId}` },
     ])],
@@ -213,7 +216,7 @@ export function sendCard({ proposalId, body, options, pick, result }: SendCardIn
 
 function todoResultCard(input: TodoResultCardInput): object {
   const title = input.outcome === "queued" ? `Queued by ${input.queuedBy}` : "Cancelled";
-  return { embeds: [{ title, description: input.routine }], components: [] };
+  return { embeds: [{ title, description: input.note ? `${input.routine}\n${input.note}` : input.routine }], components: [] };
 }
 
 // Same contents as the desktop card; once tapped (`result` set) it shows the outcome and no buttons.

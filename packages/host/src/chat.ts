@@ -38,6 +38,8 @@ export interface ChatHandlerDeps {
   loadRoutines?: () => Promise<Routine[]>;
   /** A sprout's pending todos and whether its watch is seeded — enables propose_sprout_run. */
   sproutFacts?: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
+  /** A routine's pending todos: a todo card's "N ahead in queue" (#923). */
+  todoAhead?: (routine: string) => number;
   /** Enables propose_send: matches the spoken destination and keeps the proposal for the Send tap. */
   proposeSend?: (destination: string, body: string) => SendCard;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
@@ -119,6 +121,9 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       delete result.proposedSend;
     }
     if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts);
+    if (result.proposedTodo && deps.todoAhead) {
+      try { result.proposedTodo = { ...result.proposedTodo, ahead: deps.todoAhead(result.proposedTodo.routine) }; } catch { /* the card just omits it */ }
+    }
     if (imageTool && imageTool.paths.length > 0) {
       result.generatedImages = await Promise.all(imageTool.paths.map(async (path) => ({
         path,

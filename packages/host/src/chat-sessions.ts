@@ -28,9 +28,17 @@ export interface ChatSessionsDeps {
   /** Runs a sprout for a chat, recording its dispatch (`withDispatch`, surface desktop): `jobId`
    * names it. Absent = sprouts don't run from chats here. */
   sproutRun?: (name: string, origin: SproutOrigin) => Promise<TriggerResult & { jobId?: string }>;
+  /** A todo card's Run now / Queue (#923): queues the todo with its dispatch (origin = the chat's
+   * thread); Run now then runs only it (`running`) or leaves it first in line (`next`). `reason` = it
+   * didn't start (still queued). Absent = the card can't dispatch here. */
+  todoDispatch?: (todo: { routine: string; text: string }, mode: "run" | "queue", origin: { channel: string; keepBrief: boolean })
+    => Promise<TodoDispatchAnswer>;
   /** A restored thread's sprout dispatches, the closed ones marked delivered (#921). */
   sproutOutcomes?: (thread: string) => SproutOutcome[];
 }
+
+/** What a todo card's tap did (#923): `jobId` names the dispatch its result comes back under. */
+export interface TodoDispatchAnswer { jobId: string; outcome: "running" | "next" | "queued"; ahead?: number; reason?: string }
 
 /** A chat sprout run that was admitted but couldn't be recorded: it runs on, with no result turn. */
 export const SPROUT_UNRECORDED = "Started — see the Dashboard for how it went";
@@ -197,6 +205,22 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       const started: SproutStarted = { mountId: k, jobId: t.jobId, name };
       deps.push(k, "sprout", started);
       return { jobId: t.jobId };
+    },
+    /** A todo card's Run now / Queue (#923). Its result reaches the chat holding `thread` as a
+     * `sprout` push, like a sprout card's. */
+    todoDispatch: async (client: ClientId, mountId: unknown, routine: unknown, text: unknown, mode: unknown, thread: unknown): Promise<TodoDispatchAnswer | { reason: string }> => {
+      const k = key(client, mountId);
+      if (typeof routine !== "string" || !routine || typeof text !== "string" || !text.trim()) throw new Error("todo needs a sprout and a task");
+      if (mode !== "run" && mode !== "queue") throw new Error("mode must be run or queue");
+      if (typeof thread !== "string" || !THREAD_ID.test(thread)) throw new Error("chat thread id must be a UUID");
+      const pinned = deps.threads.pinnedOf(k);
+      const other = deps.threads.holderOf(thread) ?? sproutThreads.get(thread);
+      if ((pinned !== undefined && pinned !== thread) || (other !== undefined && other !== k)) throw new Error("this chat saves a different chat thread");
+      const refused = mode === "run" ? deps.refuseStart?.() : undefined;
+      if (refused) return { reason: refused };
+      if (!deps.todoDispatch) return { reason: "Sprouts don't take tasks from chats on this Bean." };
+      sproutThreads.set(thread, k);
+      return deps.todoDispatch({ routine, text }, mode, { channel: thread, keepBrief: !deps.memory.isIncognito(k) });
     },
     /** A desktop dispatch's hand-off: pushed to the chat that holds its thread. False = no open chat
      * has it yet (it's delivered when that thread is restored); a thread that no chat holds and

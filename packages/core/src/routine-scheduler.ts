@@ -39,6 +39,9 @@ export interface RoutineSchedulerDeps {
   hasPendingTodos?: (routine: string) => Promise<boolean>;
   /** Atomic pending → running for maxParallel workers. Absent = every routine runs one at a time. */
   claimTodo?: (routine: string) => Promise<TodoItem | undefined>;
+  /** Run now (#923): this one todo pending → running; undefined = a drain took it (or it's gone).
+   * Absent = no exact-todo runs. */
+  claimTodoById?: (id: string) => Promise<TodoItem | undefined>;
   /** Watch triggers (all optional — absent = watch routines never poll). */
   pollWatch?: (watch: RoutineWatch) => Promise<WatchItem[]>;
   watchSeen?: WatchSeenDeps;
@@ -75,6 +78,8 @@ export interface TriggerOutcome { status: RunStatus; runs: number; ok: number; n
 
 export type TriggerResult =
   | { status: "started"; done: Promise<TriggerOutcome> }
+  /** Run now with every slot busy (#923): the todo waits at the front of the queue and runs next. */
+  | { status: "next" }
   | { status: "refused"; reason: string }
   | { status: "checked"; result: WatchCheckResult };
 
@@ -158,6 +163,10 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   // due time forever, so tick() needs to remember "already handled as missed" itself rather
   // than re-deriving it — a disk round-trip would also just re-observe the same stale due date.
   const missedNames = new Set<string>();
+  // Run-now todos that found every slot busy (#923), per routine, oldest first: a freed slot runs
+  // the next one. A drain or worker usually takes it first (it's at the queue's front), and then its
+  // exact claim just loses. In memory only — after a restart the queue's front order still holds.
+  const waiting = new Map<string, string[]>();
   let timer: ReturnType<typeof setInterval> | undefined;
   const checkSinks = (routine: Routine, result: RoutineRunResult): RoutineRunResult =>
     withSinkProblems(result, deps.sinkProblems?.(routine) ?? []);
@@ -214,6 +223,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     const left = count(routine.name) - 1;
     if (left > 0) running.set(routine.name, left);
     else running.delete(routine.name);
+    const next = waiting.get(routine.name)?.shift();
+    if (waiting.get(routine.name)?.length === 0) waiting.delete(routine.name);
+    if (next !== undefined && !stopped && mayFire()) void runExact(routine, next); // settles its own errors
     if (!ran || !routine.watch || stopped || !mayFire()) return;
     // Against the current definition: a watch disabled mid-run must not run its check again.
     void deps.loadRoutines().then(async (all) => {
@@ -246,10 +258,23 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     return { runs: [run], stopped: stoppedRun };
   }
 
+  /** Run now (#923): one slot, taken synchronously, runs exactly this todo — never the rest of the
+   * queue, and its end starts no post-run poll or drain. A lost claim (a drain took it) frees the
+   * slot with no run. Undefined = no free slot (nothing taken). */
+  function runExact(routine: Routine, todoId: string): Promise<FillResult> | undefined {
+    const claimById = deps.claimTodoById;
+    if (!claimById || refuseRun(routine)) return undefined;
+    running.set(routine.name, count(routine.name) + 1);
+    let claimed = false;
+    const once = (): Promise<TodoItem | undefined> => (claimed ? Promise.resolve(undefined) : (claimed = true, claimById(todoId)));
+    return worker(routine, once, admit(routine.name), {}, false);
+  }
+
   /** A maxParallel worker: claim a todo, run it as its own run, repeat until nothing's pending.
+   * `postRun` false = its end polls nothing (a Run-now run, #923).
    * A lost claim ends the worker with no bubble, record or digest. Resolves with one status per
    * claimed todo. */
-  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>, ctl: AbortController, opts: RunOpts): Promise<FillResult> {
+  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>, ctl: AbortController, opts: RunOpts, postRun = true): Promise<FillResult> {
     const runs: RunOutcome[] = [];
     let stoppedRun = false;
     // A stopped worker claims nothing more; a todo whose claim was in flight at the Stop still
@@ -278,7 +303,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       console.error(`bean: routine "${routine.name}" claim failed`, err);
     } finally {
       settleStop(routine.name, ctl);
-      release(routine, runs.length > 0 && !stoppedRun);
+      release(routine, postRun && runs.length > 0 && !stoppedRun);
     }
     return { runs, stopped: stoppedRun };
   }
@@ -575,6 +600,21 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       if (reason) return { status: "refused", reason };
       checking.delete(name);
       return { status: "started", done: fill(routine, opts).then((r) => triggerOutcome(r.runs)) }; // fill takes its slots synchronously
+    },
+    /** Run now for one queued todo (#923, `todoId` already at the queue's front): runs only it in a
+     * free slot (`started`), or, every slot busy, leaves it first in line — the running drain or
+     * worker takes it next, else the next freed slot runs it (`next`). Never stops a running task. */
+    async runTodo(name: string, todoId: string): Promise<TriggerResult> {
+      const routine = (await deps.loadRoutines()).find((r) => r.name === name);
+      if (!routine) return { status: "refused", reason: noSuch(name) };
+      if (!routine.todoDriven || routine.steps.length === 0 || !deps.claimTodoById) return { status: "refused", reason: `"${name}" doesn't take tasks` };
+      const run = runExact(routine, todoId); // no await between the load above and the slot grab
+      if (run) {
+        checking.delete(name);
+        return { status: "started", done: run.then((r) => triggerOutcome(r.runs)) };
+      }
+      waiting.set(name, [...(waiting.get(name) ?? []), todoId]);
+      return { status: "next" };
     },
     /** Enable from review: check the source again, seed from THAT check (not the build-time
      * preview), optionally queue what's already there, then save enabled. */
