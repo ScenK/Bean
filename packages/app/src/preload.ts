@@ -131,6 +131,7 @@ contextBridge.exposeInMainWorld("bean", {
   coreSwitch: (id: string): Promise<CoreSwitchOutcome> => ipcRenderer.invoke(IPC.coreSwitch, id),
   coreStatus: (): Promise<CoreStatus> => ipcRenderer.invoke(IPC.coreStatus),
   onCoreStatus: (cb: (s: CoreStatus) => void) => ipcRenderer.on(IPC.coreStatusChanged, (_e, s: CoreStatus) => cb(s)),
+  onAwayChanged: (cb: (bots: ChatopsBot[]) => void) => ipcRenderer.on(IPC.awayChanged, (_e, bots: ChatopsBot[]) => cb(bots)),
   coreTakeBack: (): void => ipcRenderer.send(IPC.coreTakeBack),
   coreUpdateStatus: (): Promise<CoreUpdateStatus> => ipcRenderer.invoke(IPC.coreUpdateStatus),
   coreUpdateApply: (force: boolean): Promise<RemoteUpdateResult> => ipcRenderer.invoke(IPC.coreUpdateApply, force),

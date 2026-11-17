@@ -101,3 +101,34 @@
 }
 .bean-orb-host--off { background: var(--bean-text-dim); }
 .bean-orb-host[hidden] { display: none; }
+/* Away mode on (avatar.ts): one pill per surface in the orb's top-right corner — a moon and the
+   surface's initial in the sidebar's surface-badge type, on the agent badge's disc and ring. */
+.bean-orb-away {
+  position: absolute;
+  right: -8px;
+  top: -6px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  pointer-events: none;
+}
+.bean-orb-away[hidden] { display: none; }
+.bean-orb-away-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+  padding: 0 4px 0 3px;
+  border-radius: 7px;
+  background: var(--bean-surface);
+  box-shadow: 0 0 0 1.5px var(--bean-control-border), 0 1px 3px rgb(0 0 0 / 0.3);
+  font: 600 9px/1 ui-monospace, SFMono-Regular, monospace;
+  color: var(--bean-text);
+}
+.bean-orb-away-pill svg {
+  width: 8px;
+  height: 8px;
+  color: var(--bean-accent);
+}
