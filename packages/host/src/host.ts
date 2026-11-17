@@ -8,7 +8,7 @@ import {
   loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
   makeOpenAIConverse, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
   deleteMemories, extractMemories, maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, holdSchedulerLease, enqueueOutbox,
-  answerRoutineTrigger, sproutRunFacts, withDispatch, dispatchNotice, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
+  answerRoutineTrigger, sproutRunFacts, withDispatch, enqueueDispatchNotice, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
   loadNoteHistory, saveNoteImage, loadNoteImage, detectClis, loginShellPath, resolveCliPath, deliver, loadRoutines, saveRoutine,
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
   listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
@@ -288,7 +288,7 @@ export async function createHost(deps: HostDeps) {
     // A dispatch's result goes back where it was asked (#919). Desktop origins: #921's loopback.
     deliverDispatch: async (d) => {
       if (d.surface === "desktop") return false;
-      await enqueueOutbox(outboxDir(dir), { transport: d.surface, ...(d.conversation ? { channel: d.conversation } : {}), body: dispatchNotice(d) }, randomUUID);
+      await enqueueDispatchNotice(outboxDir(dir), { ...d, surface: d.surface });
       return true;
     },
     ...(deps.headless ? {
@@ -306,12 +306,12 @@ export async function createHost(deps: HostDeps) {
     facts: (r) => sproutRunFacts(db, r),
     held: schedulerLease.held,
     trigger: withDispatch(
-      (name, action) => {
+      (name, action, opts) => {
         if (action !== "run") return routineScheduler.trigger(name, action);
         if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
         // Busy until the admitted run finishes, not just until it is admitted.
         let finished: Promise<unknown> = Promise.resolve();
-        const admitted = routineScheduler.trigger(name, action).then((t) => { if (t.status === "started") finished = t.done; return t; });
+        const admitted = routineScheduler.trigger(name, action, opts).then((t) => { if (t.status === "started") finished = t.done; return t; });
         void track(admitted.then(() => finished)).catch(() => {});
         return admitted;
       },

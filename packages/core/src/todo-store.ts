@@ -79,12 +79,21 @@ export async function updateTodoStatus(
   now: () => Date = () => new Date(),
 ): Promise<void> {
   const finished = status === "done" || status === "failed";
-  openDb(file).prepare("UPDATE todos SET status = ?, finished_at = ?, result_summary = ? WHERE id = ?")
-    .run(status, finished ? now().toISOString() : null, resultSummary ?? null, id);
-  // A dispatch following this todo (#919) closes with the todo's own result, whichever run took it.
-  if (finished) {
-    const runStatus = status === "done" ? "ok" : resultSummary?.startsWith("needs attention:") ? "needs-attention" : "failed";
-    closeTodoDispatches(file, id, runStatus, resultSummary, now);
+  const db = openDb(file);
+  // One transaction: a dispatch following this todo (#919) closes with the todo's own result,
+  // whichever run took it — never a finished todo whose dispatch a restart then calls interrupted.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE todos SET status = ?, finished_at = ?, result_summary = ? WHERE id = ?")
+      .run(status, finished ? now().toISOString() : null, resultSummary ?? null, id);
+    if (finished) {
+      const runStatus = status === "done" ? "ok" : resultSummary?.startsWith("needs attention:") ? "needs-attention" : "failed";
+      closeTodoDispatches(file, id, runStatus, resultSummary, now);
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw err;
   }
 }
 

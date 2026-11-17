@@ -1,13 +1,14 @@
+import { readdirSync, renameSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  addTodo, claimTodo, closeDispatch, deliverDispatches, dispatchNotice, getDispatch, interruptOpenDispatches,
+  addTodo, claimTodo, closeDispatch, deliverDispatches, dispatchNotice, enqueueDispatchNotice, getDispatch, interruptOpenDispatches,
   openDispatch, recoverInterruptedTodos, undeliveredDispatches, updateTodoStatus, withDispatch,
   type Dispatch, type TriggerOutcome,
 } from "../src/index.js";
-import { closeDb } from "../src/db.js";
+import { closeDb, openDb } from "../src/db.js";
 
 let dir: string;
 let file: string;
@@ -70,6 +71,28 @@ describe("dispatch-store", () => {
     expect(getDispatch(file, id)?.deliveredAt).toBeDefined();
   });
 
+  it("a crash mid-hand-off is redelivered at the next start, into the same outbox file", async () => {
+    const outbox = join(dir, "outbox");
+    const id = openDispatch(file, { surface: "teams", conversation: "c1", routine: "digest" });
+    closeDispatch(file, id, { status: "ok" });
+    const handoff = async (d: Dispatch) => { await enqueueDispatchNotice(outbox, { ...d, surface: "teams" }); return true; };
+    // A failed hand-off releases its claim for the next sweep.
+    await deliverDispatches(file, async () => { throw new Error("busy"); });
+    expect(getDispatch(file, id)?.deliveredAt).toBeUndefined();
+    // The core dies mid-hand-off: notice written and row claimed, never marked delivered.
+    await handoff(getDispatch(file, id)!);
+    openDb(file).prepare("UPDATE sprout_dispatches SET claimed_at = 'x' WHERE id = ?").run(id);
+    await deliverDispatches(file, handoff); // a live sweep leaves the claimed row alone
+    expect(getDispatch(file, id)?.deliveredAt).toBeUndefined();
+    await restart(handoff);
+    expect(getDispatch(file, id)?.deliveredAt).toBeDefined();
+    expect(readdirSync(outbox)).toEqual([`teams-${id}.json`]); // one queued notice, not two
+    // A notice a bot is already sending isn't queued again.
+    renameSync(join(outbox, `teams-${id}.json`), join(outbox, `teams-${id}.json.sending`));
+    await enqueueDispatchNotice(outbox, { ...getDispatch(file, id)!, surface: "teams" });
+    expect(readdirSync(outbox)).toEqual([`teams-${id}.json.sending`]);
+  });
+
   it("an incognito origin stores no brief", async () => {
     const id = openDispatch(file, { surface: "desktop", conversation: "t1", routine: "digest", keepBrief: false });
     closeDispatch(file, id, { status: "ok", brief: "secret" });
@@ -94,16 +117,27 @@ describe("dispatch-store", () => {
     expect(getDispatch(file, idb)?.status).toBe("interrupted");
   });
 
+  it("a todo and its dispatch close together or not at all", async () => {
+    const a = await addTodo(file, "q", "a");
+    openDispatch(file, { surface: "teams", routine: "q", todoId: a.id });
+    await claimTodo(file, "q");
+    openDb(file).exec("DROP TABLE sprout_dispatches"); // the second write fails
+    await expect(updateTodoStatus(file, a.id, "done", "shipped")).rejects.toThrow();
+    expect(openDb(file).prepare("SELECT status FROM todos WHERE id = ?").get(a.id)).toEqual({ status: "running" });
+  });
+
   it("withDispatch records an admitted run with its origin and closes it at the end", async () => {
     let finish!: (o: TriggerOutcome) => void;
     const done = new Promise<TriggerOutcome>((r) => { finish = r; });
     const s = sink();
     let swept!: () => void;
     const delivered = new Promise<void>((r) => { swept = r; });
-    const trigger = withDispatch(async () => ({ status: "started", done }), {
+    const asked: unknown[] = [];
+    const trigger = withDispatch(async (...args) => { asked.push(args); return { status: "started", done }; }, {
       file, surface: "teams", deliver: async () => { await deliverDispatches(file, s.deliver); swept(); },
     });
     expect((await trigger("digest", "run", { channel: "c1", actor: "u1" })).status).toBe("started");
+    expect(asked).toEqual([["digest", "run", { brief: true }]]); // the result the origin is owed
     expect(undeliveredDispatches(file)).toEqual([]); // open, nothing owed yet
     finish({ status: "ok", runs: 1, ok: 1, needsAttention: 0, failed: 0, perRun: [{ id: "r1", status: "ok", brief: "done" }] });
     await delivered;

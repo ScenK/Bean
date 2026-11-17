@@ -130,7 +130,9 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
   });
   const sweep = async (): Promise<void> => {
     const deliver = deps.deliverDispatch;
-    if (!deliver) return;
+    // Holder only: its start releases a dead holder's half-done claims, which assumes no live
+    // sweeper elsewhere. A skipped sweep loses nothing — the next one (or start) delivers.
+    if (!deliver || !deps.canSchedule()) return;
     await deliverDispatches(db, deliver).catch((err: unknown) => console.error("bean: sprout dispatch delivery failed", err));
   };
   const start = async (): Promise<void> => {

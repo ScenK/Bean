@@ -38,9 +38,13 @@ describe("createRoutineWiring start", () => {
   it("closes the previous holder's open dispatches as interrupted and delivers each once", async () => {
     const id = openDispatch(dbFile(dir), { surface: "teams", conversation: "c1", routine: "r" });
     const sent: Dispatch[] = [];
-    const w = wiring(() => false, async (d) => { sent.push(d); return true; });
+    const deliver = async (d: Dispatch) => { sent.push(d); return true; };
+    // A standby never sweeps: the holder's start owns half-done hand-offs.
+    await wiring(() => false, deliver).deliverDispatches();
+    const w = wiring(() => true, deliver);
     await w.start();
     await w.start();
+    w.scheduler.stop();
     expect(sent.map((d) => [d.id, d.status])).toEqual([[id, "interrupted"]]);
     expect(getDispatch(dbFile(dir), id)?.deliveredAt).toBeDefined();
   });

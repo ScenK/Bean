@@ -4,7 +4,10 @@
 // Written only by the scheduler-lease holder: its start closes every row still open as
 // "interrupted" (nothing is re-run), so a standby host must never open one.
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { openDb } from "./db.js";
+import { enqueueOutbox } from "./outbox.js";
 import type { TriggerResult } from "./routine-scheduler.js";
 import type { RunStatus } from "./routine-store.js";
 import { sproutFinishText, type SproutOrigin, type SproutTrigger } from "./sprout-trigger.js";
@@ -86,13 +89,15 @@ export function closeTodoDispatches(file: string, todoId: string, status: RunSta
 
 /** Scheduler start (lease holder only): every dispatch still open lost its run to the restart —
  * closed as interrupted, owed a notice. A todo-linked row whose todo is still pending is kept: its
- * todo runs on a later drain. Also prunes delivered rows past the retention. Returns how many
- * were interrupted. */
+ * todo runs on a later drain. A hand-off the previous holder claimed but never finished is
+ * released for this holder's sweep. Also prunes delivered rows past the retention. Returns how
+ * many were interrupted. */
 export function interruptOpenDispatches(file: string, now: () => Date = () => new Date()): number {
   const db = openDb(file);
   const at = now();
   db.prepare("DELETE FROM sprout_dispatches WHERE delivered_at IS NOT NULL AND delivered_at < ?")
     .run(new Date(at.getTime() - DISPATCH_RETENTION_DAYS * 86_400_000).toISOString());
+  db.prepare("UPDATE sprout_dispatches SET claimed_at = NULL WHERE delivered_at IS NULL AND claimed_at IS NOT NULL").run();
   const changed = db.prepare(
     "UPDATE sprout_dispatches SET status = 'interrupted', finished_at = ? WHERE status IS NULL " +
     "AND (todo_id IS NULL OR todo_id NOT IN (SELECT id FROM todos WHERE status = 'pending'))",
@@ -117,13 +122,16 @@ export function dispatchNotice(d: Dispatch): string {
   return d.brief ? `${line}\n\n${d.brief}` : line;
 }
 
-/** Sends every owed result once. A row is claimed (delivered_at set) before `deliver`, so two
- * sweeps never send it twice; `deliver` resolving false (this origin can't take it here) or
- * throwing un-claims it for a later sweep. */
+/** Sends every owed result. A row is claimed (`claimed_at`) before `deliver`, so two sweeps never
+ * hand it off twice, and marked delivered only after `deliver` resolves true. `deliver` resolving
+ * false (this origin can't take it here) or throwing releases the claim for a later sweep; a crash
+ * mid-hand-off leaves it claimed until the next holder's start releases it
+ * (`interruptOpenDispatches`) — so `deliver` must be idempotent per job id
+ * (`enqueueDispatchNotice`). */
 export async function deliverDispatches(file: string, deliver: (d: Dispatch) => Promise<boolean>, now: () => Date = () => new Date()): Promise<void> {
   const db = openDb(file);
   for (const d of undeliveredDispatches(file)) {
-    const claimed = db.prepare("UPDATE sprout_dispatches SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL").run(now().toISOString(), d.id);
+    const claimed = db.prepare("UPDATE sprout_dispatches SET claimed_at = ? WHERE id = ? AND claimed_at IS NULL AND delivered_at IS NULL").run(now().toISOString(), d.id);
     if (claimed.changes === 0) continue;
     let sent = false;
     try {
@@ -131,19 +139,29 @@ export async function deliverDispatches(file: string, deliver: (d: Dispatch) => 
     } catch (err) {
       console.error(`bean: delivering sprout dispatch ${d.id} failed`, err);
     }
-    if (!sent) db.prepare("UPDATE sprout_dispatches SET delivered_at = NULL WHERE id = ?").run(d.id);
+    if (sent) db.prepare("UPDATE sprout_dispatches SET delivered_at = ? WHERE id = ?").run(now().toISOString(), d.id);
+    else db.prepare("UPDATE sprout_dispatches SET claimed_at = NULL WHERE id = ?").run(d.id);
   }
+}
+
+/** A chatops dispatch's hand-off: its notice into the outbox under the job id, so a repeat after a
+ * crash rewrites the same still-queued file, and one a bot is mid-sending isn't queued again.
+ * (One already sent and acked can still repeat — the outbox's own at-least-once.) */
+export async function enqueueDispatchNotice(outbox: string, d: Dispatch & { surface: "discord" | "teams" }): Promise<void> {
+  if (existsSync(join(outbox, `${d.surface}-${d.id}.json.sending`))) return;
+  await enqueueOutbox(outbox, { transport: d.surface, ...(d.conversation ? { channel: d.conversation } : {}), body: dispatchNotice(d) }, () => d.id);
 }
 
 /** Wraps the scheduler's trigger for a chat surface: an admitted run is recorded at its origin
  * and closed at its end, then `deliver` (the owed-results sweep) posts it. Replaces the old
  * in-memory finish closure, which a restart mid-run dropped. */
 export function withDispatch(
-  trigger: (name: string, action: "run" | "check") => Promise<TriggerResult>,
+  trigger: (name: string, action: "run" | "check", opts: { brief: true }) => Promise<TriggerResult>,
   deps: { file: string; surface: DispatchSurface; deliver: () => Promise<void>; now?: () => Date },
 ): SproutTrigger {
   return async (name, action, origin: SproutOrigin) => {
-    const t = await trigger(name, action);
+    // The run's bounded brief is the result the origin is owed (#918).
+    const t = await trigger(name, action, { brief: true });
     if (t.status !== "started") return t;
     let id: string;
     try {
