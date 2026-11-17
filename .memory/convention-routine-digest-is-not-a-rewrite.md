@@ -42,6 +42,11 @@ fidelity beats brevity; `config.json` `briefModel` (no Settings UI, boot-time) p
 Code text appended to the digest (the retro footer) rides on `RoutineRunResult.footer` so the
 brief re-appends it — a new code-owned digest line needs the same treatment.
 
+A trigger can ask for that same chat body back (`trigger`/`runNow` with `{ brief: true }`, #918):
+`deliverDigest(…, brief)` computes it even when the sprout has no chat sink and returns it, and
+each `RunOutcome` carries its own run's body capped at `RUN_BRIEF_MAX`. It is the chat copy, not a
+second summary — don't add another model pass for it. A stopped run has none (it reaches no sink).
+
 Don't go back to "restyle every step at the same length". The first cut did (a ≥0.7× length
 floor, "do not summarize", "I checked… I found…"): chat posts tripled (about 1k → 2.5–4k chars),
 repeated each step's facts, leaked `WORKTREE:`/`COUNTS:` lines and opened every sentence with

@@ -279,6 +279,19 @@ describe("createRoutineHost", () => {
       await deliver({ sinks: { note: true } });
       expect(calls).toHaveLength(0);
     });
+
+    it("a requested brief is the chat body, written even with no chat sink and posted nowhere", async () => {
+      const { h, calls } = briefHost();
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { note: true } });
+      const res = await h.runOneRoutine(r);
+      await expect(h.deliverDigest(r, res, true)).resolves.toBe(BRIEF);
+      expect(calls).toHaveLength(1);
+      expect(await posted()).toEqual([]);
+      // Not ok: the digest as it is, no model call. Unrequested: nothing returned.
+      await expect(h.deliverDigest(r, { ...res, record: { ...res.record, status: "failed" } }, true)).resolves.toBe(res.digest);
+      await expect(h.deliverDigest(r, res)).resolves.toBeUndefined();
+      expect(calls).toHaveLength(1);
+    });
   });
 
   it("skips the notify sink when the host has no notifier", async () => {

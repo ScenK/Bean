@@ -70,7 +70,8 @@ export interface RoutineHost {
   /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. `signal` =
    * the run's Stop (see RoutineRunnerDeps.signal). */
   runOneRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal) => Promise<RoutineRunResult>;
-  deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
+  /** Resolves with the chat sinks' body when `brief` is set (computed even with no chat sink). */
+  deliverDigest: (routine: Routine, result: RoutineRunResult, brief?: boolean) => Promise<string | undefined>;
   /** Alias sinks that can't be delivered right now (unknown name, wrong platform). */
   sinkProblems: (routine: Routine) => string[];
 }
@@ -231,7 +232,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     return body ? body + (result.footer ?? "") : result.digest;
   };
 
-  const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
+  const deliverDigest = async (routine: Routine, result: RoutineRunResult, brief = false): Promise<string | undefined> => {
     if (routine.sinks.note) {
       await saveNote(dbFile(dir), {
         title: `sprout: ${routine.name}`,
@@ -251,7 +252,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       // Unresolved: sinkProblems already marked the run; never fall back to the owner's DM.
       return "error" in resolved ? [] : [{ sink, channel: resolved.channel }];
     });
-    const chatBody = targets.length > 0 ? await chatSinkBody(routine, result) : result.digest;
+    const chatBody = targets.length > 0 || brief ? await chatSinkBody(routine, result) : result.digest;
     for (const { sink, channel } of targets) {
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel, userId: sink.user,
@@ -267,6 +268,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         target: { routine: routine.name, startedAt: result.record.startedAt },
       });
     }
+    return brief ? chatBody : undefined;
   };
 
   const sinkProblems = (routine: Routine): string[] =>
