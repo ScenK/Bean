@@ -52,9 +52,13 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
       const { images: _i, ...rest } = it;
       return it.state === "pending" ? { ...rest, state: "expired" } : rest;
     }
+    case "todo":
+      // Like a sprout card: one with a job id settles on restore; a tap never answered can't say. (A
+      // "queued" card without one predates #923's report-back and stays as it was.)
+      return it.state === "pending" ? { ...it, state: "expired" }
+        : it.state === "sending" || (it.state === "running" && !it.jobId) ? { ...it, state: "done", result: SPROUT_UNKNOWN } : it;
     case "proposal":
     case "skill":
-    case "todo":
     case "offer":
       return it.state === "pending" ? { ...it, state: "expired" } : it;
     case "send": // main's pending proposal is gone after a reload
@@ -133,6 +137,11 @@ export function threadTitle(text: string): string {
 }
 
 type SproutItem = Extract<ChatItem, { kind: "sprout" }>;
+type TodoItem = Extract<ChatItem, { kind: "todo" }>;
+/** A card waiting on a dispatch's end: a running sprout card, or a todo card run or queued (#923). */
+const awaitsEnd = (it: ChatItem): it is (SproutItem | TodoItem) & { jobId: string } =>
+  Boolean((it.kind === "sprout" && it.state === "running") || (it.kind === "todo" && (it.state === "running" || it.state === "queued")))
+  && (it as { jobId?: string }).jobId !== undefined;
 /** A sprout run's end, as its card and the chat learn it (main's `SproutOutcome` with a status). */
 export interface SproutEnd { jobId: string; status: string; text: string }
 
@@ -154,11 +163,11 @@ export function sproutLoopback(routine: string, end: SproutEnd): { text: string;
 /** A run's end on its card: the running card with that job settles and its result loops back. Once
  * per job — a settled card (or one this chat doesn't hold) takes nothing, so a repeat is a no-op. */
 export function applySproutEnd(items: ChatItem[], end: SproutEnd): { items: ChatItem[]; loopback?: ReturnType<typeof sproutLoopback> } {
-  const match = items.find((it): it is SproutItem => it.kind === "sprout" && it.jobId === end.jobId && it.state === "running");
+  const match = items.find((it) => awaitsEnd(it) && it.jobId === end.jobId) as SproutItem | TodoItem | undefined;
   if (!match) return { items };
   return {
     items: items.map((it) => (it === match ? { ...match, state: "done" as const, result: sproutResultLine(end.status) } : it)),
-    loopback: sproutLoopback(match.plan.routine, end),
+    loopback: sproutLoopback(match.kind === "sprout" ? match.plan.routine : match.todo.routine, end),
   };
 }
 
@@ -172,7 +181,7 @@ export function settleRestoredSprouts(
   const loopbacks: ReturnType<typeof sproutLoopback>[] = [];
   let changed = false;
   for (const it of items) {
-    if (it.kind !== "sprout" || it.state !== "running" || !it.jobId) continue;
+    if (!awaitsEnd(it)) continue;
     const o = outcomes?.find((x) => x.jobId === it.jobId);
     if (o && o.status === undefined) continue;
     changed = true;

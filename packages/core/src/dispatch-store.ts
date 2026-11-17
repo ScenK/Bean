@@ -117,11 +117,16 @@ export function undeliveredDispatches(file: string): Dispatch[] {
     .all() as unknown as DispatchRow[]).map(toDispatch);
 }
 
-/** A desktop chat thread's dispatches, oldest first (open ones included) — what its restored sprout
- * cards look up (#921). */
+/** One conversation's dispatches, oldest first (open ones included). `conversation` absent = a
+ * chatops surface's owner DM. */
+export function conversationDispatches(file: string, surface: DispatchSurface, conversation?: string): Dispatch[] {
+  return (openDb(file).prepare(`${SELECT} WHERE surface = ? AND conversation IS ? ORDER BY created_at ASC`)
+    .all(surface, conversation ?? null) as unknown as DispatchRow[]).map(toDispatch);
+}
+
+/** A desktop chat thread's dispatches — what its restored sprout cards look up (#921). */
 export function threadDispatches(file: string, thread: string): Dispatch[] {
-  return (openDb(file).prepare(`${SELECT} WHERE surface = 'desktop' AND conversation = ? ORDER BY created_at ASC`)
-    .all(thread) as unknown as DispatchRow[]).map(toDispatch);
+  return conversationDispatches(file, "desktop", thread);
 }
 
 /** The origin has the result (a restored desktop chat read it): no sweep hands it off again. */

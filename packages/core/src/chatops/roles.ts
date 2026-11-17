@@ -173,6 +173,8 @@ export function cardActionNeeds(beanAction: string | undefined): Role {
   if (a === "send-confirm" || a === "send-cancel" || a === "send-pick") return needs("send");
   if (["save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note"].includes(a)) return needs("notes");
   if (a === "queue-todo" || a === "cancel-todo") return needs("todos");
+  // Run now jumps the queue and takes a run slot: the owner's alone (#923), like a sprout run.
+  if (a === "run-todo") return "owner";
   if (a === "forget-memory" || a === "share-memory") return needs("memory");
   if (a === "cancel-reminder") return needs("reminders");
   return "admin";

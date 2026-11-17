@@ -451,3 +451,26 @@ describe("sprout triggers from a bot (#637)", () => {
     expect(failing.p.outbox).toEqual([{ type: "routine-trigger-result", requestId: "q2", status: "refused", reason: "unavailable" }]);
   });
 });
+
+describe("running sprouts for a bot's background_work (#924)", () => {
+  it("answers the scheduler's counts, or none (standby, no handler, throwing), under the request id", () => {
+    const answers: (() => { name: string; runs: number }[] | undefined)[] = [
+      () => [{ name: "triage", runs: 2 }], () => undefined, () => { throw new Error("boom"); },
+    ];
+    const outs: unknown[] = [];
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const onRoutineRunning of [...answers, undefined]) {
+      const p = fakeProcess();
+      createChatopsServers({
+        repoRoot: "/repo", resolvedPath: "/usr/bin", send: () => {}, existsFn: () => true, spawnFn: () => p.proc,
+        ...(onRoutineRunning ? { onRoutineRunning } : {}),
+      }).start("discord");
+      p.emit("message", { type: "routine-running", requestId: "q1" });
+      p.emit("message", { type: "routine-running" });
+      outs.push(p.outbox);
+    }
+    err.mockRestore();
+    const none = [{ type: "routine-running-result", requestId: "q1" }];
+    expect(outs).toEqual([[{ type: "routine-running-result", requestId: "q1", running: [{ name: "triage", runs: 2 }] }], none, none, none]);
+  });
+});

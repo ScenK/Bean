@@ -7,7 +7,9 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
 - **Written only by the scheduler-lease holder.** `answerRoutineTrigger` refuses a run with
   `standby` when `held()` is false: the holder's `routine-wiring.ts` `start()` closes every open
   row as `interrupted` first thing (before any await), so a standby's row would be falsely
-  interrupted. Nothing is ever re-run.
+  interrupted. Nothing is ever re-run. Exception: a todo-linked row inserted **in one transaction
+  with its pending todo** (`queueTodoDispatch`) — start keeps those — so any process (a bot, a
+  standby desktop) may write one.
 - **Run-linked rows** (`todo_id` NULL) close at the trigger's `done` (`withDispatch`, which asks
   the scheduler for the run's brief); a brief is kept only when the trigger admitted exactly one
   run. **Todo-linked rows** close only in `updateTodoStatus`, in the same transaction as the todo,
@@ -30,6 +32,12 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   from the real row even if a push was lost. The renderer settles the card and loops
   `[sprout result for "…"]` back through `queueIfBusy` once per job (a settled card ignores
   repeats); a running sprout card is chat work (stays mounted). No Stop on the card.
+- **Remote shells (#922).** `chatSproutRun` is the one routines-side `REMOTE_OPS` entry (the
+  contract test pins it; `routines*` stay default-deny, so a remote *check* card still fails).
+  `sproutRun` also pushes the admission (`{ mountId, jobId, name }`, no `status`; the renderer
+  ignores it): a start whose reply a drop lost is an orphan in `remote-core.ts` and resolves from
+  it, like a delegate's `started`. Ends ride the attachment's per-mount replay (not `output`, so
+  never evicted).
 - `keep_brief = 0` (incognito desktop chat) → `brief` stays NULL. Delivered rows are pruned after
   30 days at start.
 - **The chatops notice is chat context (#920).** `enqueueDispatchNotice` posts the finish line +
@@ -42,3 +50,23 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   (`RoutineRunResult.todoIds`) instead skips only conversations every one of its todos was
   dispatched from (`todoDispatchOrigins`) — so a drain started from a card still reaches its sinks.
   The saved sprout is never changed.
+- **Todo cards: Run now / Queue (#923).** Both actions queue via `queueTodoDispatch` (todo + its
+  dispatch row; Run now at the front, lowest `ord`). Run now then asks the holder's
+  `scheduler.runTodo(name, todoId)`: a free slot runs exactly that todo (`claimTodoById`, a
+  `worker` with one claim and no post-run poll/drain) → `started`; every slot busy → `next` (it's at
+  the front, so the running drain/worker claims it; an in-memory `waiting` list runs it on the next
+  freed slot if the busy run was itself an exact one). Never interrupts. Bots send only the job id
+  (`routine-trigger` action `todo`, `job`), never the task text; `answerTodoRun` reads the row.
+  Run now is owner-only (`cardActionNeeds("run-todo")` = owner, re-checked before the claim).
+  A member's DM queues **without** a row (no member-DM destination). Cancel/delete of a pending
+  todo deletes its open row (else a restart would report it "interrupted"). Desktop: the todo card
+  keeps `jobId`, settles via the same `sprout` push/restore as a sprout card (`chatTodoDispatch`,
+  a `REMOTE_OPS` entry; no orphan matching for it on a dropped remote reply).
+- **`background_work` (#924).** Read-only action tool (core `background-work.ts`): live run slots
+  (scheduler `runningNames`/`runningCount`, lease holder only — else `"unknown"`), open todo counts,
+  this conversation's dispatch rows (`conversationDispatches`; unset conversation = the owner DM)
+  with state/queue position/brief, each sprout's last run. A spawned bot gets the live counts over
+  the IPC slot (`routine-running` → `routine-running-result`, request id only; no answer in 5s =
+  unknown). Same gate as `list_todos`; a non-owner sees only `myTodos` + jobs they tapped or queued
+  (never counts across people, last results or anyone else's text), and a member DM reads no rows.
+  Desktop: owner view, rows of the chat's pinned thread + threads it dispatched from.

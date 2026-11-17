@@ -19,7 +19,7 @@ import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
-import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult, SproutEvent } from "@bean/host";
+import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult, SproutEvent, SproutPush } from "@bean/host";
 import type { InterruptedRunNotice } from "../../../ipc.js";
 import type { CloseTurn } from "@bean/host";
 
@@ -85,7 +85,8 @@ export function hasActiveDelegates(items: ChatItem[], pendingStarts: number): bo
 
 /** A sprout card still running (its start in flight, or the run admitted) is work: its chat stays
  * mounted, so the result turn lands there (#921). */
-export const hasRunningSprouts = (items: readonly ChatItem[]): boolean => items.some((it) => it.kind === "sprout" && it.state === "running");
+export const hasRunningSprouts = (items: readonly ChatItem[]): boolean =>
+  items.some((it) => (it.kind === "sprout" || it.kind === "todo") && (it.state === "running" || it.state === "sending"));
 
 export function addDelegateProposal(items: ChatItem[], proposal: ProposedDelegate, id: string): ChatItem[] {
   return [...items, { kind: "delegate", id, proposal, state: "pending", tail: [] }];
@@ -165,7 +166,7 @@ export interface ChatSessionApi {
   mountId: string;
   delegateEvent: (e: DelegateEvent) => void;
   /** A sprout run this chat started has ended. */
-  sproutEvent: (e: SproutEvent) => void;
+  sproutEvent: (e: SproutPush) => void;
   liveEvent: (e: LiveEvent) => void;
   /** The thread this chat writes, once it has one. */
   threadId: () => string | undefined;
@@ -1113,17 +1114,51 @@ export function ChatSession({
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "skill" ? { ...it, state: "dismissed" } : it)));
   };
 
-  const queueTodo = async (id: string): Promise<void> => {
+  // A todo card's Run now / Queue (#923): queued with its dispatch, so the task's own result comes
+  // back here (a `sprout` push, like a sprout card's) and loops back as a turn. One tap per card.
+  const todoTapsRef = useRef(new Set<string>());
+  const dispatchTodo = async (id: string, mode: "run" | "queue"): Promise<void> => {
     const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "todo" }> => it.kind === "todo" && it.id === id);
-    if (!item) return;
+    if (!item || item.state !== "pending" || todoTapsRef.current.has(id)) return;
+    todoTapsRef.current.add(id);
+    const set = (patch: Partial<Extract<ChatItem, { kind: "todo" }>>): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "todo" ? { ...it, ...patch } : it)));
+    set({ state: "sending" });
+    const { routine, text } = item.todo;
     try {
-      await window.bean.todosAdd(item.todo.routine, item.todo.text);
-      setItems((prev) => [
-        ...prev.map((it) => (it.id === id && it.kind === "todo" ? { ...it, state: "queued" as const } : it)),
-        { kind: "status", id: newId(), text: `✓ Queued on "${item.todo.routine}"`, tone: "done" },
-      ]);
+      // The result's origin is this chat's thread: give an untitled chat one now, so it's in history.
+      if (!threadRef.current && !unsavableRef.current) {
+        threadRef.current = { id: crypto.randomUUID(), title: threadTitle(text) };
+        onActive(threadRef.current.id);
+      }
+      const res = await window.bean.chatTodoDispatch(routine, text, mode, threadRef.current?.id ?? offRecordThreadRef.current, mountId);
+      if (!("jobId" in res)) {
+        set({ state: "pending" });
+        todoTapsRef.current.delete(id);
+        addStatus(res.reason, "error");
+        return;
+      }
+      const { jobId } = res;
+      const result = res.outcome === "running" ? "Running only this task — its result comes back here."
+        : res.outcome === "next" ? `${routine} is working on another task. Yours runs next, right after it.`
+        : res.reason ? `${res.reason} — it's first in the queue; its result comes back here.`
+        : `Queued${res.ahead ? ` · ${res.ahead} ahead` : ""} — I'll report here when it runs.`;
+      const early = pendingSproutEndsRef.current.get(jobId);
+      pendingSproutEndsRef.current.delete(jobId);
+      flushRef.current = true;
+      const settled = { ...item, state: res.outcome === "running" ? "running" as const : "queued" as const, jobId, result };
+      setItems((prev) => {
+        const next = prev.map((it) => (it.id === id && it.kind === "todo" ? settled : it));
+        return early ? applySproutEnd(next, early).items : next;
+      });
+      if (early) {
+        const lb = applySproutEnd([settled], early).loopback;
+        if (lb) void sendRef.current(lb.text, lb.display, true, undefined, lb.source);
+      }
     } catch (err) {
-      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't queue the todo: ${err instanceof Error ? err.message : String(err)}`, tone: "error" }]);
+      set({ state: "pending" });
+      todoTapsRef.current.delete(id);
+      addStatus(`Couldn't hand over the task: ${err instanceof Error ? err.message : String(err)}`, "error");
     }
   };
 
@@ -1242,7 +1277,8 @@ export function ChatSession({
 
   // A sprout run's end (main's `sprout` push): the card settles and the result loops back once. An
   // end for a job no card holds yet waits for its start's answer (triggerSprout).
-  const applySproutEvent = (e: SproutEvent): void => {
+  const applySproutEvent = (e: SproutPush): void => {
+    if (!("status" in e)) return; // its admission: the start's answer already carries the job id
     const { loopback } = applySproutEnd(itemsRef.current, e);
     if (!loopback) {
       if (!itemsRef.current.some((it) => it.kind === "sprout" && it.jobId === e.jobId)) pendingSproutEndsRef.current.set(e.jobId, e);
@@ -1554,7 +1590,7 @@ export function ChatSession({
         onNoteDismiss={dismissNote}
         onSkillSave={(id, edited) => void saveSkill(id, edited)}
         onSkillDismiss={dismissSkill}
-        onTodoQueue={(id) => void queueTodo(id)}
+        onTodoDispatch={(id, mode) => void dispatchTodo(id, mode)}
         onTodoDismiss={dismissTodo}
         onSproutTrigger={(id) => void triggerSprout(id)}
         onSproutDismiss={dismissSprout}
