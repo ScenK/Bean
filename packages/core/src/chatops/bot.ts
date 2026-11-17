@@ -47,7 +47,7 @@ import {
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import { attachNoteImages } from "../note-images.js";
 import { systemControlTool } from "../system-control.js";
-import type { RunRegistry } from "./runs.js";
+import type { RunDelegateFn, RunRegistry } from "./runs.js";
 import { LiveSessionProposalStore, type PendingLiveSession } from "./live-session-proposals.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "./live-sessions.js";
 import {
@@ -57,6 +57,7 @@ import {
 } from "./roles.js";
 import { makeAmbientCapture, type AmbientLine } from "./ambient-capture.js";
 import { awayLine, awayRefusal, awayReminder, awaySuggestion, parseAwayCommand, runAwayCommand, type Away } from "./away.js";
+import { makeAwayPrepare } from "./away-prepare.js";
 import { NOT_CHATTY, formatMuteEnd, makeChimeIn, parseChatterCommand, type Chatter, type ChatterCommand, type ChimeInFx } from "./chatter.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
@@ -262,6 +263,9 @@ export interface TeamsBotDeps {
   /** The owner's away mode on this surface (`away on|off|status`, owner's real DM only, #903).
    * Absent = those words are ordinary turns. */
   away?: Away;
+  /** The executor for away-mode prepare runs (#909; `runDelegate`). Absent = no prepares: the
+   * suggestion call offers no `prepare` tool. */
+  awayPrepareRun?: RunDelegateFn;
   routines?: {
     transport: "discord" | "teams";
     load: () => Promise<Routine[]>;
@@ -344,6 +348,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
    * ambient path runs the same check itself. `post` lands in the message's own conversation and
    * never pings. Never rejects. */
   onAwayTag: (conversationId: string, line: AmbientLine, post: (text: string) => Promise<void>) => Promise<void>;
+  /** Synchronous, for shutdown: stops a running away prepare and marks it interrupted (#909). */
+  interruptAwayPrepares: () => void;
   /** A turn the owner typed at the desktop (desk ingress, chatops/desk.ts). Checks the catalog,
    * posts the `🖥 (desk):` echo, then runs it as the owner's turn — or steers the running live
    * session. `ack` is called exactly once, as soon as the turn is accepted or refused (before the
@@ -395,6 +401,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // here → record the message (owner-only table), then one fixed, non-pinging line in the same
   // conversation (and maybe Bean's labelled suggestion after it). A redelivered message is already recorded and gets nothing; a storage failure
   // still gets the away line, minus the claim it was recorded. Never rejects.
+  // Silent read-only prepares (#909): built only with an executor; a row a dead process left
+  // running is marked interrupted here, then the persisted queue resumes.
+  const awayPrepare = deps.away && deps.awayPrepareRun
+    ? makeAwayPrepare({
+        away: deps.away, run: deps.awayPrepareRun, loadProjects: deps.loadProjects,
+        ...(deps.scratchPath ? { scratchPath: deps.scratchPath } : {}),
+        detectClis: deps.detectClis, cliModels: deps.cliModels, loadModelMemory: deps.loadModelMemory,
+      })
+    : undefined;
+  awayPrepare?.pump();
+
   async function awayTag(conversationId: string, line: AmbientLine, post: (text: string) => Promise<void>): Promise<void> {
     const away = deps.away;
     const configured = deps.roles.ownerId;
@@ -416,11 +433,30 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         console.error(`[away] capture failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       await post(awayLine(deps.roles.ownerName, state.reason, recorded));
-      // Then, only with config `webSearch` on and under the daily cap, Bean's own labelled
-      // suggestion as a second message (#907); the line above never waits for it.
-      if (deps.webSearchEnabled?.() && away.claimSuggestion()) {
-        const suggestion = await awaySuggestion({ chat: deps.chat, model: deps.model, ownerName: deps.roles.ownerName, text: line.text });
-        if (suggestion) await post(suggestion);
+      // Then, under the daily cap, one suggestion call: with config `webSearch` on, Bean's own
+      // labelled suggestion as a second message (#907); with a read-only CLI here, it may also
+      // queue a silent prepare (#909) — the call runs for that even with webSearch off, its text
+      // discarded. The line above never waits for it. A prepare needs this message's own row.
+      const webSearch = !!deps.webSearchEnabled?.();
+      const canPrepare = !!awayPrepare && recorded && deps.detectClis().some((c) => c === "claude" || c === "codex");
+      if ((webSearch || canPrepare) && away.claimSuggestion()) {
+        const projects = canPrepare ? (await deps.loadProjects()).map((p) => p.name) : undefined;
+        const s = await awaySuggestion({
+          chat: deps.chat, model: deps.model, ownerName: deps.roles.ownerName, text: line.text, webSearch,
+          ...(projects ? { projects } : {}),
+        });
+        if (s.prepare && awayPrepare) {
+          try {
+            const notPrepared = away.claimPrepare({
+              conversationId, messageId: line.messageId, senderId: line.fromId, ...s.prepare,
+              ...(state.since !== undefined ? { awaySince: state.since } : {}),
+            });
+            if (notPrepared === undefined) awayPrepare.pump();
+          } catch (err) {
+            console.error(`[away] prepare claim failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        if (s.text) await post(s.text);
       }
     } catch (err) {
       console.error(`[away] owner-tag reply failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1763,6 +1799,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     },
 
     onAwayTag: awayTag,
+
+    interruptAwayPrepares: () => awayPrepare?.interrupt(),
 
     proposeLiveSession(args, fx): Promise<string> {
       return proposeLiveSessionFrom(args.conversationId, args.instruction, args.proposedBy, fx);
