@@ -31,10 +31,12 @@ export const OPENCODE_BROWSER_REFUSAL = "This skill needs the browser; opencode 
 export const OPENCODE_PLAN_REFUSAL = "Read-only runs need claude or codex; opencode can't be locked down — pick a claude or codex model.";
 
 // claude plan mode: an allowlist of read-only tools (no Bash, Write/Edit, WebFetch/WebSearch,
-// Task, Skill, …), no MCP server from any config or plugin, no browser. Verified 2026-11 on
-// claude 2.1.325: init reports tools [Glob, Grep, Read] and mcp_servers [].
+// Task, Skill, …), no MCP server from any config or plugin, no browser, and no hooks — user,
+// project and plugin hooks run shell commands outside the tool allowlist. Verified 2026-11 on
+// claude 2.1.325: init reports tools [Glob, Grep, Read] and mcp_servers [], no hook fires.
 const CLAUDE_PLAN_ARGS = [
   "--permission-mode", "plan",
+  "--settings", '{"disableAllHooks":true}',
   "--tools", "Read,Glob,Grep",
   "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
   "--no-chrome",
@@ -43,12 +45,14 @@ const CLAUDE_PLAN_ARGS = [
 // codex read-only: the sandbox blocks writes (.git included) and network; --ignore-user-config
 // drops the user's mcp_servers/plugins/hooks (a `-c mcp_servers={}` override merges, it doesn't
 // replace) and leaves the project untrusted, so its .codex/config.toml MCP servers don't load
-// either. Verified 2026-11 on codex-cli 0.169.0. `exec resume` rejects --sandbox: fresh runs only.
+// either; --ignore-rules drops saved execpolicy allow rules, which run a matching command
+// outside the sandbox (a `curl` rule reached the network without it). Verified 2026-11 on codex-cli 0.169.0. `exec resume` rejects --sandbox: fresh runs only.
 const CODEX_PLAN_ARGS = [
   "exec", "--json",
   "--sandbox", "read-only",
   "--skip-git-repo-check",
   "--ignore-user-config",
+  "--ignore-rules",
   "-c", 'web_search="disabled"',
   "--disable", "plugins", "--disable", "apps",
   "--disable", "browser_use", "--disable", "computer_use", "--disable", "in_app_browser",

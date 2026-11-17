@@ -762,7 +762,7 @@ describe("browser skills", () => {
 describe("plan (read-only) mode", () => {
   const P = GIT_TRAILER_INSTRUCTION;
 
-  it("claude: plan permission mode, read-only tool allowlist, no MCP, no browser, no bypass", () => {
+  it("claude: plan permission mode, no hooks, read-only tool allowlist, no MCP, no browser, no bypass", () => {
     const { command, args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "look", mode: "plan", model: "opus" });
     expect(command).toBe("claude");
     expect(args).toEqual([
@@ -770,6 +770,7 @@ describe("plan (read-only) mode", () => {
       "--output-format", "stream-json",
       "--verbose",
       "--permission-mode", "plan",
+      "--settings", '{"disableAllHooks":true}',
       "--tools", "Read,Glob,Grep",
       "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
       "--no-chrome",
@@ -782,10 +783,10 @@ describe("plan (read-only) mode", () => {
     expect(args).not.toContain("--chrome");
     expect(args).not.toContain("--dangerously-skip-permissions");
     expect(args.slice(args.indexOf("--resume"), args.indexOf("--resume") + 2)).toEqual(["--resume", "c-1"]);
-    expect(args).toEqual(expect.arrayContaining(["--permission-mode", "plan", "--strict-mcp-config", "--no-chrome"]));
+    expect(args).toEqual(expect.arrayContaining(["--permission-mode", "plan", '{"disableAllHooks":true}', "--strict-mcp-config", "--no-chrome"]));
   });
 
-  it("codex: read-only sandbox, no user config/MCP/plugins/browser/web search, never resumed", () => {
+  it("codex: read-only sandbox, no user config/rules/MCP/plugins/browser/web search, never resumed", () => {
     const { command, args } = delegateCommand({ cli: "codex", projectPath: "/p", prompt: "-look", mode: "plan", model: "gpt-x", resume: "t-1", browser: true });
     expect(command).toBe("codex");
     expect(args).toEqual([
@@ -793,6 +794,7 @@ describe("plan (read-only) mode", () => {
       "--sandbox", "read-only",
       "--skip-git-repo-check",
       "--ignore-user-config",
+      "--ignore-rules",
       "-c", 'web_search="disabled"',
       "--disable", "plugins", "--disable", "apps",
       "--disable", "browser_use", "--disable", "computer_use", "--disable", "in_app_browser",
@@ -835,7 +837,7 @@ describe("plan (read-only) mode", () => {
     expect(spawnFn).toHaveBeenCalledTimes(2);
     const retry = spawnFn.mock.calls[1]![1];
     expect(retry).not.toContain("--resume");
-    expect(retry).toEqual(expect.arrayContaining(["--permission-mode", "plan", "--tools", "Read,Glob,Grep"]));
+    expect(retry).toEqual(expect.arrayContaining(["--permission-mode", "plan", '{"disableAllHooks":true}', "--tools", "Read,Glob,Grep"]));
     expect(retry).not.toContain("--dangerously-skip-permissions");
     second.emit("close", 0);
   });
