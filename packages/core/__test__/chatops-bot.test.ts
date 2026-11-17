@@ -4153,7 +4153,7 @@ describe("away mode (#903)", () => {
     const h = awayBot();
     expect(await h.say("u1", true, "away on out sick")).toEqual(["Away mode is on for Discord (reason: out sick). `away off` ends it."]);
     expect((await h.say("u1", true, "away status"))[0]).toMatch(/^Away mode is on for Discord since .+ \(reason: out sick\)\.$/);
-    expect(await h.say("u1", true, "away off")).toEqual(["Away mode is off for Discord."]);
+    expect(await h.say("u1", true, "away off")).toEqual(["Away mode is off for Discord. Nobody tagged you while you were away."]);
     expect(h.calls()).toBe(0);
   });
 
@@ -4195,6 +4195,24 @@ describe("away owner tags (#904)", () => {
       ({ fromId: "mia", name: "Mia", text: "<@u1> can you look?", at: 1_000, taggedIds: ["u1"], messageId: "m1", link: "https://x/m1", ...o });
     return { ...made, file, bot, rows, posted, post, line, calls: () => calls };
   }
+
+  test("`away off` in the owner's DM answers with this period's grouped summary and closes it (#905)", async () => {
+    const h = tagBot();
+    h.deps.away!.setOn(undefined, 500);
+    await h.bot.onAwayTag("c1", h.line(), h.post);
+    await h.bot.onAwayTag("c2", h.line({ messageId: "m2", fromId: "bo", name: "Bo", text: "<@u1> ping", at: 2_000, link: "https://x/m2" }), h.post);
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, conversationId: "dm-u1", fromId: "u1", fromName: "Scen", direct: true, text: "away off" }, effects);
+    expect(effects.posted).toHaveLength(1);
+    expect(effects.posted[0]).toMatch(/^Away mode is off for Discord\. While you were away \(since .+\), you were tagged 2 times in 2 conversations:/);
+    expect(effects.posted[0]).toContain("- Mia: `<@u1> can you look?` https://x/m1");
+    expect(effects.posted[0]).toContain("- Bo: `<@u1> ping` https://x/m2");
+    expect(h.deps.away!.get()).toEqual({ on: false });
+    expect(h.calls()).toBe(0);
+    // A new period starts empty: the old rows aren't summarized again.
+    h.deps.away!.setOn(undefined, 9_000);
+    expect(h.deps.away!.captures(9_000)).toEqual([]);
+  });
 
   test("records the tag, then one fixed non-model line with the reason; a redelivery gets nothing", async () => {
     const h = tagBot();

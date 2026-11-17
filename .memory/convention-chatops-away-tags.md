@@ -20,5 +20,12 @@ to Bean (non-DM), so tagging Bean **and** the owner gets the normal answer plus 
   text) and never rejects.
 - **Private**: no note, no search, no tool or command reads the table — a test fails if any file
   but `chatops/away.ts` and `db.ts` names it. The return summary (#905) is its only reader.
+- **Return summary (#905)**: `closeAway` reads one period's rows (by `away_since`) and clears the
+  state with no await between; `awaySummary` is pure code (no model): grouped by conversation,
+  ≤20 entries + "and N more". Captured text goes in a one-line, clipped inline code span and names
+  lose markdown, so a tagger can't forge headers or entries. `away off` in the owner's DM replies
+  with it; `closeAwayToOwnerDm` (for a toggle made elsewhere) queues it as a channel-less,
+  user-less outbox message — the owner's DM only; the drains never fall back to a channel.
+  Rows are kept after the summary (no retention sweep yet).
 - **Known gap**: a conversation bound to a live session bypasses ambient and addressed paths
   (every message is a steer), so tags there are not captured. Personal 1:1 chats never capture.

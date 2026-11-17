@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
+import { enqueueOutbox } from "../outbox.js";
 import { formatMuteEnd } from "./chatter.js";
 
 /** The owner's away mode on one chat surface (`chatops_away`, #903). A missing row means off. */
@@ -19,6 +20,20 @@ export interface Away {
   /** Records one owner tag (`chatops_away_captures`). false = this message was already recorded
    * (a redelivery). Throws on a storage failure. */
   capture(c: AwayCapture): boolean;
+  /** One away period's captures (by its `since`), oldest first, each with the conversation's
+   * known name (chat destinations) when there is one. The summary (#905) is the only reader. */
+  captures(awaySince: number | undefined): AwaySummaryRow[];
+}
+
+/** A captured row as the summary reads it. */
+export interface AwaySummaryRow {
+  conversationId: string;
+  /** The conversation's alias or platform name, when Bean has seen one. */
+  place?: string;
+  senderName: string;
+  text: string;
+  link?: string;
+  at: number;
 }
 
 /** One message that tagged the owner while away (#904). Owner-only: no tool or command reads it. */
@@ -70,6 +85,21 @@ export function makeAway(opts: { dbPath: string; surface: "discord" | "teams" })
         c.text.slice(0, AWAY_CAPTURE_TEXT_MAX), c.link ?? null, c.at, c.awaySince ?? null,
       ).changes) > 0;
     },
+    captures(awaySince) {
+      const rows = db.prepare(
+        `SELECT c.conversation_id, c.sender_name, c.text, c.link, c.at, COALESCE(d.alias, d.platform_name) AS place
+           FROM chatops_away_captures c
+           LEFT JOIN chat_destinations d ON d.surface = c.surface AND d.conversation_id = c.conversation_id
+          WHERE c.surface = ? AND c.away_since IS ?
+          ORDER BY c.at, c.rowid`,
+      ).all(surface, awaySince ?? null) as unknown as {
+        conversation_id: string; sender_name: string; text: string; link: string | null; at: number; place: string | null;
+      }[];
+      return rows.map((r) => ({
+        conversationId: r.conversation_id, senderName: r.sender_name, text: r.text, at: r.at,
+        ...(r.place ? { place: r.place } : {}), ...(r.link ? { link: r.link } : {}),
+      }));
+    },
   };
 }
 
@@ -101,11 +131,7 @@ export function runAwayCommand(away: Away, c: AwayCommand, now: number): string 
     return `Away mode is on for ${where}${before.since !== undefined ? ` since ${formatMuteEnd(before.since)}` : ""}` +
       `${before.reason ? ` (reason: ${before.reason})` : ""}.`;
   }
-  if (c.kind === "off") {
-    if (!before.on) return `Away mode was already off for ${where}.`;
-    away.setOff();
-    return `Away mode is off for ${where}.`;
-  }
+  if (c.kind === "off") return closeAway(away) ?? `Away mode was already off for ${where}.`;
   away.setOn(c.reason, now);
   return `Away mode is ${before.on ? "still " : ""}on for ${where}${c.reason ? ` (reason: ${c.reason})` : ""}. \`away off\` ends it.`;
 }
@@ -118,3 +144,59 @@ export const awayReminder = (away: Away): string =>
  * row failed to save) drops the claim that it was recorded. */
 export const awayLine = (ownerName: string, reason: string | undefined, recorded: boolean): string =>
   `${ownerName} is away${reason ? ` (${reason})` : ""}.${recorded ? ` I've recorded your message for when ${ownerName} is back.` : ""}`;
+
+export const AWAY_SUMMARY_MAX = 20;
+const QUOTE_MAX = 160;
+
+// Captured text and names are other people's words: one line (no newline can start a fake header
+// or entry), clipped. Quotes go in an inline code span (no markdown, mentions or links render), so
+// a backtick inside becomes a plain quote mark; names lose markdown characters.
+const oneLine = (s: string, max: number): string => {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+};
+const quote = (s: string): string => `\`${oneLine(s.replace(/`/g, "'"), QUOTE_MAX) || "(no text)"}\``;
+const plain = (s: string, max: number): string => oneLine(s.replace(/[\\`*_~|<>#[\]()]/g, ""), max);
+
+/** The return summary of one away period (#905): pure, no model call. Entries grouped by
+ * conversation (in order of first tag), oldest first, at most AWAY_SUMMARY_MAX, then "and N more". */
+export function awaySummary(surface: Away["surface"], since: number | undefined, rows: readonly AwaySummaryRow[]): string {
+  const where = label(surface);
+  if (!rows.length) return `Away mode is off for ${where}. Nobody tagged you while you were away.`;
+  const shown = rows.slice(0, AWAY_SUMMARY_MAX);
+  const groups = new Map<string, AwaySummaryRow[]>();
+  for (const r of shown) groups.set(r.conversationId, [...(groups.get(r.conversationId) ?? []), r]);
+  const convs = new Set(rows.map((r) => r.conversationId)).size;
+  const lines = [
+    `Away mode is off for ${where}. While you were away${since !== undefined ? ` (since ${formatMuteEnd(since)})` : ""}, ` +
+      `you were tagged ${rows.length} time${rows.length === 1 ? "" : "s"} in ${convs} conversation${convs === 1 ? "" : "s"}:`,
+  ];
+  for (const group of groups.values()) {
+    const place = group[0]?.place ? plain(group[0].place, 80) : "";
+    lines.push("", `**${place || "A conversation"}**`);
+    for (const r of group) lines.push(`- ${plain(r.senderName, 60) || "Someone"}: ${quote(r.text)}${r.link ? ` ${r.link}` : ""}`);
+  }
+  if (rows.length > shown.length) lines.push("", `…and ${rows.length - shown.length} more.`);
+  return lines.join("\n");
+}
+
+/** Ends the away period and returns its summary; undefined when away mode was already off. The
+ * rows are read and the state cleared with no await between, so no tag lands in neither. */
+export function closeAway(away: Away): string | undefined {
+  const state = away.get();
+  if (!state.on) return undefined;
+  const rows = away.captures(state.since);
+  away.setOff();
+  return awaySummary(away.surface, state.since, rows);
+}
+
+/** Away mode ended anywhere but the owner's DM: close the period and queue the summary as a
+ * channel-less, user-less outbox message — the owner's own DM only (Discord: `ownerId`; Teams: the
+ * owner's personal conversation). Each drain retries that DM, then gives up without a notice; it
+ * never falls back to a channel. false = away mode was already off (nothing queued). */
+export async function closeAwayToOwnerDm(away: Away, outboxDir: string, newId: () => string): Promise<boolean> {
+  const body = closeAway(away);
+  if (body === undefined) return false;
+  await enqueueOutbox(outboxDir, { transport: away.surface, body }, newId);
+  return true;
+}
