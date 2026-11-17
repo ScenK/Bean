@@ -125,7 +125,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       liveSessionAvailable: clientId !== undefined && mountId !== undefined && (deps.liveSessionAvailable?.(clientId, mountId) ?? false),
       liveSessionHost: "desktop",
       todoRoutines,
-      sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description })) : [],
+      sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description, takesTask: r.todoDriven })) : [],
       webSearch: deps.webSearch?.() ?? false,
       runAvailable: clientId === undefined || (deps.runAvailable?.(clientId) ?? true),
       sendAvailable: deps.proposeSend !== undefined,
