@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
-  AWAY_REASON_MAX, AWAY_SUMMARY_MAX, awaySummary, closeAwayToOwnerDm, makeAway, parseAwayCommand, runAwayCommand,
+  AWAY_PREPARE_LIMITS, AWAY_REASON_MAX, AWAY_SUMMARY_MAX, closeAway, awaySummary, closeAwayToOwnerDm, makeAway, parseAwayCommand, runAwayCommand,
   type AwaySummaryRow,
 } from "../src/chatops/away.js";
 import { recordDestination } from "../src/destinations.js";
@@ -97,4 +97,64 @@ test("closeAwayToOwnerDm closes the period and queues the summary for the owner'
   expect(msg.userId).toBeUndefined();
   expect(msg.body).toContain("tagged 1 time in 1 conversation:\n\n**General**\n- Mia: `hey`");
   expect(msg.body).not.toContain("old period");
+});
+
+test("prepare caps hold across a reopen: queue, per sender and per surface per day (#909)", () => {
+  const file = db();
+  const away = makeAway({ dbPath: file, surface: "discord" });
+  const claim = (n: number, sender: string, a = away, now?: Date) =>
+    a.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: sender, project: "scratch", brief: "b" }, now);
+  // The queue holds 5 (nothing running here).
+  for (let i = 0; i < AWAY_PREPARE_LIMITS.queued; i++) expect(claim(i, `s${i}`)).toBeUndefined();
+  expect(claim(5, "s5")).toBe("the queue was full");
+  expect(claim(0, "s0")).toBe("already claimed");
+  // Drain the queue; a fresh handle (a bot restart) still counts today's claims.
+  for (let i = 0; i < AWAY_PREPARE_LIMITS.queued; i++) away.finishPrepare(away.nextPrepare()!.id, { status: "prepared", result: "ok" });
+  const again = makeAway({ dbPath: file, surface: "discord" });
+  for (let i = 10; i < 10 + AWAY_PREPARE_LIMITS.senderPerDay; i++) {
+    expect(claim(i, "mia", again)).toBeUndefined();
+    again.finishPrepare(again.nextPrepare()!.id, { status: "failed", result: "x" });
+  }
+  expect(claim(20, "mia", again)).toBe("the daily limit for this sender was reached");
+  for (let i = 30; claim(i, `t${i}`, again) === undefined; i++) again.finishPrepare(again.nextPrepare()!.id, { status: "failed", result: "x" });
+  expect(claim(99, "zed", makeAway({ dbPath: file, surface: "discord" }))).toBe("the daily limit for this chat app was reached");
+  // Tomorrow, and the other surface, start fresh.
+  expect(claim(100, "zed", again, new Date(Date.now() + 86_400_000))).toBeUndefined();
+  expect(claim(101, "zed", makeAway({ dbPath: file, surface: "teams" }))).toBeUndefined();
+});
+
+test("one prepare runs at a time; a restart marks the running one interrupted", () => {
+  const file = db();
+  const away = makeAway({ dbPath: file, surface: "discord" });
+  for (const n of [1, 2]) away.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: "mia", project: "scratch", brief: "b" });
+  const first = away.nextPrepare()!;
+  expect(away.nextPrepare()).toBeUndefined();
+  makeAway({ dbPath: file, surface: "discord" }).interruptPrepares("interrupted");
+  expect(away.prepareStatus(first.id)).toBe("failed");
+  expect(away.nextPrepare()?.id).not.toBe(first.id);
+});
+
+test("the summary shows prepared, failed and not-prepared entries (#909)", () => {
+  const away = makeAway({ dbPath: db(), surface: "discord" });
+  away.setOn(undefined, 1);
+  const tag = (n: number) => {
+    away.capture({ conversationId: "c1", messageId: `m${n}`, senderId: `s${n}`, senderName: `S${n}`, text: `t${n}`, at: n + 1, awaySince: 1 });
+    return away.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: `s${n}`, project: n === 1 ? "bean" : "scratch", brief: "b" });
+  };
+  tag(1);
+  away.finishPrepare(away.nextPrepare()!.id, {
+    status: "prepared", result: "Fix the token check.\n\n```\n# fake header\n", cli: "codex",
+    sessionId: "019a0000-0000-7000-8000-000000000000", projectPath: "/p/bean",
+  });
+  tag(2);
+  away.finishPrepare(away.nextPrepare()!.id, { status: "failed", result: "Timed out after 20 minutes." });
+  for (let n = 3; n < 3 + AWAY_PREPARE_LIMITS.queued; n++) tag(n);
+  expect(tag(9)).toBe("the queue was full");
+  away.capture({ conversationId: "c1", messageId: "m10", senderId: "s10", senderName: "S10", text: "no prepare", at: 20, awaySince: 1 });
+  const s = closeAway(away)!;
+  expect(s).toContain("- S1: `t1`\n  - Prepared a plan (bean): `Fix the token check. / ''' / # fake header` Resume: `cd '/p/bean' && codex resume 019a0000-0000-7000-8000-000000000000`");
+  expect(s).toContain("- S2: `t2`\n  - Prepare failed (scratch): `Timed out after 20 minutes.`");
+  expect(s).toContain("- S3: `t3`\n  - Prepare cancelled: away mode ended.");
+  expect(s).toContain("- S9: `t9`\n  - Not prepared: `the queue was full`");
+  expect(s.endsWith("- S10: `no prepare`")).toBe(true); // a capture without a prepare gets no sub-line
 });

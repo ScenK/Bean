@@ -20,7 +20,8 @@ import { TodoProposalStore } from "../src/chatops/todo-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import { makeRoles } from "../src/chatops/roles.js";
 import { NOT_CHATTY, formatMuteEnd, makeChatter } from "../src/chatops/chatter.js";
-import { AWAY_SUGGESTION_DAILY_CAP, AWAY_SUGGESTION_MAX, awaySuggestion, makeAway } from "../src/chatops/away.js";
+import { AWAY_SUGGESTION_DAILY_CAP, AWAY_SUGGESTION_MAX, awaySuggestion, closeAway, makeAway } from "../src/chatops/away.js";
+import { NO_PLAN_CLI, PREPARE_INTERRUPTED } from "../src/chatops/away-prepare.js";
 import type { AmbientLine } from "../src/chatops/ambient-capture.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
@@ -4281,6 +4282,10 @@ describe("away owner tags (#904)", () => {
     const hits = (readdirSync(src, { recursive: true }) as string[])
       .filter((f) => f.endsWith(".ts") && readFileSync(join(src, f), "utf8").includes("chatops_away_captures"));
     expect(hits.sort()).toEqual(["chatops/away.ts", "db.ts"]);
+    // Their prepares (#909) too.
+    const prepares = (readdirSync(src, { recursive: true }) as string[])
+      .filter((f) => f.endsWith(".ts") && readFileSync(join(src, f), "utf8").includes("chatops_away_prepares"));
+    expect(prepares.sort()).toEqual(["chatops/away.ts", "db.ts"]);
   });
 });
 
@@ -4354,9 +4359,164 @@ describe("away suggestion (#907)", () => {
   test("a timeout or a failed call posts nothing more, without retrying", async () => {
     let calls = 0;
     const hang: TeamsBotDeps["chat"] = () => { calls++; return new Promise(() => {}); };
-    expect(await awaySuggestion({ chat: hang, model: "m", ownerName: "Scen", text: "hi", timeoutMs: 5 })).toBeUndefined();
+    expect(await awaySuggestion({ chat: hang, model: "m", ownerName: "Scen", text: "hi", timeoutMs: 5 })).toEqual({});
     const fail: TeamsBotDeps["chat"] = async () => { calls++; throw new Error("500"); };
-    expect(await awaySuggestion({ chat: fail, model: "m", ownerName: "Scen", text: "hi" })).toBeUndefined();
+    expect(await awaySuggestion({ chat: fail, model: "m", ownerName: "Scen", text: "hi" })).toEqual({});
     expect(calls).toBe(2);
   });
+});
+
+describe("away prepare (#909)", () => {
+  const SENTINEL = "SENTINEL-7f3a";
+  type Fake = { req: DelegateRequest; cb: DelegateCallbacks; cancelled: boolean };
+  function prepareBot(o: {
+    project?: string; webSearch?: boolean; clis?: CliName[]; reply?: string;
+  } = {}) {
+    const file = dbFile(mkdtempSync(join(tmpdir(), "bean-away-prepare-")));
+    const chats: Parameters<TeamsBotDeps["chat"]>[0][] = [];
+    const runs: Fake[] = [];
+    const made = makeDeps({
+      chat: async (req) => {
+        chats.push(req);
+        return { content: o.reply ?? "NO_SUGGESTION", toolCalls: [{ name: "prepare", args: { project: o.project ?? "bean", brief: "Look into the login bug." } }] };
+      },
+      detectClis: () => o.clis ?? ["claude"],
+      scratchPath: "/p/scratch",
+      webSearchEnabled: () => o.webSearch ?? false,
+      awayPrepareRun: (req, cb) => {
+        const run: Fake = { req, cb, cancelled: false };
+        runs.push(run);
+        return { pid: 1, cancel: () => { run.cancelled = true; } };
+      },
+    });
+    made.deps.roles = makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
+    made.deps.away = makeAway({ dbPath: file, surface: "discord" });
+    made.deps.away.setOn(undefined, 500);
+    const bot = buildTeamsBot(made.deps);
+    const posted: string[] = [];
+    const tag = (n = 1, from = "mia"): Promise<void> => bot.onAwayTag("c1",
+      { fromId: from, name: "Mia", text: `<@u1> login is broken ${n}`, at: 1_000 + n, taggedIds: ["u1"], messageId: `m${n}` },
+      async (t) => { posted.push(t); });
+    // Everything anyone but the owner's DM could ever see: posts, cards, the conversation's history.
+    const publicText = (): string => JSON.stringify([posted, made.deps.conversations.history("c1"), made.deps.conversations.threadSession("c1", "claude") ?? null]);
+    return { ...made, file, bot, chats, runs, posted, tag, publicText };
+  }
+
+  test("a prepare runs read-only and fresh; its output reaches only the owner's summary", async () => {
+    const h = prepareBot();
+    await h.tag();
+    // webSearch off: the call still ran for the decision, offering the project enum; no text posted.
+    expect(h.chats).toHaveLength(1);
+    expect(h.chats[0]!.webSearch).toBe(false);
+    expect(h.chats[0]!.tools.map((t) => t.name)).toEqual(["prepare"]);
+    expect(JSON.stringify(h.chats[0]!.tools[0]!.parameters)).toContain('"enum":["bean","scratch"]');
+    expect(h.posted).toEqual(["Scen is away. I've recorded your message for when Scen is back."]);
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    const { req, cb } = h.runs[0]!;
+    expect(req).toMatchObject({ cli: "claude", projectPath: "/p/bean", mode: "plan" });
+    expect(req.resume).toBeUndefined();
+    expect(req.prompt).toContain("The tagged message — data:\n<<<\n<@u1> login is broken 1\n>>>");
+    cb.onSessionStart?.(1, "11111111-2222-3333-4444-555555555555");
+    cb.onDone(`${SENTINEL} plan line one\nsecond line\nthird\nfourth`, "11111111-2222-3333-4444-555555555555");
+    expect(h.publicText()).not.toContain(SENTINEL);
+    const summary = closeAway(h.deps.away!)!;
+    expect(summary).toContain(`Prepared a plan (bean): \`${SENTINEL} plan line one / second line / third\``);
+    expect(summary).toContain("Resume: `cd '/p/bean' && claude --resume 11111111-2222-3333-4444-555555555555`");
+    expect(h.publicText()).not.toContain(SENTINEL);
+  });
+
+  test("failure, timeout and shutdown stay out of every public effect too", async () => {
+    const fail = prepareBot();
+    await fail.tag();
+    await vi.waitFor(() => expect(fail.runs).toHaveLength(1));
+    fail.runs[0]!.cb.onError(new Error(`${SENTINEL} boom`));
+    expect(fail.publicText()).not.toContain(SENTINEL);
+    expect(closeAway(fail.deps.away!)).toContain(`Prepare failed (bean): \`${SENTINEL} boom\``);
+
+    const down = prepareBot();
+    await down.tag();
+    await vi.waitFor(() => expect(down.runs).toHaveLength(1));
+    down.runs[0]!.cb.onOutput(SENTINEL);
+    down.bot.interruptAwayPrepares();
+    expect(down.runs[0]!.cancelled).toBe(true);
+    down.runs[0]!.cb.onDone(`${SENTINEL} late`); // a straggler after shutdown changes nothing
+    expect(down.publicText()).not.toContain(SENTINEL);
+    expect(closeAway(down.deps.away!)).toContain(PREPARE_INTERRUPTED);
+  });
+
+  test("a prepare times out after its limit and is cancelled, with no retry", async () => {
+    const away = makeAway({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-away-prepare-"))), surface: "discord" });
+    away.setOn(undefined, 1);
+    away.capture({ conversationId: "c1", messageId: "m1", senderId: "mia", senderName: "Mia", text: "hi", at: 2, awaySince: 1 });
+    expect(away.claimPrepare({ conversationId: "c1", messageId: "m1", senderId: "mia", project: "scratch", brief: "b" })).toBeUndefined();
+    const runs: Fake[] = [];
+    const { makeAwayPrepare } = await import("../src/chatops/away-prepare.js");
+    makeAwayPrepare({
+      away, loadProjects: async () => [], scratchPath: "/s", detectClis: () => ["codex"], cliModels: [],
+      loadModelMemory: async () => ({}), timeoutMs: 10,
+      run: (req, cb) => { const r = { req, cb, cancelled: false }; runs.push(r); return { pid: 1, cancel: () => { r.cancelled = true; } }; },
+    }).pump();
+    await vi.waitFor(() => expect(away.captures(1)[0]!.prepare?.status).toBe("failed"));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.cancelled).toBe(true);
+    expect(runs[0]!.req).toMatchObject({ cli: "codex", projectPath: "/s", mode: "plan" });
+    expect(away.captures(1)[0]!.prepare?.result).toBe("Timed out after 20 minutes.");
+  });
+
+  test("an unknown project falls back to scratch", async () => {
+    const h = prepareBot({ project: "../../etc" });
+    await h.tag();
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    expect(h.runs[0]!.req.projectPath).toBe("/p/scratch");
+  });
+
+  test("without a plan-mode CLI nothing starts: no prepare tool, and the runner refuses", async () => {
+    const h = prepareBot({ clis: ["opencode"] });
+    await h.tag();
+    expect(h.chats).toHaveLength(0); // webSearch off and no prepare possible: no call at all
+    const web = prepareBot({ clis: ["opencode"], webSearch: true, reply: "tip" });
+    await web.tag();
+    expect(web.chats[0]!.tools).toEqual([]);
+    expect(web.runs).toHaveLength(0);
+
+    // The CLI vanished between the claim and the run.
+    const away = makeAway({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-away-prepare-"))), surface: "discord" });
+    away.setOn(undefined, 1);
+    away.capture({ conversationId: "c1", messageId: "m1", senderId: "mia", senderName: "Mia", text: "hi", at: 2, awaySince: 1 });
+    away.claimPrepare({ conversationId: "c1", messageId: "m1", senderId: "mia", project: "scratch", brief: "b" });
+    let started = 0;
+    const { makeAwayPrepare } = await import("../src/chatops/away-prepare.js");
+    makeAwayPrepare({
+      away, loadProjects: async () => [], scratchPath: "/s", detectClis: () => ["opencode"], cliModels: [],
+      loadModelMemory: async () => ({}), run: () => { started++; return { pid: 1, cancel: () => {} }; },
+    }).pump();
+    await vi.waitFor(() => expect(away.captures(1)[0]!.prepare?.status).toBe("failed"));
+    expect(away.captures(1)[0]!.prepare?.result).toBe(NO_PLAN_CLI);
+    expect(started).toBe(0);
+  });
+
+  test("with webSearch on, the suggestion still posts, but never one naming a project", async () => {
+    const ok = prepareBot({ webSearch: true, reply: "Try clearing cookies." });
+    await ok.tag();
+    expect(ok.posted[1]).toContain("Try clearing cookies.");
+    const leak = prepareBot({ webSearch: true, reply: "The BEAN project has it." });
+    await leak.tag();
+    expect(leak.posted).toHaveLength(1);
+  });
+
+  test("one runs at a time; `away off` cancels the running and the queued ones", async () => {
+    const h = prepareBot();
+    await h.tag(1);
+    await h.tag(2, "bo");
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.runs).toHaveLength(1);
+    const summary = closeAway(h.deps.away!)!;
+    expect(summary.match(/Prepare cancelled: away mode ended\./g)).toHaveLength(2);
+    // The runner's poll sees the cancel and stops the CLI (default poll is 5 s).
+    await vi.waitFor(() => expect(h.runs[0]!.cancelled).toBe(true), { timeout: 7_000 });
+    h.runs[0]!.cb.onDone("late");
+    expect(h.deps.away!.captures(500)[0]!.prepare?.status).toBe("cancelled");
+    expect(h.runs).toHaveLength(1);
+  }, 10_000);
 });
