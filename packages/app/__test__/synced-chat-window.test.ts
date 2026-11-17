@@ -114,6 +114,19 @@ describe("ChatWindow synced chats", () => {
     expect(bean.syncedChatSend).not.toHaveBeenCalled();
   });
 
+  it("the composer grows with Shift+Enter lines and shrinks back after a send", async () => {
+    await mount();
+    await openRow("Standup");
+    const ta = composer();
+    // jsdom has no layout: scrollHeight follows the line count.
+    Object.defineProperty(ta, "scrollHeight", { configurable: true, get: () => 20 * ta.value.split("\n").length });
+    ta.value = "one\ntwo\nthree";
+    await act(async () => { ta.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(ta.style.height).toBe("60px");
+    await send(ta.value);
+    expect(ta.style.height).toBe("20px");
+  });
+
   it("a saved ping re-reads the shown chat and marks another one unread", async () => {
     await mount();
     await openRow("DM");

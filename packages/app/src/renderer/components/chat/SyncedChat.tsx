@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { DeskRefusal } from "@bean/core";
 import { Markdown } from "../../shared/Markdown.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
@@ -93,6 +93,15 @@ export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Grow/shrink the composer with its content, like ChatPanel's resizeInput (the CSS max-height on
+  // .bean-input--composer caps it). Keyed on `text`, so a send's clear shrinks it back too.
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
 
   useEffect(() => {
     window.bean.chatAttach(mountId);
@@ -259,6 +268,7 @@ export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive
         ) : null}
         <div class="bean-chat-input-shell">
           <textarea
+            ref={inputRef}
             class="bean-input bean-input--composer"
             rows={1}
             placeholder={placeholder}
