@@ -109,4 +109,6 @@ test("messageLink opens a chat message with chat context, and a channel message 
     .toBe("https://teams.microsoft.com/l/message/19:ch@thread.tacv2/171?tenantId=t1&groupId=g1&parentMessageId=100");
   expect(messageLink({ id: "19:ch@thread.tacv2", conversationType: "channel" }, "171"))
     .toBe("https://teams.microsoft.com/l/message/19:ch@thread.tacv2/171?parentMessageId=171");
+  expect(messageLink({ id: "19:ch@thread.tacv2;messageid=100" }, "171"))
+    .toBe("https://teams.microsoft.com/l/message/19:ch@thread.tacv2/171?parentMessageId=100");
 });

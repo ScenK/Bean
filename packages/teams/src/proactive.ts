@@ -21,11 +21,13 @@ export function messageLink(
   channelData?: { tenant?: { id?: string }; team?: { aadGroupId?: string } },
 ): string {
   const base = `https://teams.microsoft.com/l/message/${bareChannelId(conversation.id)}/${encodeURIComponent(messageId)}`;
-  if (conversation.conversationType !== "channel") return `${base}?context=${encodeURIComponent(JSON.stringify({ contextType: "chat" }))}`;
+  const parent = /;messageid=([^;]+)/.exec(conversation.id)?.[1];
+  // A channel reply may arrive without `conversationType`; its `;messageid=` suffix still marks it.
+  if (conversation.conversationType !== "channel" && !parent) return `${base}?context=${encodeURIComponent(JSON.stringify({ contextType: "chat" }))}`;
   const query = new URLSearchParams({
     ...(channelData?.tenant?.id ? { tenantId: channelData.tenant.id } : {}),
     ...(channelData?.team?.aadGroupId ? { groupId: channelData.team.aadGroupId } : {}),
-    parentMessageId: /;messageid=([^;]+)/.exec(conversation.id)?.[1] ?? messageId,
+    parentMessageId: parent ?? messageId,
   });
   return `${base}?${query}`;
 }

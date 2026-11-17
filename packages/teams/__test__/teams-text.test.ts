@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { teamsText } from "../src/teams-text.js";
+import { plainMentions, teamsText } from "../src/teams-text.js";
 
 test("a lone newline between prose lines becomes a paragraph break", () => {
   expect(teamsText("• first\n• second")).toBe("• first\n\n• second");
@@ -40,4 +40,14 @@ test("adversarial delimiter runs stay linear and well-formed", () => {
   const out = teamsText(evil);
   expect(performance.now() - t0).toBeLessThan(1000);
   expect(teamsText(out)).toBe(out);
+});
+
+test("plainMentions turns only entity-backed mention markup into a plain @name", () => {
+  const entities = [
+    { type: "mention", text: "<at>Scen Kang</at>" }, { type: "mention", text: "<at>Mia</at>" }, { type: "clientInfo" },
+  ];
+  expect(plainMentions("<at>Scen Kang</at> can I open a bakery? cc <at>Mia</at>", entities)).toBe("@Scen Kang can I open a bakery? cc @Mia");
+  // Typed literally, with no mention entity behind it: left as typed.
+  expect(plainMentions("paste <at>sample</at> as is", entities)).toBe("paste <at>sample</at> as is");
+  expect(plainMentions("<at>Mia</at>", undefined)).toBe("<at>Mia</at>");
 });
