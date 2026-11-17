@@ -56,7 +56,7 @@ import {
   type Capability, type Role, type Roles,
 } from "./roles.js";
 import { makeAmbientCapture, type AmbientLine } from "./ambient-capture.js";
-import { awayLine, awayRefusal, awayReminder, parseAwayCommand, runAwayCommand, type Away } from "./away.js";
+import { awayLine, awayRefusal, awayReminder, awaySuggestion, parseAwayCommand, runAwayCommand, type Away } from "./away.js";
 import { NOT_CHATTY, formatMuteEnd, makeChimeIn, parseChatterCommand, type Chatter, type ChatterCommand, type ChimeInFx } from "./chatter.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
@@ -393,7 +393,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
   // Away mode (#904): a non-bot sender other than the owner explicitly tags the owner while away
   // here → record the message (owner-only table), then one fixed, non-pinging line in the same
-  // conversation. A redelivered message is already recorded and gets nothing; a storage failure
+  // conversation (and maybe Bean's labelled suggestion after it). A redelivered message is already recorded and gets nothing; a storage failure
   // still gets the away line, minus the claim it was recorded. Never rejects.
   async function awayTag(conversationId: string, line: AmbientLine, post: (text: string) => Promise<void>): Promise<void> {
     const away = deps.away;
@@ -416,6 +416,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         console.error(`[away] capture failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       await post(awayLine(deps.roles.ownerName, state.reason, recorded));
+      // Then, only with config `webSearch` on and under the daily cap, Bean's own labelled
+      // suggestion as a second message (#907); the line above never waits for it.
+      if (deps.webSearchEnabled?.() && away.claimSuggestion()) {
+        const suggestion = await awaySuggestion({ chat: deps.chat, model: deps.model, ownerName: deps.roles.ownerName, text: line.text });
+        if (suggestion) await post(suggestion);
+      }
     } catch (err) {
       console.error(`[away] owner-tag reply failed: ${err instanceof Error ? err.message : String(err)}`);
     }

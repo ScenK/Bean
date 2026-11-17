@@ -192,6 +192,15 @@ CREATE TABLE IF NOT EXISTS chatops_away_captures (
   UNIQUE (surface, conversation_id, message_id)
 );
 
+-- Away suggestions made per surface per day (chatops/away.ts, #907), for the daily cap; day is the
+-- calendar date in the process's TZ, older days are pruned on claim.
+CREATE TABLE IF NOT EXISTS chatops_away_suggestions (
+  surface TEXT NOT NULL,
+  day     TEXT NOT NULL,
+  count   INTEGER NOT NULL,
+  PRIMARY KEY (surface, day)
+);
+
 -- One row per admitted chatops turn (chatops/turn-cap.ts), for the per-member daily cap. The
 -- platform message/interaction id is the key, so a redelivered message never counts twice.
 -- day is the calendar date in the process's TZ; older days are pruned on insert.
