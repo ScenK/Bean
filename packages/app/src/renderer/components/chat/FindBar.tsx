@@ -34,12 +34,24 @@ export function FindBar({ seq, onClose }: { seq: number; onClose: () => void }) 
   };
   const reveal = (): void => {
     const r = rangesRef.current[currentRef.current];
-    const box = root()?.getBoundingClientRect();
-    if (!r || !box) return;
-    const at = r.getBoundingClientRect();
-    if (at.top >= box.top && at.bottom <= box.bottom) return; // already on screen — no jump
-    const el = r.startContainer.parentElement;
-    el?.scrollIntoView({ block: "center" });
+    const list = root();
+    if (!r || !list) return;
+    // Innermost out, each scroll box up to and including the list (a wide table, an agent's Steps
+    // pane, the list itself) centers the match on an axis where it's clipped; one already in view
+    // doesn't jump. Never scrollIntoView: it also scrolls every ancestor above the list,
+    // overflow:hidden included — a match near the end shoved the whole window up, blank below.
+    const scrolls = /auto|scroll/;
+    for (let a = r.startContainer.parentElement; a; a = a === list ? null : a.parentElement) {
+      const s = getComputedStyle(a);
+      const box = a.getBoundingClientRect();
+      const m = r.getBoundingClientRect(); // fresh: an inner box may have just moved it
+      if (scrolls.test(s.overflowX) && (m.left < box.left || m.right > box.right)) {
+        a.scrollLeft += m.left + m.width / 2 - (box.left + box.width / 2); // clamped by the browser
+      }
+      if (scrolls.test(s.overflowY) && (m.top < box.top || m.bottom > box.bottom)) {
+        a.scrollTop += m.top + m.height / 2 - (box.top + box.height / 2);
+      }
+    }
   };
   const select = (i: number, scroll: boolean): void => {
     currentRef.current = i;
