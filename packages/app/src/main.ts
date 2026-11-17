@@ -154,7 +154,7 @@ app.whenReady().then(async () => {
   const avatarControls = installAvatarControls(avatar, {
     log: (event, fields) => avatarLog(event, event === "bring-back" ? { ...fields, version: pkg.version, os: release() } : fields),
     // Only runs after a reload, long after the host exists.
-    replay: () => { push.broadcast(IPC.taskStatus, host?.taskStatus.list() ?? []); pushAway(); },
+    replay: () => push.broadcast(IPC.taskStatus, host?.taskStatus.list() ?? []),
     // Non-blocking: main keeps streaming delegates/sessions while this is open.
     fail: () => void dialog.showMessageBox({
       type: "warning",
@@ -183,7 +183,8 @@ app.whenReady().then(async () => {
   });
   let avatarReady = false;
   // The avatar's away pills (local core): bean.db is written by the bots' DM `away` command and the
-  // tray toggle, so main polls it and pushes only changes (plus a replay after an avatar reload).
+  // tray toggle, so main polls it and pushes only changes — plus the current set on every avatar
+  // load, since any reload (View → Reload, Bring Bean Back) starts the page with none.
   // ponytail: 5 s poll, up to 5 s late after a DM command; a bot→host notify if that ever matters.
   let awayNow: ChatopsBot[] = [];
   const pushAway = (): void => push.broadcast(IPC.awayChanged, awayNow);
@@ -194,6 +195,7 @@ app.whenReady().then(async () => {
     awayNow = next;
     pushAway();
   };
+  avatar.webContents.on("did-finish-load", pushAway);
   // Mirrors SettingsWindow.tsx's scheduleErrorClear (same 3s window): a tray-only cache of when
   // each bot's current error first appeared, so the submenu can stop showing a stale error even
   // though the host's bot state (shared with Settings) keeps it until overwritten. Updated by the

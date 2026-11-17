@@ -130,5 +130,5 @@
 .bean-orb-away-pill svg {
   width: 8px;
   height: 8px;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
