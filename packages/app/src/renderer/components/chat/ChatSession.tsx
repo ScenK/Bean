@@ -495,6 +495,12 @@ export function ChatSession({
       if (sprouts.changed) flushRef.current = true;
       setItems(itemsRef.current);
       for (const lb of sprouts.loopbacks) void sendRef.current(lb.text, lb.display, true, undefined, lb.source);
+      // An end pushed while the thread loaded found no card and waited: its card is here now.
+      for (const [jobId, e] of pendingSproutEndsRef.current) {
+        if (!itemsRef.current.some((it) => "jobId" in it && it.jobId === jobId)) continue;
+        pendingSproutEndsRef.current.delete(jobId);
+        applySproutEvent(e);
+      }
     }, (err: unknown) => addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error"));
   }, []);
 

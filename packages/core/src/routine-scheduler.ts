@@ -163,8 +163,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   // due time forever, so tick() needs to remember "already handled as missed" itself rather
   // than re-deriving it — a disk round-trip would also just re-observe the same stale due date.
   const missedNames = new Set<string>();
-  // Run-now todos that found every slot busy (#923), per routine, oldest first: a freed slot runs
-  // the next one. A drain or worker usually takes it first (it's at the queue's front), and then its
+  // Run-now todos that found every slot busy (#923), per routine, newest last: a freed slot runs the
+  // newest, matching the queue (each Run now goes in front of the last). A drain or worker usually takes it first (it's at the queue's front), and then its
   // exact claim just loses. In memory only — after a restart the queue's front order still holds.
   const waiting = new Map<string, string[]>();
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -223,7 +223,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     const left = count(routine.name) - 1;
     if (left > 0) running.set(routine.name, left);
     else running.delete(routine.name);
-    const next = waiting.get(routine.name)?.shift();
+    const next = waiting.get(routine.name)?.pop();
     if (waiting.get(routine.name)?.length === 0) waiting.delete(routine.name);
     if (next !== undefined && !stopped && mayFire()) void runExact(routine, next); // settles its own errors
     if (!ran || !routine.watch || stopped || !mayFire()) return;
