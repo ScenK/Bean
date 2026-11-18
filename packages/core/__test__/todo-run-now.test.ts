@@ -123,6 +123,21 @@ describe("scheduler runTodo", () => {
     expect(t.peak()).toBe(1);
   });
 
+  it("busy: two waiting Run nows start in queue order, the later one first", async () => {
+    const t = rig(["c", "b", "a"]); // each Run now went in front of the last: c, then b, then a
+    await t.sched.runTodo("q", "a");
+    await vi.waitFor(() => expect(t.openIds()).toEqual(["a"]));
+    expect(await t.sched.runTodo("q", "b")).toEqual({ status: "next" });
+    expect(await t.sched.runTodo("q", "c")).toEqual({ status: "next" });
+    t.release("a");
+    await vi.waitFor(() => expect(t.openIds()).toEqual(["c"]));
+    t.release("c");
+    await vi.waitFor(() => expect(t.openIds()).toEqual(["b"]));
+    t.release("b");
+    await vi.waitFor(() => expect(t.sched.runningCount("q")).toBe(0));
+    expect(t.started).toEqual(["a", "c", "b"]);
+  });
+
   it("racing a scheduled drain: one slot, and the task runs once", async () => {
     const t = rig(["new"]);
     const tick = t.sched.tick(); // due: the drain takes the slot

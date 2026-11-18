@@ -544,7 +544,7 @@ export function RoutinesPanel() {
       <button
         type="button"
         class={`bean-skills-pill${r.enabled ? " bean-skills-pill--on" : ""}`}
-        title={r.enabled ? "Runs automatically — click to pause" : "Paused — click to enable"}
+        title={r.enabled ? "Runs automatically — click to pause" : r.watch ? "Paused — click to enable" : "On demand — click to run on its schedule"}
         // A needs-review watch enables from its review card (re-check + seed), not a bare flip.
         onClick={(e) => { e.stopPropagation(); if (needsReview(r, states[r.name])) select(r.name); else void toggleEnabled(r); }}
       >
@@ -557,7 +557,8 @@ export function RoutinesPanel() {
             <span class={watchRowSub(r, states[r.name]).bad ? "bean-routines-row-sub--bad" : undefined}>{watchRowSub(r, states[r.name]).text}</span>
           ) : (
             <>
-              {humanCadence(r.cron ?? "")} · {r.enabled ? `${r.steps.length} step${r.steps.length === 1 ? "" : "s"}` : "paused"}
+              {/* A disabled schedule sprout runs only when started (chat card, Run now): on demand. */}
+              {r.enabled ? humanCadence(r.cron ?? "") : "On demand"} · {r.steps.length} step{r.steps.length === 1 ? "" : "s"}
               {r.todoDriven ? " · ⚡ todo-driven" : ""}
             </>
           )}
@@ -798,7 +799,7 @@ export function RoutinesPanel() {
             >
               <span class="bean-skills-toggle-knob" />
             </button>
-            <span class="bean-skills-toggle-label">{draft.enabled ? "Runs automatically" : "Paused"}</span>
+            <span class="bean-skills-toggle-label">{draft.enabled ? "Runs automatically" : draft.watch ? "Paused" : "On demand — runs only when you start it"}</span>
             {draft.enabled && stepProblems ? (
               <span class="bean-routines-step-missing" role="alert">⚠ {stepProblems}</span>
             ) : null}

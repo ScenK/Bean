@@ -71,7 +71,7 @@ const stepTitle = (step: DashStep): string => {
 
 function nextRunText(routine: Routine | undefined, state: RoutineStateView | undefined): string {
   if (!routine) return "sprout deleted — history kept";
-  if (!routine.enabled) return "paused — won't run again until you enable it";
+  if (!routine.enabled) return routine.watch ? "paused — won't run again until you enable it" : "on demand — runs only when you start it";
   // A watch has no "next run" — say what it's waiting for instead.
   if (routine.watch) return watchDashboardText(routine, state, new Date());
   try {
