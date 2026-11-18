@@ -456,22 +456,27 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const canPrepare = !!awayPrepare && recorded && deps.detectClis().some((c) => c === "claude" || c === "codex");
       if ((webSearch || canPrepare) && away.claimSuggestion()) {
         const projects = canPrepare ? (await deps.loadProjects()).map((p) => p.name) : undefined;
-        const s = await awaySuggestion({
+        const s = awaySuggestion({
           chat: deps.chat, model: deps.model, ownerName: deps.roles.ownerName, text: line.text, webSearch,
           ...(projects ? { projects } : {}),
         });
-        if (s.prepare && awayPrepare) {
-          try {
-            const notPrepared = away.claimPrepare({
-              conversationId, messageId: line.messageId, senderId: line.fromId, ...s.prepare,
-              ...(state.since !== undefined ? { awaySince: state.since } : {}),
-            });
-            if (notPrepared === undefined) awayPrepare.pump();
-          } catch (err) {
-            console.error(`[away] prepare claim failed: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
-        if (s.text) await post(s.text);
+        const messageId = line.messageId;
+        // Each result acts as soon as its call settles: a slow web search never holds the claim.
+        await Promise.all([
+          s.prepare.then((p) => {
+            if (!p || !awayPrepare) return;
+            try {
+              const notPrepared = away.claimPrepare({
+                conversationId, messageId, senderId: line.fromId, ...p,
+                ...(state.since !== undefined ? { awaySince: state.since } : {}),
+              });
+              if (notPrepared === undefined) awayPrepare.pump();
+            } catch (err) {
+              console.error(`[away] prepare claim failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }),
+          s.text.then(async (t) => { if (t) await post(t); }),
+        ]);
       }
     } catch (err) {
       console.error(`[away] owner-tag reply failed: ${err instanceof Error ? err.message : String(err)}`);

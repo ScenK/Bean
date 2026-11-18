@@ -42,9 +42,11 @@ to Bean (non-DM), so tagging Bean **and** the owner gets the normal answer plus 
   line, then the model text clipped to 600 chars; `NO_SUGGESTION`, timeout or failure posts nothing.
   Cap: 100 calls per surface per day in `chatops_away_suggestions` (claimed before the call).
 - **Prepare (#909)**: with a read-only CLI (claude/codex) and an executor (`awayPrepareRun`, the
-  servers pass `runDelegate`), the suggestion call also offers `prepare(project, brief)` — `project`
-  an enum of registered names + `scratch`, re-checked in code (unknown → scratch) — and runs even
-  with `webSearch` off (its text discarded). A suggestion text naming a project is dropped. Claims go
+  servers pass `runDelegate`), a second, private call (no web search, text discarded) is offered
+  `prepare(project, brief)` — `project` an enum of registered names + `scratch`, re-checked in code
+  (unknown → scratch). It runs alongside the public call under the same timeout, and even with
+  `webSearch` off. The public call never sees the registry, so its text needs no project-name filter
+  (one used to drop any answer saying "Bean" — the bot's own name and a project). Claims go
   to `chatops_away_prepares` (1:1 with the capture key; read only by `away.ts`, tested) under
   persisted caps (`AWAY_PREPARE_LIMITS`; over one = `not_prepared` with the reason). The claim
   re-checks, in the same transaction, that the capture's away period is still on — a suggestion
