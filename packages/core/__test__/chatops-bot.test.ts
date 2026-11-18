@@ -834,6 +834,22 @@ test("save-note saves the draft, updates the card, and confirms", async () => {
   expect(effects.posted.some((p) => p.includes('Saved note "Our chat"'))).toBe(true);
 });
 
+test("a note card leaves code-built records in history, never its title or body (#941)", async () => {
+  const { deps } = makeDeps({ chat: noteChat });
+  const effects = fx();
+  const id = await proposeNoteThenId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "save-note", proposalId: id } }, effects);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "save-note", proposalId: id } }, effects);
+  const records = deps.conversations.history("c1").filter((t) => t.content.startsWith("[card: "));
+  expect(records).toEqual([
+    { role: "assistant", content: "[card: note — pending]" },
+    { role: "assistant", content: "[card: note — saved]" },
+    { role: "assistant", content: "[card: note — expired]" },
+  ]);
+  for (const r of records) expect(r.content).not.toMatch(/Our chat|we talked|bob/);
+});
+
 const pic = { data: "iVBORw0KGgo=", mimeType: "image/png" };
 const imageSaver = () => {
   const stored: string[] = [];
@@ -3915,7 +3931,8 @@ describe("sprout runs from chat (#636)", () => {
     });
     made.deps.roles = makeRoles({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-sr-"))), surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
     made.deps.roles.addAdmins("s1", [{ id: "ada", name: "Ada" }]);
-    return { h, offered, triggered, bot: buildTeamsBot(made.deps) };
+    return { h, offered, triggered, bot: buildTeamsBot(made.deps), records: (conv = "c1") =>
+      made.deps.conversations.history(conv).filter((t) => t.content.startsWith("[card: ")).map((t) => t.content) };
   }
   const say = (fromId = "u1", extra: object = {}) => ({ ...msg, scopeId: "s1", fromId, fromName: fromId, text: "run the pr digest", ...extra });
   const tap = (beanAction: string, proposalId: string, fromId = "u1", conversationId = "c1") =>
@@ -3963,6 +3980,30 @@ describe("sprout runs from chat (#636)", () => {
     expect(t.triggered).toEqual([]);
     await t.bot.onCardAction(tap("run-sprout", id), owner);
     expect(t.triggered).toHaveLength(1);
+  });
+
+  test("card records (#941): pending on post, running on Run, none for a refused tap", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage(say(), effects);
+    expect(t.records()).toEqual(['[card: sprout "pr-digest" — pending]']);
+    const id = (effects.cards[0] as { proposalId: string }).proposalId;
+    await t.bot.onCardAction(tap("run-sprout", id, "ada"), fx());
+    await t.bot.onCardAction(tap("run-sprout", id, "u1", "c2"), fx());
+    expect(t.records()).toEqual(['[card: sprout "pr-digest" — pending]']);
+    expect(t.records("c2")).toEqual([]);
+    await t.bot.onCardAction(tap("run-sprout", id), effects);
+    expect(t.records()).toEqual(['[card: sprout "pr-digest" — pending]', '[card: sprout "pr-digest" — running]']);
+    // A refused start and a Cancel record how the card ended.
+    t.h.result = { status: "refused", reason: "busy" };
+    await t.bot.onMessage(say(), effects);
+    await t.bot.onCardAction(tap("run-sprout", (effects.cards[1] as { proposalId: string }).proposalId), effects);
+    await t.bot.onMessage(say(), effects);
+    await t.bot.onCardAction(tap("cancel-sprout", (effects.cards[2] as { proposalId: string }).proposalId), effects);
+    expect(t.records().slice(2)).toEqual([
+      '[card: sprout "pr-digest" — pending]', '[card: sprout "pr-digest" — didn\'t start]',
+      '[card: sprout "pr-digest" — pending]', '[card: sprout "pr-digest" — cancelled]',
+    ]);
   });
 
   test("an expired card is refused; Cancel never triggers", async () => {

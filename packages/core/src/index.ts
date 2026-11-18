@@ -81,6 +81,7 @@ export * from "./watch-window.js";
 export * from "./routine-scheduler.js";
 export * from "./scheduler-lease.js";
 export * from "./sprout-trigger.js";
+export * from "./card-record.js";
 export * from "./routine-host.js";
 export * from "./routine-steps.js";
 export * from "./routine-wiring.js";

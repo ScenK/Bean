@@ -3,7 +3,8 @@ import type { HandoffItem, LiveEvent } from "@bean/host";
 import type { CloseTurn } from "@bean/host";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";
-import { pdfPlaceholder } from "./chat-thread.js";
+import { cardRecord, runEndState, type CardRecordState } from "@bean/core/card-record";
+import { pdfPlaceholder, SPROUT_UNKNOWN } from "./chat-thread.js";
 
 // Agent mode's pure pieces — slash parsing, the shared history mapper and the live-event reducer —
 // kept out of ChatWindow so they test without a DOM. See .memory/project-live-sessions.md.
@@ -104,7 +105,10 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
       const text = it.images?.length ? `${it.text}\n[image attached]` : it.text;
       return [{ role: "user", content: it.pdf ? `${text}\n${pdfPlaceholder(it.pdf.name)}` : text, source: it.source }];
     }
-    if (it.kind !== "reply") return [];
+    if (it.kind !== "reply") {
+      const record = opts.memory ? undefined : cardItemRecord(it);
+      return record ? [{ role: "assistant", content: record }] : [];
+    }
     if (!isLiveAgent(it.agent)) return [{ role: "assistant", content: it.text }];
     const text = it.text.trim();
     if (it.streaming || !text) return [];
@@ -112,6 +116,41 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     const capped = text.length > max ? `${text.slice(0, max)}…` : text;
     return [{ role: "assistant", content: `[${AGENT_NAMES[it.agent]}] ${capped}` }];
   });
+}
+
+/** A sprout/todo card's `done`, split by how it ended (its settled outcome line). */
+function doneState(result: string | undefined, started: boolean): CardRecordState {
+  if (result === SPROUT_UNKNOWN) return "unknown";
+  return started ? runEndState(result ?? "") : "didn't start";
+}
+
+/** A confirm card as its one-line history record (#941), from the item's current state; any other
+ * item → undefined. Only catalog names ride (sprout, skill) — never note/todo/send text, a delegate
+ * instruction, a path or a result. */
+export function cardItemRecord(it: ChatItem): string | undefined {
+  switch (it.kind) {
+    case "proposal":
+      return cardRecord("run", it.state === "confirmed" ? "started" : it.state, it.run.skillName);
+    case "delegate":
+      return cardRecord("delegate", it.state === "done" ? "finished" : it.state, it.proposal.skillName);
+    case "note":
+      return cardRecord("note", it.state);
+    case "skill":
+      return cardRecord("skill", it.state, it.skill.name);
+    case "offer":
+      return cardRecord("live session", it.state);
+    case "send":
+      return cardRecord("send", it.state);
+    case "todo":
+      return cardRecord("todo", it.state === "done" ? doneState(it.result, true) : it.state, it.todo.routine);
+    case "sprout":
+      return cardRecord("sprout", it.state !== "done" ? it.state
+        : it.result === SPROUT_UNKNOWN ? "unknown"
+        : it.plan.action === "check" ? "checked"
+        : doneState(it.result, it.jobId !== undefined), it.plan.routine);
+    default:
+      return undefined;
+  }
 }
 
 /** What the renderer offers main for the opening turn's handoff (main keeps the tail). Bean-mode

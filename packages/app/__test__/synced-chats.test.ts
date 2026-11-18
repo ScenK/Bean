@@ -28,6 +28,11 @@ describe("mapSyncedTranscript", () => {
     ]);
   });
 
+  it("a card record line (#941) is a status row, not a Bean bubble", () => {
+    expect(mapSyncedTranscript([{ role: "assistant", content: '[card: sprout "pr-digest" — running]' }], { kind: "dm" }, "Scen"))
+      .toEqual([{ role: "status", text: 'Card: sprout "pr-digest" — running' }]);
+  });
+
   it("a DM is all the owner's, whatever name the platform gave", () => {
     const rows = mapSyncedTranscript([{ role: "user", content: speakerLine("Scen K", "hi") }], { kind: "dm" }, "the owner");
     expect(rows).toEqual([{ role: "user", text: "hi" }]);

@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "vitest";
 import { checkPdfAttachment, converse, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
+import { cardRecord } from "../src/card-record.js";
 import { composePersonaPrompt, DEFAULT_PERSONA, type Persona } from "../src/persona.js";
 import { availableModels } from "../src/models.js";
 import type { Project, Skill } from "../src/types.js";
@@ -987,6 +988,32 @@ describe("propose_sprout_run", () => {
     expect(desc).toMatch(/prefer a sprout marked \(takes a task\).*propose_todo.*propose_delegate/);
     expect(desc).toMatch(/always say sprout/);
     expect((specs[0]!.parameters as { properties: { routine: { enum: string[] } } }).properties.routine.enum).toEqual(["pr-digest", "bare", "long", "fixer"]);
+  });
+
+  it("a card record rides as assistant history, never system; the spec tells the model what it means (#941)", async () => {
+    const record = cardRecord("sprout", "running", "pr-digest");
+    let seen: Array<{ role: string; content: unknown }> = [];
+    let spec: ToolSpec | undefined;
+    // Scripted model: proposes the sprout unless this chat's latest record for it says running.
+    const scripted: ConverseDeps = {
+      model: "m",
+      chat: async ({ messages, tools }) => {
+        seen = messages as typeof seen;
+        spec = tools.find((x) => x.name === "propose_sprout_run");
+        const running = messages.some((m) => m.role === "assistant" && m.content === record);
+        return running
+          ? { content: "It's running — I'll post the result here.", toolCalls: [] }
+          : { content: "", toolCalls: [{ name: "propose_sprout_run", args: { routine: "pr-digest" } }] };
+      },
+    };
+    const res = await conv({
+      latestUserText: "tell me when it's done", deps: scripted, sproutCatalog: catalog,
+      history: [{ role: "user", content: "run the pr digest" }, { role: "assistant", content: record }],
+    });
+    expect(res.proposedSproutRun).toBeUndefined();
+    expect(res.reply).toMatch(/running/);
+    expect(seen.filter((m) => m.role === "system").some((m) => String(m.content).includes(record))).toBe(false);
+    expect(spec!.description).toMatch(/\[card: sprout "<name>" — <state>\].*pending or running.*instead of proposing it again/s);
   });
 
   it("skips the task-taking hint when no sprout takes a task", async () => {

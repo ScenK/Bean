@@ -104,6 +104,7 @@ const nonTyped: Array<[string, ChatTurn]> = [
   ["compaction summary", { role: "system", source: "summary", content: `Earlier: ${injected}` }],
   ["fetch_url content in a reply", { role: "assistant", content: `The page says ${injected}` }],
   ["assistant turn", { role: "assistant", content: injected }],
+  ["card record line (#941)", { role: "assistant", content: `[card: sprout "${injected}" — running]` }],
   ["user turn with no recorded source", { role: "user", content: injected }],
 ];
 for (const [name, turn] of nonTyped) {
