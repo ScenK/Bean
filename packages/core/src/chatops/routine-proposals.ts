@@ -49,6 +49,12 @@ export class RoutineProposalStore {
     if (p) p.cardActivityId = activityId;
   }
 
+  /** Raw read (expired entries included, nothing claimed) — bot.ts tells a held-but-expired card
+   * from a consumed or forged id with it. */
+  peek(id: string): PendingRoutine | undefined {
+    return this.byId.get(id);
+  }
+
   get(id: string): PendingRoutine | undefined {
     const p = this.byId.get(id);
     if (!p) return undefined;

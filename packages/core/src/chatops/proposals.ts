@@ -35,6 +35,12 @@ export class ProposalStore {
     if (p) p.cardActivityId = activityId;
   }
 
+  /** Raw read (expired entries included, nothing claimed) — bot.ts tells a held-but-expired card
+   * from a consumed or forged id with it. */
+  peek(id: string): PendingProposal | undefined {
+    return this.byId.get(id);
+  }
+
   /** Non-removing peek for the edit-prompt flow; undefined once expired or claimed. Doesn't
    * delete an expired entry — claim() stays the only removal path. */
   get(id: string): PendingProposal | undefined {

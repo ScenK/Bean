@@ -12,8 +12,13 @@ the same action, because a tool-only turn leaves no reply text.
   interrupted / checked / didn't start / unknown) — keep `runEndState` in step with
   `sproutResultLine`/`sproutFinishText` wording.
 - **Chatops (`bot.ts` `recordCard`):** one append after each card post and one per authorized
-  outcome (incl. expired-on-tap), before the card edit is awaited; nothing for a tap refused before
-  the claim; desk-moved live sessions (`p.id === "desk"`) have no card, so no line. A delegate's
+  outcome, before the card edit is awaited; nothing for a tap refused before the claim;
+  desk-moved live sessions (`p.id === "desk"`) have no card, so no line. `failed` means the action
+  itself failed — once the save/queue/send committed, a failed card edit or receipt post never
+  records `failed` (a flag set right after the action). `expired` only via `recordExpired`: the
+  store's raw `peek` still held the proposal for this conversation before the empty claim — a
+  replayed, forged or other-conversation id records nothing. A refusal before a picked skill
+  resolves records no name. A delegate's
   finish record stays the existing `[delegate result]` line; a sprout/todo run's is the dispatch
   notice context (#920).
 - **Never in a line:** note title/body, todo text, send body/destination, instructions, paths,

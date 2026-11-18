@@ -31,6 +31,12 @@ export class SkillProposalStore {
     if (p) p.cardActivityId = activityId;
   }
 
+  /** Raw read (expired entries included, nothing claimed) — bot.ts tells a held-but-expired card
+   * from a consumed or forged id with it. */
+  peek(id: string): PendingSkill | undefined {
+    return this.byId.get(id);
+  }
+
   claim(id: string): PendingSkill | undefined {
     const p = this.byId.get(id);
     if (!p) return undefined;

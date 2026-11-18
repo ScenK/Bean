@@ -146,7 +146,7 @@ export function cardItemRecord(it: ChatItem): string | undefined {
     case "sprout":
       return cardRecord("sprout", it.state !== "done" ? it.state
         : it.result === SPROUT_UNKNOWN ? "unknown"
-        : it.plan.action === "check" ? "checked"
+        : it.plan.action === "check" ? (it.failed ? "failed" : "checked")
         : doneState(it.result, it.jobId !== undefined), it.plan.routine);
     default:
       return undefined;
