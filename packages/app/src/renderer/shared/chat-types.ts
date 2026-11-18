@@ -91,7 +91,8 @@ export type ChatItem =
   // "Run the X sprout": the run-vs-check action is frozen in `plan` (main decided it); a tap
   // triggers exactly that. `result` = the outcome line once the tap settles. `jobId` = an admitted
   // run's dispatch (#921): kept through saves, so a restored card still learns how it ended.
-  | { kind: "sprout"; id: string; plan: SproutRunPlan; state: "pending" | "running" | "done" | "dismissed" | "expired"; result?: string; jobId?: string }
+  // `failed`: a check that errored or never answered (its history record says failed, not checked).
+  | { kind: "sprout"; id: string; plan: SproutRunPlan; state: "pending" | "running" | "done" | "dismissed" | "expired"; result?: string; jobId?: string; failed?: boolean }
   // A propose_send card: main holds the body and rows (`card.id`); Send hands back the picked option.
   | { kind: "send"; id: string; card: SendCard; state: "pending" | "sending" | "sent" | "dismissed" | "expired" }
   // `details` expand under the row (e.g. the messages handed over to an agent). `receipt`: an ended

@@ -76,6 +76,51 @@ describe("agent-mode helpers", () => {
     expect(memory[4]).toEqual({ role: "user", content: "composed", source: "skill", id: "u3" });
   });
 
+  it("maps every card to one record line from its state (#941); none in the memory transcript or a handoff", () => {
+    const plan = { routine: "pr-digest", action: "run" as const, actionLine: "Runs its steps once now", resultsTo: "this chat", paused: false, queuesNew: false };
+    const sprout = (patch: Partial<Extract<ChatItem, { kind: "sprout" }>>): ChatItem => ({ kind: "sprout", id: "s", plan, state: "pending", ...patch });
+    const items: ChatItem[] = [
+      { kind: "user", id: "u1", text: "run the pr digest", source: "typed" },
+      sprout({}),
+      sprout({ state: "running", jobId: "j" }),
+      sprout({ state: "done", jobId: "j", result: "Finished" }),
+      sprout({ state: "done", jobId: "j", result: "Failed" }),
+      sprout({ state: "done", result: "Didn't start: busy" }),
+      sprout({ state: "done", plan: { ...plan, action: "check" }, result: "nothing new" }),
+      sprout({ state: "done", plan: { ...plan, action: "check" }, result: "feed unreachable", failed: true }),
+      sprout({ state: "done", jobId: "j", result: "Started — see the Dashboard for how it went" }),
+      { kind: "todo", id: "t", todo: { routine: "fixer", text: "SECRET todo text" }, state: "done", jobId: "j", result: "Needs attention" },
+      { kind: "note", id: "n", note: { title: "SECRET title", body: "SECRET body" }, state: "saved" },
+      { kind: "skill", id: "k", skill: { name: "summarize", body: "SECRET", updating: false }, state: "pending" },
+      { kind: "send", id: "x", card: { id: "c", destination: "SECRET place", body: "SECRET", options: [] }, state: "sent" },
+      { kind: "proposal", id: "p", run: { skillName: "review", projectPath: "/SECRET/path" } as never, state: "confirmed" },
+      { kind: "delegate", id: "d", proposal: { projectPath: "/SECRET", instruction: "SECRET", composedPrompt: "SECRET" }, state: "done", tail: [], result: "SECRET" },
+      { kind: "offer", id: "o", offer: { projectPath: "/SECRET", instruction: "SECRET" }, state: "expired" },
+      { kind: "user", id: "u2", text: "tell me when it's done", source: "typed" },
+    ];
+    const records = chatTurns(items).filter((t) => t.role === "assistant").map((t) => t.content);
+    expect(records).toEqual([
+      '[card: sprout "pr-digest" — pending]',
+      '[card: sprout "pr-digest" — running]',
+      '[card: sprout "pr-digest" — finished]',
+      '[card: sprout "pr-digest" — failed]',
+      '[card: sprout "pr-digest" — didn\'t start]',
+      '[card: sprout "pr-digest" — checked]',
+      '[card: sprout "pr-digest" — failed]',
+      '[card: sprout "pr-digest" — unknown]',
+      '[card: todo "fixer" — needs attention]',
+      "[card: note — saved]",
+      '[card: skill "summarize" — pending]',
+      "[card: send — sent]",
+      '[card: run "review" — started]',
+      "[card: delegate — finished]",
+      "[card: live session — expired]",
+    ]);
+    for (const r of records) expect(r).not.toContain("SECRET");
+    expect(chatTurns(items, { memory: true }).filter((t) => t.role === "assistant")).toEqual([]);
+    expect(handoffItems(items).every((it) => it.role === "user")).toBe(true);
+  });
+
   it("streams output into one bubble per turn and closes it on the turn result", () => {
     const ev = (e: Partial<LiveEvent> & { type: LiveEvent["type"] }): LiveEvent => ({ sessionId: "s1", agent: "codex", seq: 1, ...e } as LiveEvent);
     let items = applyLiveEvent([], ev({ type: "started", projectPath: "/p", handedOver: 0 }), id);

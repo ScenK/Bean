@@ -1177,12 +1177,15 @@ export function ChatSession({
   const triggerSprout = async (id: string): Promise<void> => {
     const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "sprout" }> => it.kind === "sprout" && it.id === id);
     if (!item || item.state !== "pending") return;
-    const settle = (result: string): void =>
-      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" ? { ...it, state: "done" as const, result } : it)));
+    const settle = (result: string, failed = false): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" ? { ...it, state: "done" as const, result, ...(failed ? { failed } : {}) } : it)));
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" ? { ...it, state: "running" as const } : it)));
     const { plan } = item;
     try {
-      if (plan.action === "check") settle(sproutCheckText(await window.bean.routinesCheckNow(plan.routine), plan.queuesNew));
+      if (plan.action === "check") {
+        const checked = await window.bean.routinesCheckNow(plan.routine);
+        settle(sproutCheckText(checked, plan.queuesNew), Boolean(checked.error));
+      }
       else {
         // The run's origin is this chat's thread: give an untitled chat one now, so it's in history.
         if (!threadRef.current && !unsavableRef.current) {
@@ -1205,7 +1208,7 @@ export function ChatSession({
         }
       }
     } catch (err) {
-      settle(err instanceof Error ? err.message : String(err));
+      settle(err instanceof Error ? err.message : String(err), true);
     }
   };
 

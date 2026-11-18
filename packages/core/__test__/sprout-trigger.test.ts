@@ -27,10 +27,10 @@ describe("sproutTriggerAction", () => {
 describe("planSproutRun", () => {
   it("schedule sprout runs; a paused one says it runs once", () => {
     expect(planSproutRun(schedule, 0, true)).toEqual({ plan: {
-      routine: "s", action: "run", actionLine: "Runs its steps once now", resultsTo: "the run history only", paused: false, queuesNew: false,
+      routine: "s", action: "run", actionLine: "Runs its steps once now", resultsTo: "this chat", paused: false, queuesNew: false,
     } });
     const paused = planSproutRun({ ...schedule, enabled: false, sinks: { chatops: [{ transport: "discord" }, { transport: "discord", channel: "c" }], notify: true } }, 0, true);
-    expect(paused).toMatchObject({ plan: { paused: true, resultsTo: "Discord, a desktop notification" } });
+    expect(paused).toMatchObject({ plan: { paused: true, resultsTo: "this chat, Discord, a desktop notification" } });
   });
   it("todo sprout works through its queue; an empty one is blocked", () => {
     expect(planSproutRun(todoSprout, 3, true)).toMatchObject({ plan: { action: "run", actionLine: "Works through 3 queued todos" } });
@@ -41,7 +41,8 @@ describe("planSproutRun", () => {
     expect(planSproutRun(feed, 0, true)).toMatchObject({ plan: {
       action: "check", actionLine: "Checks https://x.test/rss now, even outside its window", queuesNew: true,
     } });
-    expect(planSproutRun(notifyWatch, 0, true)).toMatchObject({ plan: { action: "check", actionLine: "Checks its command now", queuesNew: false } });
+    // A check's result doesn't come back to the chat, so its card doesn't say it does.
+    expect(planSproutRun(notifyWatch, 0, true)).toMatchObject({ plan: { action: "check", actionLine: "Checks its command now", queuesNew: false, resultsTo: "the run history only" } });
     expect(planSproutRun(queueWatch, 2, true)).toMatchObject({ plan: { action: "run", actionLine: "Works through 2 queued todos" } });
     expect(planSproutRun({ ...queueWatch, enabled: false }, 0, true)).toEqual({ blocked: "off" });
     expect(planSproutRun({ ...queueWatch, enabled: false }, 0, false)).toEqual({ blocked: "review" });

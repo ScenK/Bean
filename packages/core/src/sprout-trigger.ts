@@ -19,7 +19,7 @@ export interface SproutRunPlan {
   action: "run" | "check";
   /** "Runs its steps once now" / "Works through 3 queued todos" / "Checks <source> now". */
   actionLine: string;
-  /** Where results go, from the sprout's sinks. */
+  /** Where results go, from the sprout's sinks; a run's result also comes back to the chat that asked. */
   resultsTo: string;
   /** A disabled schedule sprout — on demand: it runs once now and keeps no schedule. */
   paused: boolean;
@@ -33,10 +33,12 @@ export type SproutRunBlock = "off" | "review" | "empty";
 
 const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
 
-function resultsTo(r: Routine): string {
+function resultsTo(r: Routine, action: "run" | "check"): string {
   const out: string[] = [...new Set((r.sinks.chatops ?? []).map((s) => (s.transport === "teams" ? "Teams" : "Discord")))];
   if (r.sinks.note) out.push("a note");
   if (r.sinks.notify) out.push("a desktop notification");
+  // A run's end comes back to the chat that started it (#921); a check's doesn't.
+  if (action === "run") return out.length > 0 ? `this chat, ${out.join(", ")}` : "this chat";
   return out.length > 0 ? out.join(", ") : "the run history only";
 }
 
@@ -52,7 +54,7 @@ export function planSproutRun(r: Routine, pendingCount: number, seeded: boolean)
     : r.todoDriven ? `Works through ${plural(pendingCount, "queued todo")}` : "Runs its steps once now";
   return {
     plan: {
-      routine: r.name, action, actionLine, resultsTo: resultsTo(r),
+      routine: r.name, action, actionLine, resultsTo: resultsTo(r, action),
       paused: !r.enabled, queuesNew: Boolean(w && r.steps.length > 0),
     },
   };

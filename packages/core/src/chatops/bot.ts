@@ -18,6 +18,7 @@ import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
 import type { SproutTriggerClient } from "./sprout-bridge.js";
 import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
+import { cardRecord, type CardRecordKind, type CardRecordState } from "../card-record.js";
 import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
 import type { SendProposalStore } from "./send-proposals.js";
 import { cancelReminder } from "../reminders.js";
@@ -574,6 +575,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // store its session afterwards and resurrect the pre-reset agent.
   const resets = new Map<string, number>();
 
+  // The model's record of a confirm card (#941): one code-built assistant line after each card
+  // post and at each authorized outcome — kind, state and a catalog name only (card-record.ts).
+  // Appended before the card edit is awaited, so a quick follow-up already sees it.
+  const recordCard = (conversationId: string, kind: CardRecordKind, state: CardRecordState, name?: string): void =>
+    deps.conversations.append(conversationId, { role: "assistant", content: cardRecord(kind, state, name) });
+  // A tap whose claim came back empty: `expired` only when the proposal was still held for this
+  // conversation (peeked raw before the claim). A consumed, forged or other-conversation id
+  // leaves no record.
+  const recordExpired = (held: { conversationId: string } | undefined, conversationId: string, kind: CardRecordKind, name?: string): void => {
+    if (held?.conversationId === conversationId) recordCard(conversationId, kind, "expired", name);
+  };
+
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
     // Shared channel: an unregistered project shows its folder name, never the absolute path.
@@ -587,6 +600,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // submitted value) must not silently degrade into a bare-instruction run: the card said
     // one thing, the run would do another. Refuse instead.
     if (p.proposal.skillName && !skill) {
+      recordCard(p.conversationId, "delegate", "didn't start"); // never the unresolved picked name
       if (p.cardActivityId !== undefined) {
         await fx.updateCard(p.cardActivityId, deps.cards.finishedCard({
           projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled",
@@ -621,6 +635,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (cardId !== undefined) await fx.updateCard(cardId, card);
     };
     let runId = "";
+    let ended = false; // a launch that fails synchronously ends before start() returns
     const started = await deps.runs.start(
       req,
       {
@@ -629,6 +644,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             .catch(logRunEffectError);
         },
         onDone: (result, sessionId) => {
+          ended = true;
           void (async () => {
             if (sessionId && (resets.get(p.conversationId) ?? 0) === resetsAtLaunch) {
               deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
@@ -639,13 +655,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           })().catch(logRunEffectError);
         },
         onError: (message, sessionId) => {
+          ended = true;
           void (async () => {
+            recordCard(p.conversationId, "delegate", "failed", p.proposal.skillName);
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId) })).catch(logRunEffectError);
             await fx.post(`Delegate run failed: ${message}`);
           })().catch(logRunEffectError);
         },
         onCancelled: (sessionId) => {
+          ended = true;
           void (async () => {
+            recordCard(p.conversationId, "delegate", "cancelled", p.proposal.skillName);
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId) })).catch(logRunEffectError);
             await fx.post("Run cancelled.");
           })().catch(logRunEffectError);
@@ -654,7 +674,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       { instruction: p.proposal.instruction, conversationId: p.conversationId },
     );
     runId = started;
-    await updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, runId }));
+    if (!ended) {
+      recordCard(p.conversationId, "delegate", "running", p.proposal.skillName);
+      await updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, runId }));
+    }
     const memory = await deps.loadModelMemory();
     await deps.saveModelMemory({ ...memory, ...memoryUpdatesFor({ cli, model }) });
   }
@@ -703,7 +726,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (!refusal && !resume && !(await registeredProject(p.proposal.projectPath))) {
       refusal = { refused: "no-record", text: "That project isn't registered any more — this session wasn't started." };
     }
+    // A desk move/resume ("desk") had no offer card, so it leaves no card record.
+    const fromCard = p.id !== "desk";
     if (refusal) {
+      if (fromCard) recordCard(p.conversationId, "live session", "didn't start");
       await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume?.projectPath ?? p.proposal.projectPath, !!resume), startedBy, outcome: "cancelled", ...shownPrompt(p.proposal) }));
       if (!quiet) await fx.post(refusal.text);
       return { refused: refusal.refused };
@@ -769,11 +795,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     run = deps.liveSessions.generation(conv);
     if (started === "channel") {
+      if (fromCard) recordCard(conv, "live session", "didn't start");
       if (!quiet) await fx.post("A live session is already running in this channel — say `stop` to end it first.");
       return { refused: "channel-busy" };
     }
     // The opening prompt is a turn like any steering message (steerLive): saved before its answer,
     // or history (and the desktop's synced view) holds the agent's reply to nothing.
+    if (fromCard) recordCard(conv, "live session", "started");
     if (!resume && p.proposal.instruction) {
       deps.conversations.append(conv, { role: "user", content: speakerLine(startedBy, p.proposal.instruction) });
     }
@@ -849,6 +877,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ...(live.resume ? { clis: [], continues: live.resume.instruction, agent: cli } : { clis }),
     }));
     deps.liveSessionProposals.setCardActivityId(pending.id, activityId);
+    recordCard(conversationId, "live session", "pending");
   }
 
   // Display name for a delegate's project. Shared channel: the scratch workspace and an
@@ -941,8 +970,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     fx: BotEffects,
   ): Promise<void> {
     if (!proposalId) return;
+    const held = deps.noteProposals.peek(proposalId);
     const pending = deps.noteProposals.claim(proposalId, conversationId);
     if (!pending) {
+      recordExpired(held, conversationId, "note");
       await fx.post("That note draft expired — ask me to take the note again.");
       return;
     }
@@ -952,9 +983,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
     };
     if (kind === "cancel-note") {
+      recordCard(pending.conversationId, "note", "cancelled");
       await updateTo(resultCard("cancelled"));
       return;
     }
+    let saved = false; // a failed card edit or receipt after the save isn't a failed save
     try {
       const body = pending.images?.length && deps.saveNoteImage
         ? await attachNoteImages(deps.saveNoteImage, pending.note.body, pending.images)
@@ -963,9 +996,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         title: pending.note.title, body,
         project: pending.note.project, slug: pending.note.slug, source: "chat",
       });
+      saved = true;
+      recordCard(pending.conversationId, "note", "saved");
       await updateTo(resultCard("saved"));
       await fx.post(`Saved note "${pending.note.title}".`);
     } catch (err) {
+      if (!saved) recordCard(pending.conversationId, "note", "failed");
       await fx.post(`Couldn't save the note: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -978,8 +1014,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     fx: BotEffects,
   ): Promise<void> {
     if (!proposalId) return;
+    const held = deps.noteArchiveProposals.peek(proposalId);
     const pending = deps.noteArchiveProposals.claim(proposalId, conversationId);
     if (!pending) {
+      recordExpired(held, conversationId, "note archive");
       await fx.post("That archive request expired — ask me again.");
       return;
     }
@@ -987,16 +1025,22 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
     };
     if (kind === "cancel-archive-note") {
+      recordCard(pending.conversationId, "note archive", "cancelled");
       await updateTo(deps.cards.noteArchiveResultCard({ title: pending.title, by: actor, outcome: "cancelled" }));
       return;
     }
+    let archived = false;
     try {
       if (!(await deps.archiveNote(pending.slug))) {
+        recordCard(pending.conversationId, "note archive", "failed");
         await fx.post(`"${pending.title}" is already archived or gone.`);
         return;
       }
+      archived = true;
+      recordCard(pending.conversationId, "note archive", "archived");
       await updateTo(deps.cards.noteArchiveResultCard({ title: pending.title, by: actor, outcome: "archived", noteId: pending.slug }));
     } catch (err) {
+      if (!archived) recordCard(pending.conversationId, "note archive", "failed");
       await fx.post(`Couldn't archive the note: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -1039,6 +1083,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     const pending = deps.todoProposals.claim(proposalId);
     if (!pending) {
+      recordExpired(peeked, action.conversationId, "todo", peeked?.todo.routine);
       await fx.post("That todo draft expired — ask me to queue it again.");
       return;
     }
@@ -1048,11 +1093,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
     };
     if (kind === "cancel-todo") {
+      recordCard(pending.conversationId, "todo", "cancelled", pending.todo.routine);
       await updateTo(resultCard("cancelled"));
       return;
     }
     const name = pending.todo.routine;
     const createdBy = pending.member ? pending.requesterId : undefined;
+    let queued = false; // once queued, a failed card edit or receipt isn't a failed todo
     try {
       if (pending.report && queueDispatch) {
         // Queued with its dispatch: the todo's own result is posted back here when it runs.
@@ -1060,31 +1107,39 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           { routine: name, text: pending.todo.text, ...(createdBy ? { createdBy } : {}), ...(kind === "run-todo" ? { front: true } : {}) },
           { ...pending.report, ...(action.fromId ? { actor: action.fromId } : {}) },
         );
+        queued = true;
         if (kind === "run-todo" && sprouts) {
           let note: string;
+          let state: CardRecordState = "queued"; // a start that didn't happen leaves it first in the queue
           try {
             const t = await sprouts.trigger(name, "todo", {}, q.jobId);
+            if (t.status === "started") state = "running";
             note = t.status === "started" ? "Running only this task — I'll post the result here."
               : t.status === "next" ? `${name} is working on another task. Yours runs next, right after it.`
               : `Didn't start: ${t.status === "refused" ? t.reason : "unknown"}. It's first in the queue — I'll report here when it runs.`;
           } catch (err) {
             note = `Couldn't start: ${err instanceof Error ? err.message : String(err)}. It's first in the queue — I'll report here when it runs.`;
           }
+          recordCard(pending.conversationId, "todo", state, name);
           await updateTo(resultCard("queued", note));
           await fx.post(note);
           return;
         }
         const note = "Queued — I'll report here when it runs.";
+        recordCard(pending.conversationId, "todo", "queued", name);
         await updateTo(resultCard("queued", note));
         const when = q.routine ? todoRunHint(q.routine, new Date()) : "";
         await fx.post(`Queued on "${name}"${q.ahead ? ` (${q.ahead} ahead)` : ""}.${when ? ` ${when}` : ""} I'll report here when it runs.`);
         return;
       }
       const routine = await deps.queueTodo(name, pending.todo.text, createdBy);
+      queued = true;
+      recordCard(pending.conversationId, "todo", "queued", name);
       await updateTo(resultCard("queued"));
       const when = routine ? todoRunHint(routine, new Date()) : "";
       await fx.post(`Queued on "${name}".${when ? ` ${when}` : ""}`);
     } catch (err) {
+      if (!queued) recordCard(pending.conversationId, "todo", "failed", name);
       await fx.post(`Couldn't queue the todo: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -1093,11 +1148,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     kind: "save-skill" | "cancel-skill",
     proposalId: string | undefined,
     actor: string,
+    conversationId: string,
     fx: BotEffects,
   ): Promise<void> {
     if (!proposalId) return;
+    const held = deps.skillProposals.peek(proposalId);
     const pending = deps.skillProposals.claim(proposalId);
     if (!pending) {
+      recordExpired(held, conversationId, "skill", held?.skill.name);
       await fx.post("That skill draft expired — ask me to draft it again.");
       return;
     }
@@ -1107,14 +1165,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
     };
     if (kind === "cancel-skill") {
+      recordCard(pending.conversationId, "skill", "cancelled", pending.skill.name);
       await updateTo(resultCard("cancelled"));
       return;
     }
+    let saved = false;
     try {
       await deps.saveSkill(pending.skill.name, pending.skill.body);
+      saved = true;
+      recordCard(pending.conversationId, "skill", "saved", pending.skill.name);
       await updateTo(resultCard("saved"));
       await fx.post(`Saved skill "${pending.skill.name}".`);
     } catch (err) {
+      if (!saved) recordCard(pending.conversationId, "skill", "failed", pending.skill.name);
       await fx.post(`Couldn't save the skill: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -1160,6 +1223,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     });
     const activityId = await fx.postCard(deps.cards.sendCard({ proposalId: p.id, body: proposed.text, options, ...(pickId ? { pick: pickId } : {}) }));
     send.proposals.setCardActivityId(p.id, activityId);
+    recordCard(msg.conversationId, "send", "pending");
   }
 
   // Send / Cancel / (Discord) a destination pick on a send card. The role was checked before this
@@ -1197,6 +1261,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     };
     if (kind === "send-cancel") {
       const p = send.proposals.claim(proposalId);
+      recordCard(peek.conversationId, "send", p ? "cancelled" : "expired");
       if (!p) await fx.post(SEND_EXPIRED);
       else await settle(p, `Cancelled (by ${action.fromName})`);
       return;
@@ -1219,15 +1284,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     const p = send.proposals.claim(proposalId);
     if (!p) {
+      recordCard(peek.conversationId, "send", "expired");
       await fx.post(SEND_EXPIRED);
       return;
     }
     try {
       await send.enqueue({ transport: key.surface, channel: key.conversationId, body: p.body });
     } catch (err) {
+      recordCard(p.conversationId, "send", "failed");
       await settle(p, `Couldn't queue it: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
+    recordCard(p.conversationId, "send", "sent");
     await settle(p, `Queued → ${now.label}`);
   }
 
@@ -1246,6 +1314,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     const pending = sprouts.proposals.claim(proposalId);
     if (!pending) {
+      recordExpired(peek, action.conversationId, "sprout", peek?.plan.routine);
       await fx.post("That sprout card expired — ask me again.");
       return;
     }
@@ -1254,17 +1323,22 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, deps.cards.sproutRunCard({ proposalId, plan, result }));
     };
     if (kind === "cancel-sprout") {
+      recordCard(pending.conversationId, "sprout", "cancelled", plan.routine);
       await settle(`Cancelled (by ${action.fromName})`);
       return;
     }
     let result: string;
+    let state: CardRecordState = "didn't start";
     try {
       const t = await sprouts.trigger(plan.routine, plan.action, { ...(pending.channel ? { channel: pending.channel } : {}), ...(action.fromId ? { actor: action.fromId } : {}) });
+      if (t.status === "started") state = "running";
+      else if (t.status === "checked") state = "checked";
       result = t.status === "started" ? "Started — I'll post the result here."
         : t.status === "checked" ? sproutCheckText(t.result, plan.queuesNew) : `Didn't start: ${t.status === "refused" ? t.reason : "busy"}`;
     } catch (err) {
       result = `Couldn't start: ${err instanceof Error ? err.message : String(err)}`;
     }
+    recordCard(pending.conversationId, "sprout", state, plan.routine);
     await settle(result);
   }
 
@@ -1296,8 +1370,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const r = deps.routines;
     if (!proposalId || !r) return;
     const expired = "That sprout draft expired — ask me to draft it again.";
+    const held = r.proposals.peek(proposalId);
     const peek = r.proposals.get(proposalId);
     if (!peek) {
+      if (kind !== "toggle-routine") recordExpired(held, action.conversationId, "sprout draft", held ? String(held.proposal.routine.name) : undefined);
       await fx.post(expired);
       return;
     }
@@ -1324,6 +1400,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     const pending = r.proposals.claim(proposalId);
     if (!pending) {
+      recordCard(peek.conversationId, "sprout draft", "expired", String(peek.proposal.routine.name));
       await fx.post(expired);
       return;
     }
@@ -1333,10 +1410,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const resultCard = (outcome: "saved" | "cancelled" | "failed", problem?: string): object | undefined =>
       deps.cards.routineResultCard?.({ name, by: action.fromName, outcome, enabled: routine.enabled, ...(problem ? { problem } : {}) });
     if (kind === "cancel-routine") {
+      recordCard(pending.conversationId, "sprout draft", "cancelled", name);
       await updateTo(resultCard("cancelled"));
       return;
     }
     const fail = async (problem: string): Promise<void> => {
+      recordCard(pending.conversationId, "sprout draft", "failed", name);
       await updateTo(resultCard("failed", problem));
       await fx.post(`Couldn't save the sprout: ${problem}`);
     };
@@ -1362,9 +1441,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") await fail(nameTaken(name));
-      else await fx.post(`Couldn't save the sprout: ${err instanceof Error ? err.message : String(err)}`);
+      else {
+        recordCard(pending.conversationId, "sprout draft", "failed", name);
+        await fx.post(`Couldn't save the sprout: ${err instanceof Error ? err.message : String(err)}`);
+      }
       return;
     }
+    recordCard(pending.conversationId, "sprout draft", "saved", name);
     if (!isOwner) {
       // Queued right after the write, before any card/reply effect that could throw.
       try {
@@ -2201,6 +2284,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             imageCount: images?.length,
           }));
           deps.noteProposals.setCardActivityId(pending.id, activityId);
+          recordCard(msg.conversationId, "note", "pending");
           return;
         }
         if (result.proposedNoteArchive) {
@@ -2221,6 +2305,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             snippet: (note.body.split("\n").find((l) => l.trim() && !l.trimStart().startsWith("#")) ?? "").trim().slice(0, 200),
           }));
           deps.noteArchiveProposals.setCardActivityId(pending.id, activityId);
+          recordCard(msg.conversationId, "note archive", "pending");
           return;
         }
         if (result.proposedSkill) {
@@ -2231,6 +2316,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             proposalId: pending.id, name: skill.name, body: skill.body, updating: skill.updating,
           }));
           deps.skillProposals.setCardActivityId(pending.id, activityId);
+          recordCard(msg.conversationId, "skill", "pending", skill.name);
           return;
         }
         if (result.proposedSproutRun) {
@@ -2250,6 +2336,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           });
           const activityId = await fx.postCard(deps.cards.sproutRunCard({ proposalId: p.id, plan: out.plan }));
           sprouts.proposals.setCardActivityId(p.id, activityId);
+          recordCard(msg.conversationId, "sprout", "pending", out.plan.routine);
           return;
         }
         if (result.proposedTodo) {
@@ -2269,6 +2356,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             ...(ahead !== undefined ? { ahead } : {}), ...(runNow ? { runNow: true } : {}),
           }));
           deps.todoProposals.setCardActivityId(pending.id, activityId);
+          recordCard(msg.conversationId, "todo", "pending", todo.routine);
           return;
         }
         if (result.proposedRoutine) {
@@ -2290,6 +2378,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             routineCardInput(pending, routineAuthoring?.recipients ?? [], deps.roles.ownerName),
           ));
           deps.routines.proposals.setCardActivityId(pending.id, activityId);
+          recordCard(msg.conversationId, "sprout draft", "pending", String(proposal.routine.name));
           return;
         }
         const proposal = result.proposedDelegate;
@@ -2313,6 +2402,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           models: availableModels(deps.cliModels, detected), defaultCli: choice.cli, defaultModel: choice.model,
         }));
         deps.proposals.setCardActivityId(pending.id, activityId);
+        recordCard(msg.conversationId, "delegate", "pending", proposal.skillName);
       } catch (err) {
         turnFailed = true;
         await fx.reply(`Something went wrong: ${err instanceof Error ? err.message : String(err)}`);
@@ -2356,7 +2446,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         return;
       }
       if (beanAction === "save-skill" || beanAction === "cancel-skill") {
-        await handleSkillAction(beanAction, proposalId, action.fromName, fx);
+        await handleSkillAction(beanAction, proposalId, action.fromName, action.conversationId, fx);
         return;
       }
       if (beanAction === "save-routine" || beanAction === "cancel-routine" || beanAction === "toggle-routine") {
@@ -2420,10 +2510,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         const pending = deps.liveSessionProposals.claim(proposalId);
         if (!pending) {
+          recordExpired(peek, action.conversationId, "live session");
           await fx.post("That live-session proposal expired — ask me to start one again.");
           return;
         }
         if (beanAction === "cancel-live") {
+          recordCard(pending.conversationId, "live session", "cancelled");
           const projectName = await projectLabel(pending.proposal.projectPath, !!pending.proposal.resume);
           if (pending.cardActivityId !== undefined) {
             await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled", ...shownPrompt(pending.proposal) }));
@@ -2434,6 +2526,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // unclaimed for up to 10 minutes — re-check the gate here, the one place that
         // actually launches the permissions-bypassed process.
         if (!deps.liveSessionsEnabled()) {
+          recordCard(pending.conversationId, "live session", "didn't start");
           const projectName = await projectLabel(pending.proposal.projectPath, !!pending.proposal.resume);
           if (pending.cardActivityId !== undefined) {
             await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled", ...shownPrompt(pending.proposal) }));
@@ -2462,6 +2555,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // Bind the card to its conversation before claiming: ids are sequential, so a forged
       // submit from another conversation could otherwise launch (or inject text into) a
       // proposal whose run resumes this thread's agent session. Refused without consuming it.
+      const held = deps.proposals.peek(proposalId);
       const peek = deps.proposals.get(proposalId);
       if (peek && peek.conversationId !== action.conversationId) {
         await fx.post("That proposal belongs to another conversation.");
@@ -2493,6 +2587,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       const p = deps.proposals.claim(proposalId);
       if (beanAction === "cancel-proposal") {
+        if (p) recordCard(p.conversationId, "delegate", "cancelled", p.proposal.skillName);
         if (p?.cardActivityId !== undefined) {
           const projectName = delegateProjectLabel(p.proposal.projectPath, await deps.loadProjects());
           await fx.updateCard(p.cardActivityId, deps.cards.finishedCard({
@@ -2503,6 +2598,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       // beanAction === "confirm" (the only value the line-158 guard lets fall through here)
       if (!p) {
+        recordExpired(held, action.conversationId, "delegate");
         await fx.post("That proposal expired — ask me again.");
         return;
       }
@@ -2521,6 +2617,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         deps.cliModels,
       );
       if (!choice) {
+        recordCard(p.conversationId, "delegate", "didn't start"); // the picked skill isn't resolved yet
         await fx.post(NO_CLI);
         return;
       }

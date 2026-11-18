@@ -1,4 +1,4 @@
-import { formatSummaryBlock, MAX_DESK_TEXT, type ChatTurn, type ChatopsConversation, type ChatopsSurface, type ConversationKind, type DeskAckResult, type LiveCli } from "@bean/core";
+import { formatSummaryBlock, isCardRecord, CARD_RECORD_PREFIX, MAX_DESK_TEXT, type ChatTurn, type ChatopsConversation, type ChatopsSurface, type ConversationKind, type DeskAckResult, type LiveCli } from "@bean/core";
 
 // Synced chats: the owner's Discord/Teams conversations (core chatops/catalog.ts) shown in the
 // desktop chat sidebar — a read view over `chatops_turns`, plus desk turns sent through the bot
@@ -50,6 +50,8 @@ export function mapSyncedTranscript(
       if (t.content.startsWith(LIVE_PREFIX)) {
         return [{ role: "agent", text: t.content.slice(LIVE_PREFIX.length), ...(row.liveCli ? { agent: row.liveCli } : {}) }];
       }
+      // A confirm card's record line (#941) is Bean's bookkeeping, not something it said.
+      if (isCardRecord(t.content)) return [{ role: "status", text: `Card: ${t.content.slice(CARD_RECORD_PREFIX.length).replace(/\]$/, "")}` }];
       return [{ role: "bean", text: t.content }];
     }
     if (t.role !== "user") return [];

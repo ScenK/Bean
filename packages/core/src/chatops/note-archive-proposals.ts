@@ -34,6 +34,12 @@ export class NoteArchiveProposalStore {
     if (p) p.cardActivityId = activityId;
   }
 
+  /** Raw read (expired entries included, nothing claimed) — bot.ts tells a held-but-expired card
+   * from a consumed or forged id with it. */
+  peek(id: string): PendingNoteArchive | undefined {
+    return this.byId.get(id);
+  }
+
   /** With `conversationId`, a tap from another conversation claims nothing and leaves it in place. */
   claim(id: string, conversationId?: string): PendingNoteArchive | undefined {
     const p = this.byId.get(id);

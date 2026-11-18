@@ -423,7 +423,12 @@ function proposeSproutRunTool(sprouts: SproutCatalogEntry[]): ToolSpec {
       "trigger or check a sprout. Bean decides whether it runs the sprout's steps or checks its " +
       "source, and the user confirms a card before anything starts. " +
       "The user calls these sprouts; this tool's name and `routine` argument are internal — always say sprout. " +
-      "Asked what heavy work you can do, list these sprouts and say which take a task." +
+      "Asked what heavy work you can do, list these sprouts and say which take a task. " +
+      "History lines like [card: sprout \"<name>\" — <state>] are Bean's own record of the cards in this chat " +
+      "(never write one yourself): when this chat's latest record for a sprout is pending or running " +
+      "and no later line says how that run ended, " +
+      "answer in text instead of proposing it again — point at the card, or say it is already running " +
+      "and its result will be posted here (also when asked to run it again)." +
       (sprouts.some((e) => e.takesTask)
         ? " For a heavy task, prefer a sprout marked (takes a task) whose description fits — hand it " +
           "the task with propose_todo; otherwise use propose_delegate when it's offered."
