@@ -12,12 +12,24 @@ export type ContinueConversation = (ref: Partial<ConversationReference>, fn: (ct
 // name the channel itself and get a fresh post per digest.
 export const bareChannelId = (id: string): string => id.split(";")[0] ?? id;
 
-/** Best-effort deep link to one message (the away capture's link, #904): a channel reply names
- * its root post as `parentMessageId`. */
-export function messageLink(conversationId: string, messageId: string): string {
-  const parent = /;messageid=([^;]+)/.exec(conversationId)?.[1];
-  return `https://teams.microsoft.com/l/message/${encodeURIComponent(bareChannelId(conversationId))}/${encodeURIComponent(messageId)}` +
-    (parent ? `?parentMessageId=${encodeURIComponent(parent)}` : "");
+/** Best-effort deep link to one message (the away capture's link, #904), in the shape Teams' own
+ * "Copy link" uses: a chat link needs `context={"contextType":"chat"}` or Teams looks for a channel
+ * and fails to open it; a channel link names its root post (`parentMessageId`, itself for a root)
+ * plus the tenant and team group ids when the activity carried them. */
+export function messageLink(
+  conversation: { id: string; conversationType?: string }, messageId: string,
+  channelData?: { tenant?: { id?: string }; team?: { aadGroupId?: string } },
+): string {
+  const base = `https://teams.microsoft.com/l/message/${bareChannelId(conversation.id)}/${encodeURIComponent(messageId)}`;
+  const parent = /;messageid=([^;]+)/.exec(conversation.id)?.[1];
+  // A channel reply may arrive without `conversationType`; its `;messageid=` suffix still marks it.
+  if (conversation.conversationType !== "channel" && !parent) return `${base}?context=${encodeURIComponent(JSON.stringify({ contextType: "chat" }))}`;
+  const query = new URLSearchParams({
+    ...(channelData?.tenant?.id ? { tenantId: channelData.tenant.id } : {}),
+    ...(channelData?.team?.aadGroupId ? { groupId: channelData.team.aadGroupId } : {}),
+    parentMessageId: parent ?? messageId,
+  });
+  return `${base}?${query}`;
 }
 
 /** The stored ref for a conversation id, retargeted to exactly that id: a channel resolves via

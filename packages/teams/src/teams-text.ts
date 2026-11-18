@@ -29,3 +29,15 @@ export function teamsText(s: string): string {
   }
   return out;
 }
+
+/** Inbound text with each remaining Teams mention (Bean's own is already removed) as plain `@Name`,
+ * so history, the model and away captures read a name, not markup. Only the exact markup a mention
+ * entity carries is rewritten: a literal `<at>…</at>` someone typed stays as typed. */
+export function plainMentions(text: string, entities: readonly { type?: string; text?: string }[] | undefined): string {
+  let out = text;
+  for (const e of entities ?? []) {
+    const name = e.type === "mention" ? /^<at>([^<]*)<\/at>$/.exec(e.text ?? "")?.[1] : undefined;
+    if (name !== undefined) out = out.split(e.text!).join(`@${name}`);
+  }
+  return out;
+}

@@ -25,7 +25,7 @@ import { startDevtunnel } from "./devtunnel.js";
 import { bareChannelId, capturePlace, messageLink, cardActionOf, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
-import { teamsText } from "./teams-text.js";
+import { plainMentions, teamsText } from "./teams-text.js";
 
 const dir = beanDir();
 ensurePrivateBeanDir(dir);
@@ -234,7 +234,7 @@ function lineOf(a: Activity, text: string): AmbientLine {
     fromId: a.from.id, fromAltId: a.from.aadObjectId, name: a.from.name ?? "someone",
     text, at: Date.now(), bot: a.from.role === "bot",
     taggedIds: mentionedUsers(a).map((m) => m.id),
-    ...(a.id ? { messageId: a.id, link: messageLink(a.conversation.id, a.id) } : {}),
+    ...(a.id ? { messageId: a.id, link: messageLink(a.conversation, a.id, a.channelData) } : {}),
   };
 }
 
@@ -278,7 +278,9 @@ app.post("/api/messages", (req, res) => {
       return;
     }
     // A quote-reply's quoted message is context, never input: split it out of the typed words.
-    const { text, repliedTo } = parseQuote(a, TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "");
+    const quoted = parseQuote(a, TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "");
+    const { repliedTo } = quoted;
+    const text = plainMentions(quoted.text, a.entities);
     // A live session bound to this conversation is its own authorization boundary: forward every
     // message (mention or not) so allowed drivers can steer/stop it — core's onMessage decides
     // who may. Mirrors the Discord surface's `capturing` bypass.
