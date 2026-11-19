@@ -174,8 +174,10 @@ export const LABEL_LIMIT = 2000;
 
 // Agent-mode images (#628): the transcript, the saved thread and `typed` hold only `[Image #N]`
 // labels; the chat-scoped label map (N → staged/dropped file path) is applied only to the text
-// sent to the agent, so no path is ever stored.
-export type ImageLabels = ReadonlyMap<number, { path: string; agent: LiveCli }>;
+// sent to the agent, so no path is ever stored. `preview` (#951) is the image's data URL for the
+// composer chip and the sent bubble — renderer memory only, never on a ChatItem, so it is never saved.
+export interface LabeledImage { path: string; agent: LiveCli; preview?: string }
+export type ImageLabels = ReadonlyMap<number, LabeledImage>;
 export const imageLabel = (n: number): string => `[Image #${n}]`;
 
 /** The `[Image #N]` numbers in `text`, in order (repeats kept). */
@@ -185,6 +187,18 @@ export const imageLabelNumbers = (text: string): number[] =>
 /** The labels in `text` that the map knows, once each, in number order. */
 export const mappedImageLabels = (text: string, labels: ImageLabels): number[] =>
   [...new Set(imageLabelNumbers(text))].filter((n) => labels.has(n)).sort((a, b) => a - b);
+
+/** The mapped labels in `text` that have a preview, as `{ n, preview }` — the chips and bubble thumbnails. */
+export const labelPreviews = (text: string, labels: ImageLabels): Array<{ n: number; preview: string }> =>
+  mappedImageLabels(text, labels).flatMap((n) => {
+    const preview = labels.get(n)?.preview;
+    return preview ? [{ n, preview }] : [];
+  });
+
+/** `text` with every `[Image #n]` removed (a chip's ✕), each with at most one space after it;
+ * the rest of the draft (indentation, blank lines) is left exactly as typed. */
+export const removeImageLabel = (text: string, n: number): string =>
+  text.replace(new RegExp(`\\[Image #${n}\\] ?`, "g"), "");
 
 /** The next label number: one past the highest in the chat's user turns, the composer and the map,
  * so a number is never reused (not even one deleted from the composer before sending). */

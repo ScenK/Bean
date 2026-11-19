@@ -14,7 +14,7 @@ import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGuard, pdfFileGuard, insertDroppedPath, readImageFile, itemAgent, type PinnedPdf, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import {
-  HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
+  HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, imageLabelNumbers, isLiveAgent, labelPreviews, mappedImageLabels, offerAgent, parseSlash, removeImageLabel, type ImageLabels,
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
@@ -110,6 +110,7 @@ export function ChatPanel({
   onRemovePdf,
   imageLabels,
   onImageLabel,
+  onImagePreview,
   onStageImage,
   onConfirm,
   onCancel,
@@ -193,8 +194,11 @@ export function ChatPanel({
   onRemovePdf: () => void;
   /** Agent mode's `[Image #N]` → file map (chat-scoped, read-only here). */
   imageLabels: ImageLabels;
-  /** Maps `path` to a fresh `[Image #N]` for `agent`; `composer` = the text it lands in (numbering). */
-  onImageLabel: (path: string, composer: string, agent: LiveCli) => string;
+  /** Maps `path` to a fresh `[Image #N]` for `agent`; `composer` = the text it lands in (numbering);
+   * `preview` = its data URL for the chip and bubble thumbnail (renderer memory only). */
+  onImageLabel: (path: string, composer: string, agent: LiveCli, preview?: string) => string;
+  /** Sets label `n`'s preview once a Finder file's read lands (it is labeled before the read). */
+  onImagePreview: (n: number, preview: string) => void;
   /** Writes a pasted/dragged image to a private temp file; its path. */
   onStageImage: (img: ImageAttachment) => Promise<string>;
   onConfirm: (
@@ -272,6 +276,11 @@ export function ChatPanel({
   // arriving before the first batch's FileReaders resolve must see those reservations
   // synchronously, or the two batches together can exceed the per-message cap.
   const reservedSlotsRef = useRef(0);
+  // Agent mode (#951): the composer's `[Image #N]` labels that have a preview — the chip strip
+  // follows the text, re-read on every composer change (resizeInput runs on each one).
+  const [labelChips, setLabelChips] = useState<Array<{ n: number; preview: string }>>([]);
+  // A preview landing after its label was sent: re-render so the bubble picks it up.
+  const [, setPreviewTick] = useState(0);
 
   const agentMode = mode !== "bean";
   const liveAgents = clis.filter(isLiveAgent);
@@ -309,22 +318,24 @@ export function ChatPanel({
   };
   // Agent mode (#628): an image is an `[Image #N]` label in the composer, mapped to a file the agent
   // reads by path. Inserted at the cursor as it is when the label is ready.
-  const insertImageLabel = (path: string, agent: LiveCli): void => {
+  const insertImageLabel = (path: string, agent: LiveCli, preview?: string): string | undefined => {
     const el = inputRef.current;
-    if (!el) return;
-    const next = insertDroppedPath(el.value, onImageLabel(path, el.value, agent), el.selectionStart, el.selectionEnd);
+    if (!el) return undefined;
+    const label = onImageLabel(path, el.value, agent, preview);
+    const next = insertDroppedPath(el.value, label, el.selectionStart, el.selectionEnd);
     el.value = next.value;
     el.focus();
     el.setSelectionRange(next.cursor, next.cursor);
     resizeInput();
+    return label;
   };
   // The agent-mode cap counts the labels still in the composer, plus stages in flight.
   const labelsInComposer = (): number => mappedImageLabels(inputRef.current?.value ?? "", imageLabels).length + reservedSlotsRef.current;
-  const stageIntoLabel = (img: ImageAttachment, agent: LiveCli): void => {
+  const stageIntoLabel = (img: { attachment: ImageAttachment; dataUrl: string }, agent: LiveCli): void => {
     reservedSlotsRef.current += 1;
     setImageReadsInFlight((n) => n + 1);
-    void onStageImage(img)
-      .then((path) => insertImageLabel(path, agent))
+    void onStageImage(img.attachment)
+      .then((path) => insertImageLabel(path, agent, img.dataUrl))
       .catch(() => setImageError("Couldn't attach that image."))
       .finally(() => {
         reservedSlotsRef.current -= 1;
@@ -340,7 +351,7 @@ export function ChatPanel({
     setImageError(null);
     for (const img of carried) {
       if (labelsInComposer() >= MAX_IMAGES_PER_MESSAGE) { setImageError(`At most ${MAX_IMAGES_PER_MESSAGE} images per message.`); break; }
-      stageIntoLabel(img.attachment, mode);
+      stageIntoLabel(img, mode);
     }
   }, [mode, pendingImages.length]);
 
@@ -385,14 +396,25 @@ export function ChatPanel({
     for (const src of sources) {
       const problem = imageFileGuard(src.type, src.size, agent ? labelsInComposer() : pendingImages.length + reservedSlotsRef.current);
       if (problem) { setImageError(problem); continue; }
-      // A Finder file is labeled with its own path — nothing is copied. A paste or a browser drag
-      // has no path, so it is staged first.
-      if (agent && src.path) { insertImageLabel(src.path, agent); continue; }
+      // A Finder file is labeled with its own path at once — nothing is copied. It is read only for
+      // the chip's preview, which lands later; a failed read leaves the label with no thumbnail.
+      // A paste or a browser drag has no path, so it is staged first.
+      if (agent && src.path) {
+        const n = imageLabelNumbers(insertImageLabel(src.path, agent) ?? "")[0];
+        if (n !== undefined) {
+          void src.read().then((img) => {
+            onImagePreview(n, img.dataUrl);
+            resizeInput();
+            setPreviewTick((t) => t + 1);
+          }, () => {});
+        }
+        continue;
+      }
       reservedSlotsRef.current += 1;
       setImageReadsInFlight((n) => n + 1);
       void src.read()
         .then((img) => {
-          if (agent) stageIntoLabel(img.attachment, agent);
+          if (agent) stageIntoLabel(img, agent);
           else setPendingImages((prev) => [...prev, img]);
         })
         .catch(() => setImageError("Couldn't read that image."))
@@ -462,6 +484,14 @@ export function ChatPanel({
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
+    const chips = labelPreviews(el.value, imageLabels);
+    setLabelChips((prev) => (prev.length === chips.length && prev.every((c, i) => c.n === chips[i]!.n) ? prev : chips));
+  };
+  const removeLabel = (n: number): void => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.value = removeImageLabel(el.value, n);
+    resizeInput();
   };
 
   // Keep the slash menu's current pick in view once the list outgrows its max-height.
@@ -658,6 +688,11 @@ export function ChatPanel({
                 {it.images?.map((src) => (
                   <button type="button" class="bean-chat-thumb" title="Preview" onClick={() => setPreview({ dataUrl: src })}>
                     <img src={src} alt="attached image" />
+                  </button>
+                ))}
+                {labelPreviews(`${it.text} ${it.display ?? ""}`, imageLabels).map(({ n, preview }) => (
+                  <button type="button" class="bean-chat-thumb" title={`Preview ${imageLabel(n)}`} onClick={() => setPreview({ dataUrl: preview })}>
+                    <img src={preview} alt={imageLabel(n)} />
                   </button>
                 ))}
               </div>
@@ -949,6 +984,16 @@ export function ChatPanel({
               📄 {pdf.filename} · {formatSize(pdf.size)}
               <button type="button" aria-label={`Remove ${pdf.filename}`} onClick={onRemovePdf}>✕</button>
             </span>
+          </div>
+        ) : null}
+        {labelChips.length > 0 ? (
+          <div class="bean-chat-pending-images">
+            {labelChips.map(({ n, preview }) => (
+              <span class="bean-chat-pending-image" title={imageLabel(n)}>
+                <img src={preview} alt={imageLabel(n)} />
+                <button type="button" aria-label={`Remove ${imageLabel(n)}`} onClick={() => removeLabel(n)}>✕</button>
+              </span>
+            ))}
           </div>
         ) : null}
         {pendingImages.length > 0 ? (
