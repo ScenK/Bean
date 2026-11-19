@@ -311,12 +311,15 @@ export function NotesPanel() {
     }
   };
 
-  const continueInChat = (): void => {
+  // Continue = a new chat (a used chat on screen is left as is); Add = the chat on screen, sent to
+  // whoever it's talking to (its live agent, else Bean).
+  const continueInChat = (here = false): void => {
     if (!selected) return;
     window.bean.runInChat(
       `Let's pick up where we left off on "${selected.title}".`,
       `Continue: ${selected.title}`,
       selected.slug,
+      here,
     );
   };
 
@@ -535,7 +538,8 @@ export function NotesPanel() {
                   {selected.updated ? ` · ${new Date(selected.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}
                 </div>
               </div>
-              <button type="button" class="bean-btn" onClick={continueInChat}>💬 Continue in chat</button>
+              <button type="button" class="bean-btn" title="Open a new chat on this note" onClick={() => continueInChat()}>💬 Continue in chat</button>
+              <button type="button" class="bean-btn" title="Bring this note into the chat on screen" onClick={() => continueInChat(true)}>↩ Add to current chat</button>
             </div>
 
             <div class="bean-skills-projects">

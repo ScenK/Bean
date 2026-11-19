@@ -59,6 +59,55 @@ describe("ChatWindow switches chats in place", () => {
   });
   afterEach(() => { render(null, root); document.body.innerHTML = ""; localStorage.clear(); });
 
+  it("a pushed prompt (Continue in chat) starts a new chat instead of landing in the one on screen", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const first = mounts("chatAttach")[0]!;
+    await send("hello there");
+    await act(async () => { listeners.onChatPrompt!({ prompt: "pick up the note", label: "Continue: n" }); });
+    await flush();
+    const second = mounts("chatAttach")[1]!;
+    expect(second).not.toBe(first);
+    expect(bean.chat!.mock.calls.map((c) => [(c[0] as { message: string }).message, c[1]])).toEqual([["hello there", first], ["pick up the note", second]]);
+    expect(shownChat().textContent).toContain("Continue: n");
+    expect(shownChat().textContent).not.toContain("hello there");
+
+    // A later New chat is a plain empty one — the prompt was used up.
+    await clickEl(root.querySelector(".bean-chat-sidebar-new"));
+    expect(bean.chatAttach).toHaveBeenCalledTimes(3);
+    expect(bean.chat).toHaveBeenCalledTimes(2);
+    // Leaving saved it under a thread of its own, so it's in history.
+    expect(bean.chatThreadSave!.mock.calls.some((c) => c[1] === second && (c[0] as { title: string }).title.includes("Continue: n"))).toBe(true);
+  });
+
+  it("Add to current chat (here) lands in the chat on screen, used or not", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const first = mounts("chatAttach")[0]!;
+    await send("hello there");
+    await act(async () => { listeners.onChatPrompt!({ prompt: "pick up the note", label: "Continue: n", here: true }); });
+    await flush();
+    expect(mounts("chatAttach")).toEqual([first]);
+    expect(bean.chat!.mock.calls.map((c) => c[1])).toEqual([first, first]);
+    expect(shownChat().textContent).toContain("hello there");
+  });
+
+  it("Add to current chat while Bean is answering is refused with a note, not queued", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    let answer: (v: unknown) => void = () => {};
+    bean.chat!.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const ta = shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    ta.value = "hello there";
+    await act(async () => { ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    await act(async () => { listeners.onChatPrompt!({ prompt: "pick up the note", label: "Continue: n", here: true }); });
+    await flush();
+    expect(shownChat().textContent).toContain('send "Continue: n" again');
+    await act(async () => { answer({ reply: "first reply", model: "m" }); });
+    await flush();
+    expect(bean.chat).toHaveBeenCalledTimes(1);
+  });
+
   it("evicts the shown chat (final save, memory, release) and restores the pick under a new mount", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();

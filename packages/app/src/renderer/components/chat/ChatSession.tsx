@@ -12,7 +12,7 @@ import type { TabShortcut } from "./TerminalPane.js";
 import { applySproutEnd, continuedTo, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
-import { composePrompt } from "@bean/core/prompt";
+import { composePrompt, linkedNoteData } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
@@ -159,6 +159,9 @@ export function leaveTitle(t: ChatTasks): string | undefined {
   return task ? "Leaving discards this chat and stops its task." : undefined;
 }
 
+/** A prompt pushed from outside the chat window: Notes' Continue in chat, a Dashboard ask, a Plan run. */
+export interface ChatPrompt { prompt: string; label: string; noteSlug?: string; here?: boolean }
+
 /** What the window shell (ChatWindow) routes to a mounted chat: the preload's `on*` bridges can't
  * unsubscribe, so the shell registers them once and calls the chat an event is tagged with (or the
  * shown one). */
@@ -175,7 +178,9 @@ export interface ChatSessionApi {
   /** A per-turn "Memory updated" receipt for this chat (the shell routes by mount and thread). */
   memoryUpdated: (saved: Array<{ id: string; text: string; category?: string }>) => void;
   imageProgress: () => void;
-  runPrompt: (p: { prompt: string; label: string; noteSlug?: string }) => void;
+  runPrompt: (p: ChatPrompt) => void;
+  /** Nothing said yet and no thread: a pushed prompt can start here instead of in a new chat. */
+  blank: () => boolean;
   notices: (notices: InterruptedRunNotice[]) => void;
   /** A sidebar pick ("new" or a thread id) while this chat is shown. */
   open: (target: string) => void;
@@ -200,6 +205,8 @@ export interface ChatSessionProps {
   mountId: string;
   /** A saved thread to restore on mount; undefined = a new chat. */
   restoreId?: string;
+  /** A pushed prompt (runInChat) this new chat starts with. */
+  prompt?: ChatPrompt;
   /** The shell's registry: this chat puts its api here on each render, removed at unmount. */
   sessions: Map<string, ChatSessionApi>;
   /** Mounted but not shown — it has work in flight (#517). */
@@ -235,7 +242,7 @@ export interface ChatSessionProps {
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
 export function ChatSession({
-  mountId, restoreId, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
+  mountId, restoreId, prompt, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
 }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -504,10 +511,18 @@ export function ChatSession({
     }, (err: unknown) => addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error"));
   }, []);
 
-  // A chat-target skill run confirmed in the Plan popup: auto-send its composed prompt, collapsed to
-  // `▶ label` in the transcript.
-  const runPrompt = (p: { prompt: string; label: string; noteSlug?: string }): void => {
+  // A prompt pushed from outside (a Plan chat skill, a Dashboard ask, a note): auto-sent, collapsed to
+  // `▶ label`. Notes' Add to current chat (`here`) goes to whoever this chat is talking to — the live
+  // agent in agent mode, else Bean; anything else was confirmed for Bean, so it always goes to Bean.
+  const runPrompt = (p: ChatPrompt): void => {
     void (async () => {
+      if (isLiveAgent(modeRef.current) && !p.here) switchMode("bean");
+      const agent = modeRef.current;
+      // Refused, not queued: a queued turn would read whichever note is linked when it drains.
+      if (!isLiveAgent(agent) && busyRef.current) {
+        addStatus(`Bean is still answering — send "${p.label}" again when it's done.`, "info");
+        return;
+      }
       // "Continue in chat" from a note: link this chat to it before the first send so the
       // note body rides along (as framed user-role data) and saves default to update-in-place.
       if (p.noteSlug) {
@@ -519,9 +534,21 @@ export function ChatSession({
           setLinkedNote(linked);
         }
       }
+      // An untitled chat gets a thread now, so it's in history (not marked typed: no close memory).
+      if (!threadRef.current && !unsavableRef.current) {
+        threadRef.current = { id: crypto.randomUUID(), title: threadTitle(p.label) };
+        onActive(threadRef.current.id);
+      }
+      if (isLiveAgent(agent)) {
+        // An agent never sees linkedNote (that rides Bean turns), so the note goes in the ask.
+        const note = linkedNoteRef.current;
+        sendToAgent(agent, note && p.noteSlug === note.slug ? `${p.prompt}\n\n${linkedNoteData(note)}` : p.prompt, `▶ ${p.label}`);
+        return;
+      }
       await sendRef.current(p.prompt, `▶ ${p.label}`, false, undefined, "skill");
     })();
   };
+  useEffect(() => { if (prompt) runPrompt(prompt); }, []);
 
   const sendMessage = async (
     text: string, display?: string, queueIfBusy = false, images?: ImageAttachment[], source: TurnSource = "typed",
@@ -1467,6 +1494,7 @@ export function ChatSession({
       setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
     },
     runPrompt,
+    blank: () => !threadRef.current && itemsRef.current.length === 0,
     // Rendered as a `reply` (not `status`) so it enters conversation history: a later "retry" needs
     // the full instruction (notice.text) in context, not just the short bubble text (notice.display).
     notices: (notices) => setItems((prev) => [
