@@ -97,12 +97,12 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.on(IPC.showChatMount, (_e, mountId: string) => cb(mountId)),
   planDrop: (skillName: string, droppedUrl: string): Promise<RouteSuggestion> =>
     ipcRenderer.invoke(IPC.planDrop, skillName, droppedUrl),
-  runInChat: (prompt: string, label: string, noteSlug?: string): void =>
-    ipcRenderer.send(IPC.runInChat, { prompt, label, noteSlug }),
-  getPendingChatPrompt: (): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined> =>
+  runInChat: (prompt: string, label: string, noteSlug?: string, here?: boolean): void =>
+    ipcRenderer.send(IPC.runInChat, { prompt, label, noteSlug, here }),
+  getPendingChatPrompt: (): Promise<{ prompt: string; label: string; noteSlug?: string; here?: boolean } | undefined> =>
     ipcRenderer.invoke(IPC.getPendingChatPrompt),
-  onChatPrompt: (cb: (p: { prompt: string; label: string; noteSlug?: string }) => void) =>
-    ipcRenderer.on(IPC.chatPrompt, (_e, p: { prompt: string; label: string; noteSlug?: string }) => cb(p)),
+  onChatPrompt: (cb: (p: { prompt: string; label: string; noteSlug?: string; here?: boolean }) => void) =>
+    ipcRenderer.on(IPC.chatPrompt, (_e, p: { prompt: string; label: string; noteSlug?: string; here?: boolean }) => cb(p)),
   getPendingInterruptedRunNotices: (): Promise<InterruptedRunNotice[] | undefined> =>
     ipcRenderer.invoke(IPC.getPendingInterruptedRunNotices),
   onInterruptedRunNotice: (cb: (notices: InterruptedRunNotice[]) => void) =>

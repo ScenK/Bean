@@ -28,6 +28,16 @@ Mechanics (v1, mockup `Notes.dc.html` in the Claude Design project):
   slug, so Save **updates in place** (version bump; prior row copied into `notes_history` —
   updates are never destructive, `saveNote`'s `BEGIN IMMEDIATE` transaction makes the read-then-
   write atomic against a concurrent save of the same slug). "Save as new" / chip ✕ opt out.
+- Where a pushed prompt lands (`ChatWindow.runPushedPrompt`): "Continue in chat" (and every
+  other `runInChat` — Plan, Dashboard) never joins the conversation on screen — a used chat leaves
+  for a new one; only an empty one takes it. "Add to current chat" (`here`) uses the chat on screen
+  and goes to **whoever it's talking to**: the live agent in agent mode (the note body appended to
+  the ask, framed by `linkedNoteData` — agents never see `linkedNote`), else Bean. Non-`here`
+  prompts were confirmed for Bean, so they always go to Bean. A synced (Discord/Teams) view or a
+  chat continued in Discord (read-only) isn't "current": `here` falls back to the new-chat rule. A
+  staged PDF makes a chat non-empty (it would ride along). main both stores and pushes the payload;
+  the renderer runs only what `getPendingChatPrompt` (consume-on-get) hands it, on pull and on push
+  alike — running the pushed copy directly replayed it at the window's next open.
 - Images (#182): bytes live in `bean.db`'s `note_images` table as raw BLOBs (`core/note-images.ts`);
   a body references one as `![alt](bean-image:<uuid>)`, and the renderer swaps refs for `data:`
   URLs (`renderer/shared/note-images.ts`) *before* Markdown — DOMPurify is never loosened.

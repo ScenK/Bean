@@ -341,6 +341,36 @@ describe("ChatWindow agent mode", () => {
   });
   afterEach(() => { render(null, root); document.body.innerHTML = ""; });
 
+  it("a pushed prompt that isn't Add to current chat (a Plan skill) goes to Bean even in agent mode", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("/claude");
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "run the skill", label: "skill" }); listeners.onChatPrompt!(undefined); });
+    await flush();
+    expect(bean.liveStart).not.toHaveBeenCalled();
+    expect(bean.chat).toHaveBeenCalledWith(expect.objectContaining({ message: "run the skill" }), expect.any(String));
+  });
+
+  it("Add to current chat goes to whoever is talking: the live agent (note in the ask), then Bean once it ends", async () => {
+    bean.listNotes = vi.fn(async () => [{ slug: "plan", title: "Plan", version: 2, body: "step one" }]);
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("/claude fix X");
+    await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+    const note = { prompt: "Pick up Plan.", label: "Continue: Plan", noteSlug: "plan", here: true };
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce(note); listeners.onChatPrompt!(undefined); });
+    await flush();
+    expect(bean.liveSend).toHaveBeenCalledWith("s1", expect.stringContaining("Pick up Plan."), expect.any(String));
+    expect(bean.liveSend!.mock.calls[0]![1]).toContain("<<<\nstep one\n>>>");
+    expect(bean.chat).not.toHaveBeenCalled();
+
+    await send("/bean");
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce(note); listeners.onChatPrompt!(undefined); });
+    await flush();
+    expect(bean.chat).toHaveBeenCalledWith(expect.objectContaining({ message: "Pick up Plan.", linkedNote: expect.objectContaining({ slug: "plan" }) }), expect.any(String));
+    expect(bean.liveSend).toHaveBeenCalledTimes(1);
+  });
+
   it("/claude streams the agent, a delegate loopback still goes to Bean, /bean returns with the agent's result in history, and close memory skips live turns", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();

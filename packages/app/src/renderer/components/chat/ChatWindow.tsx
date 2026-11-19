@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ChatSession, commandList, type ChatSessionApi, type ChatTasks } from "./ChatSession.js";
+import { ChatSession, commandList, type ChatPrompt, type ChatSessionApi, type ChatTasks } from "./ChatSession.js";
 import { ChatSidebar, cleanGroupName, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
@@ -59,7 +59,7 @@ export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
  * event's mount id (or to the shown chat), along with the one-time pulled data. */
 export function ChatWindow() {
   const sessions = useRef(new Map<string, ChatSessionApi>()).current;
-  const [mounts, setMounts] = useState<Array<{ mountId: string; restoreId?: string }>>(() => [{ mountId: crypto.randomUUID() }]);
+  const [mounts, setMounts] = useState<Array<{ mountId: string; restoreId?: string; prompt?: ChatPrompt }>>(() => [{ mountId: crypto.randomUUID() }]);
   const [shown, setShownState] = useState(() => mounts[0]!.mountId);
   const shownRef = useRef(shown);
   const setShown = (id: string): void => { shownRef.current = id; setShownState(id); };
@@ -149,6 +149,23 @@ export function ChatWindow() {
     window.bean.onReviewBeforeClose((quit) => void (quit ? closeAll() : reviewBeforeClose()));
   }, []);
 
+  // A prompt pushed from outside (Notes' Continue in chat, a Dashboard ask, a Plan run) starts its own
+  // chat — never lands in the conversation on screen. An empty shown chat just takes it, and so does
+  // any shown chat that can still talk for Notes' Add to current chat (`here`) — one continued in
+  // Discord is read-only. Otherwise it waits here for the New chat switch (which may first ask about
+  // an incognito chat or running work).
+  const pendingPromptRef = useRef<ChatPrompt | undefined>(undefined);
+  const runPushedPrompt = (pushed: ChatPrompt): void => {
+    // A Discord/Teams chat on screen can't take it: the desktop chat under it isn't "current", so
+    // Add to current chat falls back to Continue in chat's rule.
+    const p = syncedRef.current !== undefined ? { ...pushed, here: false } : pushed;
+    setSyncedShown(undefined);
+    const api = shownApi();
+    if (!api || (p.here && api.writable()) || api.blank()) { api?.runPrompt(p); return; }
+    pendingPromptRef.current = p;
+    api.open("new");
+  };
+
   useEffect(() => {
     const setTheme = (theme: string): void => {
       document.documentElement.dataset.theme = theme;
@@ -179,9 +196,11 @@ export function ChatWindow() {
     // getPendingPlan fixes for the Plan window.
     window.bean.getPendingDroppedUrl().then((u) => { if (u) { setSyncedShown(undefined); setDroppedUrl(u); } });
     window.bean.onComponentDroppedUrl((u) => { setSyncedShown(undefined); setDroppedUrl(u); });
-    // A chat-target skill run confirmed in the Plan popup. Pull + push, same race fix as the dropped URL.
-    window.bean.getPendingChatPrompt().then((p) => { if (p) { setSyncedShown(undefined); to()?.runPrompt(p); } });
-    window.bean.onChatPrompt((p) => { setSyncedShown(undefined); to()?.runPrompt(p); });
+    // A pushed prompt (Plan, Dashboard, Notes). main stores it and also pushes it; both paths claim
+    // the one stored copy, so a prompt this window already ran can't replay at its next open.
+    const claimPrompt = (): void => { window.bean.getPendingChatPrompt().then((p) => { if (p) runPushedPrompt(p); }, () => {}); };
+    claimPrompt();
+    window.bean.onChatPrompt(claimPrompt);
     // A delegate run that was still going when Bean last quit — pull + push, same race fix.
     window.bean.getPendingInterruptedRunNotices().then((n) => { if (n?.length) to()?.notices(n); });
     window.bean.onInterruptedRunNotice((n) => to()?.notices(n));
@@ -242,9 +261,11 @@ export function ChatWindow() {
   // chat that's idle now evicts itself.
   const switchTo = (from: string, target: string, keep: boolean): void => {
     if (!keep) dropMount(from);
+    const prompt = target === "new" ? pendingPromptRef.current : undefined;
+    pendingPromptRef.current = undefined;
     const held = target === "new" ? undefined : [...sessions.values()].find((s) => s.mountId !== from && s.threadId() === target);
     const next = held?.mountId ?? crypto.randomUUID();
-    if (!held) setMounts((prev) => [...prev, { mountId: next, ...(target === "new" ? {} : { restoreId: target }) }]);
+    if (!held) setMounts((prev) => [...prev, { mountId: next, ...(target === "new" ? { prompt } : { restoreId: target }) }]);
     setShown(next);
     setActiveId(target === "new" ? undefined : target);
     setBusy(false);
@@ -253,6 +274,7 @@ export function ChatWindow() {
   };
 
   const openThread = (target: string): void => {
+    pendingPromptRef.current = undefined; // a pushed prompt waiting on a leave card the user cancelled
     setOverlayOpen(false);
     if (synced.some((c) => syncedKey(c) === target)) {
       setSyncedShown(target);
@@ -394,11 +416,12 @@ export function ChatWindow() {
           onRenameGroup={renameGroup}
         />
       ) : null}
-      {mounts.map(({ mountId, restoreId }) => (
+      {mounts.map(({ mountId, restoreId, prompt }) => (
         <ChatSession
           key={mountId}
           mountId={mountId}
           restoreId={restoreId}
+          prompt={prompt}
           sessions={sessions}
           hidden={mountId !== shown || syncedListing !== undefined}
           clis={clis}

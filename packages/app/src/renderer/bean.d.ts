@@ -99,9 +99,9 @@ declare global {
       onShowChatMount(cb: (mountId: string) => void): void;
       /** The plan for a URL dropped on a skill tile (show it with proposeRun). */
       planDrop(skillName: string, droppedUrl: string): Promise<RouteSuggestion>;
-      runInChat(prompt: string, label: string, noteSlug?: string): void;
-      getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;
-      onChatPrompt(cb: (p: { prompt: string; label: string; noteSlug?: string }) => void): void;
+      runInChat(prompt: string, label: string, noteSlug?: string, here?: boolean): void;
+      getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string; here?: boolean } | undefined>;
+      onChatPrompt(cb: (p: { prompt: string; label: string; noteSlug?: string; here?: boolean }) => void): void;
       getPendingInterruptedRunNotices(): Promise<InterruptedRunNotice[] | undefined>;
       onInterruptedRunNotice(cb: (notices: InterruptedRunNotice[]) => void): void;
       listSkills(): Promise<Skill[]>;

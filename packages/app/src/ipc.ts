@@ -93,8 +93,9 @@ export function notificationOpens(meta: Record<string, unknown> | undefined): { 
 // A chat-target skill run confirmed in the Plan popup: the composed prompt to auto-send in
 // the chat window, plus a short label the transcript shows instead of the full prompt.
 // noteSlug present = "Continue in chat" from a note: the chat links to that note (header chip;
-// saving defaults to updating it in place).
-export interface ChatPromptPayload { prompt: string; label: string; noteSlug?: string; }
+// saving defaults to updating it in place). here = "Add to current chat": the chat on screen takes it
+// (whoever it's talking to); otherwise a used chat on screen leaves for a new one.
+export interface ChatPromptPayload { prompt: string; label: string; noteSlug?: string; here?: boolean; }
 
 // Same drop-race fix as buildPlanStore/buildDroppedUrlStore, for the prompt handed to a chat
 // window that may not have mounted yet: pull-on-mount + consume-on-get.
