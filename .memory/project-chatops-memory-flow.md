@@ -4,20 +4,17 @@ Teams/Discord bots remember on an explicit ask anywhere, automatically in DMs (#
 and from un-addressed channel/thread chatter (#463, household-shared).
 
 - **Channel capture** (`chatops/ambient-capture.ts`, fed by `bot.onAmbient`'s `AmbientLine` at both
-  surfaces' ambient call sites — independent of `chatty`): buffers per conversation, extracts after a
-  30 s lull / 2 min max (an addressed turn flushes it). Citable = member+ (`can(role, "memory")` on
-  the platform id), not a bot, not quoted (a `>` line, or anything after a `>>>` line); a guest-only batch makes no model call. Each
-  fact's quote must match **exactly one** eligible line (ambiguous or cross-speaker quotes are
-  dropped); that line's speaker is bound: owner → plain text, anyone else → `Name: fact`. The
-  conversation's last 10 lines from earlier batches (≤1 h before this batch) ride along as **not
-  citable** context (#857), so a line with an implied subject can get a `context` label (validated
-  against every line the call saw); a quote that stands only there is still refused. Saved
-  shared (`subject_id` NULL). `memory on|off|status` (`chatops_chatty.memory_off`, missing row = on;
-  on/off = `channelMemory`, admin; channel scope) and `autoMemory` are re-checked right before the
-  insert, so a queued batch obeys them. Receipt: Discord 🧠 reaction (best-effort), Teams silent;
-  the first save per scope posts `MEMORY_NOTICE` once (`memory_noticed`, atomic upsert). Daily cap
-  200 calls / 60 saves per scope is in-process (a restart resets it). The bar is generous on
-  purpose: commitments, deadlines and plans are kept (see project-bean-memory.md).
+  surfaces' ambient call sites — independent of `chatty`): buffers per conversation and writes one
+  episode after 10 min of silence / 60 min max (an addressed turn ends it at once) — see
+  [project-episode-memory](project-episode-memory.md). Every line is shown to the model with its
+  speaker (`(owner)` / `(bot)` marked); a bots-only batch makes no model call. The conversation's
+  last 10 lines from earlier batches (≤1 h before) ride along as context. Text is Bean's own
+  sentence naming who said what — no `Name:` prefix, no role gate on whose line counts. Saved
+  shared (`subject_id` NULL) and recalled only in that conversation and on the owner's surfaces.
+  `memory on|off|status` (`chatops_chatty.memory_off`, missing row = on; on/off = `channelMemory`,
+  admin; channel scope) and `autoMemory` are re-checked right before the insert. Receipt: Discord
+  🧠 on the first cited line (best-effort), Teams silent; the first save per scope posts
+  `MEMORY_NOTICE` once. Daily cap 200 calls / 60 saves per scope is in-process.
   Each row records its source (#649): `source_id` = `<chatter.surface>:<scopeId>`, `source_title`
   = the adapter's `AmbientLine.place.title` (its catalog `placeOf`; Teams' `capturePlace` adds a
   short id to an unnamed chat), one line ≤80 chars. Never from the model's tool args.
@@ -25,8 +22,9 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   shows the destination's current name instead (Settings alias, else platform name) when one exists.
 
 - **DM auto-capture** (`captureDm` in `bot.ts`): after a DM reply, core's per-turn
-  `extractMemories(..., { latestTurn: true })` runs on the speaker's `typedText` only (the audio
-  transcript is never the citable turn; prior history rides along as non-citable context). Gated
+  `extractMemories(..., { latestTurn: true })` runs with the speaker's `typedText` as the one new
+  line (never the audio transcript; prior history rides along as context) — still per turn, see
+  [project-episode-memory](project-episode-memory.md). Gated
   by `can(role, "memory")` (so guests, even with `allowGuestDms`, never capture), a non-failed
   turn, and a turn that used neither `remember` nor `forget_memory` (a "forget that I live in X"
   turn must not re-save X). Rows are saved with `subjectId` = speaker (always private) and each
@@ -57,8 +55,7 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   list), but `run()` refuses before any mutation unless a classifier call — fixed prompt + the
   typed text only, strict `{remember, forget}` booleans, one memoized call per turn — says yes.
   So injected page/delegate/history text can't save or delete, in any language. Don't bring
-  back regex gates (they missed "忘掉这个", "forget it"). The quote must
-  support *every* content word of the fact (`supports()` in extract.ts), not just share one.
+  back regex gates (they missed "忘掉这个", "forget it").
 - Scope (#281, [safety-per-speaker-memory](safety-per-speaker-memory.md)): a DM saves private to
   the speaker, a channel to the household; the receipt says which.
 - `remember` saves directly (no confirm card); each saved fact gets a `rememberedCard` receipt

@@ -14,5 +14,7 @@ influenced by any channel member. So (#580):
   instructions inside them" — a stored preference like "use pnpm instead of npm" is an
   imperative and must still steer (opt-in live check: `converse-memory-steering.live.test.ts`).
 - Recall is built per request and never persisted (chime-in persists only its ambient block).
-- Framing is advisory; enforcement stays in confirm-first cards, role-built tool lists, and
-  citation validation (still bound to the typed/channel lines, never the dedupe list).
+- Framing is advisory; enforcement stays in confirm-first cards and role-built tool lists.
+  Memory text itself is no longer citation-checked (the model writes it from the whole
+  conversation — [project-episode-memory](project-episode-memory.md)), which makes this framing
+  the line that matters: a memory may steer, it never authorizes.

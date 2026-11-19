@@ -3,16 +3,18 @@
 `memories.subject_id` (nullable, added via [convention-bean-db-column-additions](convention-bean-db-column-additions.md))
 is the chatops speaker's platform id a fact is private to; NULL = household-shared, so every
 pre-#281 row and every desktop save (auto or Persona) is shared. Chatops DM auto-capture (#462)
-is always private to the speaker; channel capture (#463) is always shared, with a non-owner
-speaker's fact labelled `Name: fact` so recall ("about the household") never reads a coworker's
-preference as the owner's. The owner's live-session steering follows where it was typed (#861):
+is always private to the speaker; channel capture (#463) is always shared, written as a sentence
+that names who said or agreed to what (legacy rows are `Name: fact`), and recalled only in its own
+conversation and on the owner's surfaces ([project-episode-memory](project-episode-memory.md)). The owner's live-session steering follows where it was typed (#861):
 DM → private, channel/thread → shared (uncategorized, under that channel's `memory off` and caps),
 so a provisional answer typed where everyone reads it is reviewed by dream like any shared row. The platform id gates capture (role); the name is only a label.
 
-- **Recall is filtered in SQL before ranking** — `loadMemories(file, subject)`: absent = all rows
-  (desktop + Persona: the owner's own machine, unchanged), `null` = shared only (channels and
+- **Recall is filtered in SQL before ranking** — `loadMemories(file, subject, scope)`: absent = all
+  rows (desktop + Persona: the owner's own machine, unchanged), `null` = shared only (channels and
   routine runs, via core's `routine-wiring.ts`), an id = shared + that
-  speaker's (their DMs). Never rank first and filter after: the top-K cut would leak or starve.
+  speaker's (their DMs). `scope` decides channel-captured rows (`source_id` set): `{ source }` =
+  that conversation's, `{ allSources }` = all (owner DM, routines, dream), neither = none. A scoped
+  read also drops expired rows. Never rank first and filter after: the top-K cut would leak or starve.
   Chime-ins (`chatops/chatter.ts`) load `null` too, re-filter `subjectId` defensively, and strip
   `projectPath` — nobody addressed Bean there, so the recall is for whoever reads the channel.
 - **The owner is one subject across surfaces** (#647) — `ownerSubjectIds(dbFile, dir)` (`chatops/catalog.ts`):
@@ -32,7 +34,7 @@ so a provisional answer typed where everyone reads it is reviewed by dream like 
   AND subject_id = ?`, so only the row's author can share it — **the owner included** (no bypass;
   forgetting is where the owner has power). Text, project and `created_at` stay, so the recall
   date still reflects when it was said. Once shared, only the owner can forget it.
-- **Dream never merges across `Name:` prefixes** (`planDream`, `speakerPrefix`; capture caps the label to the same 40 chars via `speakerLabel`): a merge's members and its merged
+- **Dream never merges across `Name:` prefixes** (legacy rows) (`planDream`, `speakerPrefix`; capture caps the label to the same 40 chars via `speakerLabel`): a merge's members and its merged
   text must share one prefix (none = the owner's), so one speaker's fact never absorbs another's.
 - **Dream never sees private rows**: `maybeDream` loads `null` and `countMemoriesSince` counts
   shared only. `memories_history` has no `subject_id`, so a private row merged/undone by dream

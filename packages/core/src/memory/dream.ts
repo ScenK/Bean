@@ -4,7 +4,7 @@ import { speakerPrefix, type Memory } from "./memory.js";
 import { borrowsContext } from "./extract.js";
 import { proposeMemoryConsolidation, type ConsolidationResult } from "./consolidate.js";
 import {
-  applyConsolidation, claimDreamLease, countMemoriesSince, getMemoryMeta, loadMemories, releaseDreamLease,
+  applyConsolidation, claimDreamLease, countMemoriesSince, getMemoryMeta, loadMemories, purgeExpiredMemories, releaseDreamLease,
   type DreamDigest, type DreamGroup, type DreamPlan,
 } from "./store.js";
 
@@ -91,6 +91,7 @@ async function isDue(dbFile: string, now: Date): Promise<boolean> {
 export async function maybeDream(deps: DreamDeps): Promise<DreamDigest | undefined> {
   const now = deps.now ?? (() => new Date());
   try {
+    await purgeExpiredMemories(deps.dbFile, now().getTime());
     if (!(await isDue(deps.dbFile, now()))) return undefined;
     const runId = randomUUID();
     if (!(await claimDreamLease(deps.dbFile, runId, now().getTime(), LEASE_MS))) return undefined;
@@ -100,7 +101,10 @@ export async function maybeDream(deps: DreamDeps): Promise<DreamDigest | undefin
       const skip = new Set(deps.exclude?.() ?? []);
       // Household-shared only: a merge must never fold one member's private fact into a shared
       // one (or another member's), and the apply/undo history doesn't carry subject_id.
-      const memories = (await loadMemories(deps.dbFile, null)).filter((m) => !skip.has(m.id));
+      // ponytail: a dated row is left out too — the merged row and the undo history don't carry
+      // expires_at. It expires and is purged on its own; carry the column if merges are missed.
+      const memories = (await loadMemories(deps.dbFile, null, { allSources: true, now: now().getTime() }))
+        .filter((m) => !skip.has(m.id) && !m.expiresAt);
       const result: ConsolidationResult = { merges: [], drops: [] };
       for (let i = 0; i < memories.length; i += CHUNK) {
         // Each chunk gets a fresh lease window (a re-claim by the holder renews it); lost = stop.

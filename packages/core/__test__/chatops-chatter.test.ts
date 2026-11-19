@@ -92,7 +92,7 @@ test("a burst gets one call after the lull; under 2 new messages gets none", asy
   expect(req.tools).toEqual([]);
   expect(req.webSearch).toBe(false);
   const text = JSON.stringify(req.messages);
-  expect(h.loadMemories).toHaveBeenCalledWith(null);
+  expect(h.loadMemories).toHaveBeenCalledWith(null, { source: "discord:s" });
   expect(text).toContain("household uses pnpm");
   expect(text).not.toContain("PRIVATE");
   expect(text).not.toContain("secret-proj");

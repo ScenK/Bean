@@ -6,14 +6,15 @@ import { appendMemories, dbFile, loadMemories } from "@bean/core";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 
-// #177 + per-turn capture: a typed turn's facts are saved right after the reply, with a
-// "Remembered" row in the chat whose Undo forgets them; closing stays instant (no card).
-test("auto memory: a typed turn is captured with an Undo row, close is instant", async () => {
+// #177 + episode memory: once the chat goes quiet, what mattered in the exchange is saved in one
+// pass, with a "Remembered" row in the chat whose Undo forgets it; closing stays instant (no card).
+test("auto memory: a quiet chat is remembered with an Undo row, close is instant", async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
   stub.queue({ content: "Noted!" }); // the chat turn
-  stub.queue({ toolCall: { name: "remember", args: { text: "Prefers pnpm over npm", quote: "I prefer pnpm" } } }); // per-turn capture
-  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  stub.queue({ toolCall: { name: "remember", args: { text: "Prefers pnpm over npm", evidence: [1] } } }); // the episode
+  // The quiet spell is 10 minutes in the product; the spec shortens it.
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url, BEAN_EPISODE_IDLE_MS: "500" });
   try {
     const avatar = await app.firstWindow();
     const [chat] = await Promise.all([
@@ -51,7 +52,7 @@ test("dream: a due close tidies memory in the background and Undo last dream res
   await appendMemories(file, ["a", "b", "c", "d", "e"].map((id) => ({ id, text: `seed fact ${id}`, createdAt: "2026-08-01T00:00:00.000Z" })));
   const stub = await startStubOpenAI();
   stub.queue({ content: "Noted!" });
-  stub.queue({ toolCall: { name: "remember", args: { text: "Prefers pnpm over npm", quote: "I prefer pnpm" } } });
+  stub.queue({ toolCall: { name: "remember", args: { text: "Prefers pnpm over npm" } } }); // the close episode
   stub.queue({ toolCall: { name: "drop_memory", args: { id: "a" } } }); // the dream pass
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   try {
@@ -128,7 +129,7 @@ test("forget: a Forgot receipt row whose Undo brings the memory back in Persona"
   }
 });
 
-// #862: text typed to a live agent has no per-turn capture — quitting (local core) must still run the
+// #862: text typed to a live agent is only remembered at close — quitting (local core) must still run the
 // chat's close catch-up and let it land before the process exits. The quit teardown must still SIGKILL
 // the agent's tree first: closing the chat drops the session, and a tool in its own process group
 // would then be orphaned.
@@ -145,7 +146,7 @@ test("quit: an agent-mode chat's close catch-up is saved before a local core exi
   await writeFile(join(bin, "claude"), ["#!/bin/sh", `/usr/bin/perl -MPOSIX -e '${tool.replaceAll("'", "'\\''")}' &`, "cat > /dev/null", ""].join("\n"), "utf8");
   await chmod(join(bin, "claude"), 0o755);
   const stub = await startStubOpenAI();
-  stub.queue({ toolCall: { name: "remember", args: { text: "Staging database is pg-seven", quote: "our staging database is pg-seven" } } });
+  stub.queue({ toolCall: { name: "remember", args: { text: "Staging database is pg-seven" } } });
   const app = await launchBean({
     HOME: home.homeDir,
     OPENAI_BASE_URL: stub.url,

@@ -11,9 +11,8 @@ export interface MemoryToolDeps {
   /** The list converse() recalls from this turn — forget ids must come from it. */
   memories: Memory[];
   projects: Project[];
-  /** The user's latest *typed* message. remember quotes must come from it, and it is the only
-   * thing the intent check sees — offer these tools only on a typed turn, never on a delegate
-   * loopback or composed skill prompt. */
+  /** The user's latest *typed* message — the only thing the intent check sees. Offer these
+   * tools only on a typed turn, never on a delegate loopback or composed skill prompt. */
   latestUserText: string;
   /** Saved facts are private to this speaker (chatops DM, or "just for me"); absent = shared. */
   subjectId?: string;
@@ -107,7 +106,7 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
     run: async (args, ctx) => {
       const no = await refuse("remember", ctx?.signal);
       if (no) return no;
-      const c = validateCandidate(args, [deps.latestUserText], deps.projects);
+      const c = validateCandidate(args, deps.projects);
       if (typeof c === "string") return `error: not remembered — ${c}`;
       if (texts.has(c.text.toLowerCase())) return "Already remembered.";
       // randomUUID: `id` is a SQLite PRIMARY KEY shared across processes (desktop + bots).
@@ -115,6 +114,7 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
         id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: new Date().toISOString(),
         ...(deps.subjectId ? { subjectId: deps.subjectId } : {}),
         ...(deps.categorize && c.category ? { category: c.category } : {}),
+        ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}),
       };
       await deps.append([m]);
       texts.add(c.text.toLowerCase());

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { buildChatMounts, THREAD_ID, type buildChatHandler, type buildChatThreadHandlers, type SproutEvent, type SproutOutcome, type SproutStarted } from "./chat.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks, LiveOwner } from "./live-tasks.js";
-import { toTranscript, type buildMemoryHandlers, type CloseTurn } from "./memory.js";
+import { EPISODE_IDLE_MS, toTranscript, type buildMemoryHandlers, type CloseTurn } from "./memory.js";
 import type { ClientId, HostPush } from "./shell-ops.js";
 
 export interface ChatSessionsDeps {
@@ -69,6 +69,12 @@ export function createChatSessions(deps: ChatSessionsDeps) {
   // close catch-up a lost shell can't send itself (#808). A turn per-turn capture handled carries its
   // id, so the catch-up treats it as context; nothing typed = nothing to extract.
   const transcripts = new Map<string, { turns: CloseTurn[]; typed: boolean }>();
+  // Each chat's quiet timer (see `chat` below); a release or a close ends the watch.
+  const idle = new Map<string, ReturnType<typeof setTimeout>>();
+  // ponytail: an env override rather than a Settings knob — the e2e suite shortens the wait, and
+  // it is the one dial to turn if 10 minutes proves wrong in use.
+  const idleMs = Number(process.env.BEAN_EPISODE_IDLE_MS) > 0 ? Number(process.env.BEAN_EPISODE_IDLE_MS) : EPISODE_IDLE_MS;
+  const unwatch = (id: string): void => { clearTimeout(idle.get(id)); idle.delete(id); };
   // Sprout runs started here (#921): their thread → the chat that started it, so its result reaches
   // that chat even when the thread isn't pinned (not saved yet, or off the record). Dropped at release.
   const sproutThreads = new Map<string, string>();
@@ -78,6 +84,7 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     for (const [thread, k] of sproutThreads) if (k === id) sproutThreads.delete(thread);
     beanTurns.get(id)?.ctl.abort();
     transcripts.delete(id);
+    unwatch(id);
     deps.memory.release(id);
     deps.threads.release(id);
     deps.delegateTasks.cancelMount(id);
@@ -143,7 +150,9 @@ export function createChatSessions(deps: ChatSessionsDeps) {
         end?.(result.error);
         // Stopped by the user: no error bubble, and nothing of this turn is captured as memory.
         if (result.stopped) return result;
-        if (!result.error && mounts.holder(k) !== undefined) {
+        // An off-the-record exchange is never recorded: switching the chip back off must not
+        // hand it to the next episode.
+        if (!result.error && mounts.holder(k) !== undefined && !req.incognito && !deps.memory.isIncognito(k)) {
           const t = transcripts.get(k) ?? { turns: [], typed: false };
           t.turns.push({ role: "user", content: req.message, source: req.source, ...(req.turnId ? { id: req.turnId } : {}) });
           t.turns.push({ role: "assistant", content: result.reply });
@@ -151,13 +160,27 @@ export function createChatSessions(deps: ChatSessionsDeps) {
           t.typed ||= req.source === "typed";
           transcripts.set(k, t);
         }
-        // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows —
-        // tagged with its chat, which may no longer be the visible one.
-        deps.memory.captureTurn(k, req, result).then((batch) => {
-          if (batch.length > 0) {
-            deps.push(k, "memory", { saved: batch.map(({ id, text, category }) => ({ id, text, category })), mountId: k });
-          }
-        }).catch((err) => console.error("per-turn memory capture failed:", err));
+        // Memory is written per episode, not per turn: once this chat has been quiet for
+        // EPISODE_IDLE_MS (a close or a switch away gets there first), everything since the last
+        // episode is reviewed in one pass. The receipt row is tagged with its chat, which may no
+        // longer be the visible one.
+        // A turn that isn't typed (a delegate result) restarts a wait already running.
+        const watching = idle.has(k);
+        unwatch(k);
+        if (deps.memory.noteTurn(k, req, result) || watching) {
+          const timer = setTimeout(() => {
+            idle.delete(k);
+            const t = transcripts.get(k);
+            if (!t?.typed) return;
+            deps.memory.rememberIdle(k, [...t.turns]).then((batch) => {
+              if (batch.length > 0) {
+                deps.push(k, "memory", { saved: batch.map(({ id, text, category }) => ({ id, text, category })), mountId: k });
+              }
+            }).catch((err) => console.error("idle memory episode failed:", err));
+          }, idleMs);
+          timer.unref?.();
+          idle.set(k, timer);
+        }
         return result;
       } catch (err) {
         end?.(err instanceof Error ? err.message : String(err));
@@ -251,6 +274,7 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       if (k === undefined) return;
       const incognito = o?.incognito === true;
       const rejected = Array.isArray(o?.rejected) ? o.rejected.filter((t): t is string => typeof t === "string") : [];
+      unwatch(k);
       deps.memory.rememberOnClose(toTranscript(transcript), { incognito, rejected, key: k }).catch((err) => {
         console.error("auto-remember failed:", err);
       });
