@@ -173,6 +173,30 @@ describe("ChatWindow switches chats in place", () => {
     expect(bean.chat).toHaveBeenCalledTimes(1);
   });
 
+  // #948: a second push during the first one's final save is refused, not swapped in for the first.
+  it("a second pushed prompt while the first one's switch is still saving is refused with a note", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("hello there");
+    let ack: () => void = () => {};
+    bean.chatThreadSave!.mockImplementationOnce((req: { id: string; title: string }) => new Promise((resolve) => {
+      ack = () => resolve({ id: req.id, title: req.title, updatedAt: new Date().toISOString() });
+    }));
+    await send("one more"); // its reply queues the delayed write
+    const push = async (prompt: string, label: string): Promise<void> => {
+      await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt, label }); listeners.onChatPrompt!(undefined); });
+      await flush();
+    };
+    await push("first ask", "First");
+    await push("second ask", "Second");
+    expect(shownChat().textContent).toContain('send "Second" again in a moment');
+    await act(async () => { ack(); });
+    await flush();
+    expect(bean.chatAttach).toHaveBeenCalledTimes(2);
+    expect(bean.chat!.mock.calls.map((c) => (c[0] as { message: string }).message)).toEqual(["hello there", "one more", "first ask"]);
+    expect(shownChat().textContent).toContain("First");
+  });
+
   it("evicts the shown chat (final save, memory, release) and restores the pick under a new mount", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();

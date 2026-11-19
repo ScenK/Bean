@@ -186,6 +186,8 @@ export interface ChatSessionApi {
   notices: (notices: InterruptedRunNotice[]) => void;
   /** A sidebar pick ("new" or a thread id) while this chat is shown. */
   open: (target: string) => void;
+  /** Its final save or leave check is in flight: `open` is a no-op until it lands. */
+  switching: () => boolean;
   /** An error row in this chat (a failed sidebar delete). */
   error: (text: string) => void;
   /** Its running delegates, live session and terminal command (the window-close count). */
@@ -1522,6 +1524,7 @@ export function ChatSession({
       ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display })),
     ]),
     open,
+    switching: () => evictingRef.current || leavingRef.current,
     error: (text) => addStatus(text, "error"),
     tasks,
     stopTasks,

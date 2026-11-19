@@ -162,6 +162,9 @@ export function ChatWindow() {
     setSyncedShown(undefined);
     const api = shownApi();
     if (!api || (p.here && api.writable()) || api.blank()) { api?.runPrompt(p); return; }
+    // Mid-switch, `open` is a no-op and the switch would land with this prompt in place of the one
+    // it's for: refused, not queued (same rule as Add to current chat while Bean is answering).
+    if (api.switching()) { api.error(`Bean is still switching chats — send "${p.label}" again in a moment.`); return; }
     pendingPromptRef.current = p;
     api.open("new");
   };
