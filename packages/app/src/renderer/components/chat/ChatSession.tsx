@@ -560,12 +560,15 @@ export function ChatSession({
       // image refs staged into `[Image #N]` labels it can open (#950). Staging awaits, so an End or a
       // switch meanwhile is seen: the note follows the chat to whoever has it now.
       for (let agent = modeRef.current; isLiveAgent(agent); agent = modeRef.current) {
-        const ask = linked
-          ? `${p.prompt}\n\n${linkedNoteData({ ...linked, body: await noteForAgent(agent, linked.body, p.prompt) })}`
-          : p.prompt;
-        if (modeRef.current === agent) { sendToAgent(agent, ask, `▶ ${p.label}`); return; }
+        const staged = linked && await noteForAgent(agent, linked, p.prompt);
+        if (modeRef.current !== agent) continue;
+        staged?.warn();
+        sendToAgent(agent, staged ? `${p.prompt}\n\n${staged.data}` : p.prompt, `▶ ${p.label}`);
+        return;
       }
       if (beanBusy()) return;
+      // Another note added during staging may have relinked the chat: this prompt goes with its own.
+      if (linked) { linkedNoteRef.current = linked; setLinkedNote(linked); }
       await sendRef.current(p.prompt, `▶ ${p.label}`, false, undefined, "skill");
     })();
   };
@@ -881,16 +884,21 @@ export function ChatSession({
 
   // A note body for an agent: up to MAX_IMAGES_PER_MESSAGE of its images fetched, staged and
   // swapped for labels; the rest keep their refs, with one status line each for failed and over-cap.
-  const noteForAgent = async (agent: LiveCli, body: string, ask: string): Promise<string> => {
-    const { text, failed, over } = await labelNoteImages(body, MAX_IMAGES_PER_MESSAGE, async (id) => {
+  // `warn` posts them, called only once the note is really going to that agent.
+  const noteForAgent = async (agent: LiveCli, note: LinkedNote, ask: string): Promise<{ data: string; warn: () => void }> => {
+    const { text, failed, over } = await labelNoteImages(note.body, MAX_IMAGES_PER_MESSAGE, async (id) => {
       const img = dataUrlToAttachment((await window.bean.noteImage(id).catch(() => undefined)) ?? "");
       const path = img && await stageImage(img).catch(() => undefined);
-      return path && labelImage(path, `${ask}\n${body}`, agent);
+      return path && labelImage(path, `${ask}\n${note.body}`, agent);
     });
     const s = (n: number): string => (n === 1 ? "" : "s");
-    if (failed) addStatus(`${failed} image${s(failed)} in this note couldn't be attached for ${AGENT_NAMES[agent]}.`, "error");
-    if (over) addStatus(`${over} more image${s(over)} in this note ${over === 1 ? "wasn't" : "weren't"} handed to ${AGENT_NAMES[agent]}.`, "info");
-    return text;
+    return {
+      data: linkedNoteData({ ...note, body: text }),
+      warn: () => {
+        if (failed) addStatus(`${failed} image${s(failed)} in this note couldn't be attached for ${AGENT_NAMES[agent]}.`, "error");
+        if (over) addStatus(`${over} more image${s(over)} in this note ${over === 1 ? "wasn't" : "weren't"} handed to ${AGENT_NAMES[agent]}.`, "info");
+      },
+    };
   };
 
   // Bean's pending image chips, carried into an agent: each is staged and appended as a label. No
