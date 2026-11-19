@@ -900,6 +900,57 @@ describe("ChatWindow agent mode", () => {
       expect(req.history[0].text).toBe(`what is this\n${IMAGE_NOT_HANDED}`);
     });
 
+    it("#951: a Finder drop and a paste each get a Bean-mode chip; ✕ and deleting the label remove it; the sent bubble shows thumbnails, never saved", async () => {
+      await mount();
+      await send("/claude");
+      const chips = (): string[] => [...root.querySelectorAll(".bean-chat-pending-images .bean-chat-pending-image")].map((c) => c.getAttribute("title") ?? "");
+      bean.getPathForFile!.mockReturnValueOnce("/Users/me/finder.png");
+      await drop(png());
+      const paste = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, "clipboardData", { value: { items: [{ kind: "file", type: "image/png", getAsFile: () => png() }] } });
+      await act(async () => { composer().dispatchEvent(paste); });
+      await flush();
+      await vi.waitFor(() => expect(chips()).toEqual(["[Image #1]", "[Image #2]"]));
+      const chip = root.querySelector(".bean-chat-pending-image img") as HTMLImageElement;
+      expect(chip.src).toMatch(/^data:image\/png;base64,/);
+      // ✕ takes the label out of the composer; deleting the label text drops its chip.
+      await act(async () => { (root.querySelector('button[aria-label="Remove [Image #1]"]') as HTMLButtonElement).click(); });
+      expect(composer().value).not.toContain("[Image #1]");
+      expect(chips()).toEqual(["[Image #2]"]);
+      composer().value = "";
+      await act(async () => { composer().dispatchEvent(new Event("input", { bubbles: true })); });
+      expect(chips()).toEqual([]);
+      // A sent bubble shows the thumbnail; it opens the preview overlay.
+      await send("look [Image #2]");
+      const thumb = root.querySelector(".bean-bubble--user .bean-chat-thumb img") as HTMLImageElement;
+      expect(thumb.alt).toBe("[Image #2]");
+      expect(chips()).toEqual([]);
+      await act(async () => { (thumb.parentElement as HTMLButtonElement).click(); });
+      expect(root.querySelector(".bean-image-preview")).not.toBeNull();
+      expect(bean.liveStart!.mock.calls[0]![0].ask).toBe("look [Image #2]\n\n[Image #2]: /tmp/bean-images-x/staged.png");
+      // The saved thread / Bean's history never says an image was attached for an agent turn.
+      await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+      await send("/bean");
+      await send("hi");
+      const history = chatCalls().at(-1)!.history;
+      expect(history.some((t) => t.content.includes("[image attached]"))).toBe(false);
+    });
+
+    it("#951: a Finder file that can't be read is still labeled, with no chip", async () => {
+      await mount();
+      await send("/claude");
+      bean.getPathForFile!.mockReturnValueOnce("/Users/me/gone.png");
+      const failRead = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) {
+        setTimeout(() => this.onerror?.(new ProgressEvent("error") as ProgressEvent<FileReader>), 0);
+      });
+      try {
+        await drop(png());
+        await vi.waitFor(() => expect(composer().value).toBe("[Image #1] "));
+      } finally { failRead.mockRestore(); }
+      expect(root.querySelector(".bean-chat-pending-image")).toBeNull();
+      expect(root.textContent).not.toContain("Couldn't read that image.");
+    });
+
     describe("PDFs (#732)", () => {
       const pdf = (): File => new File(["%PDF-1.4\n%%EOF\n"], "r.pdf", { type: "application/pdf" });
       const paste = async (file: File): Promise<void> => {
@@ -973,7 +1024,8 @@ describe("ChatWindow agent mode", () => {
       await vi.waitFor(() => expect(root.querySelector(".bean-chat-pending-image")).not.toBeNull());
       await send("/claude");
       await vi.waitFor(() => expect(composer().value).toBe("[Image #1] "));
-      expect(root.querySelector(".bean-chat-pending-image")).toBeNull();
+      // The Bean chip became the label's chip (#951): one chip, titled by its label.
+      expect([...root.querySelectorAll(".bean-chat-pending-image")].map((c) => c.getAttribute("title"))).toEqual(["[Image #1]"]);
       expect(bean.liveStart).not.toHaveBeenCalled();
     });
   });

@@ -5,7 +5,7 @@ import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
   HANDOFF_ITEMS, chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
   LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
-  LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths,
+  LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths, type LabeledImage,
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
@@ -372,10 +372,10 @@ export function ChatSession({
   const [live, setLiveState] = useState<LiveState | undefined>(undefined);
   // Agent-mode images (#628): `[Image #N]` → the file it stands for. Chat-scoped and never cleared on
   // send, so a handed-back `typed` text still resolves; only the agent's text ever gets the paths.
-  const imageLabelsRef = useRef(new Map<number, { path: string; agent: LiveCli }>());
-  const labelImage = (path: string, composer: string, agent: LiveCli): string => {
+  const imageLabelsRef = useRef(new Map<number, LabeledImage>());
+  const labelImage = (path: string, composer: string, agent: LiveCli, preview?: string): string => {
     const n = nextImageNumber(itemsRef.current, composer, imageLabelsRef.current);
-    imageLabelsRef.current.set(n, { path, agent });
+    imageLabelsRef.current.set(n, { path, agent, ...(preview ? { preview } : {}) });
     return imageLabel(n);
   };
   const stageImage = (img: ImageAttachment): Promise<string> => window.bean.chatStageImage(img.data, img.mimeType, mountId);
@@ -885,7 +885,10 @@ export function ChatSession({
       return;
     }
     let text = rest;
-    for (const path of paths) text = insertDroppedPath(text, labelImage(path, text, agent), text.length, text.length).value;
+    paths.forEach((path, i) => {
+      const img = images[i]!;
+      text = insertDroppedPath(text, labelImage(path, text, agent, `data:${img.mimeType};base64,${img.data}`), text.length, text.length).value;
+    });
     if (!rest) { setRefill({ text }); return; }
     sendToAgent(agent, text.trimEnd());
   };

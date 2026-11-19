@@ -40,7 +40,11 @@
   (`withImagePaths`: deliver / queued / liveStart `ask`) gets the `[Image #N]: /path` lines — the
   ChatItem, `typed` and the liveStart `label` stay label-only, so no path reaches `bean.db`. A
   Bean-bound send holding mapped labels is refused inline; Bean-mode image turns hand over as
-  `[image attached — not handed over]`.
+  `[image attached — not handed over]`. Previews (#951): a label map entry may carry the image's data URL
+  (`preview`; a Finder file is read in the renderer just for it — a failed read still labels). The
+  composer chips and sent-bubble thumbnails derive from the labels in the text, in the Bean-mode
+  markup — renderer memory only, never on `ChatItem.images` (that drives `[image attached]`), so a
+  restored chat shows bare labels.
 - **PDFs (#731, desktop Bean mode only) are pinned per chat, not per turn.** Drop/paste/avatar drop
   (`DroppedImage` carries PDFs too) → composer chip; `ChatSession`'s `pdfRef` holds the bytes and
   every Bean turn sends `documents` (core re-sends them as one framed message before history). Bytes
