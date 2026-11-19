@@ -536,12 +536,13 @@ export function ChatSession({
       // started meanwhile is seen.
       const note = p.noteSlug ? (await window.bean.listNotes()).find((n) => n.slug === p.noteSlug) : undefined;
       if (isLiveAgent(modeRef.current) && !p.here) switchMode("bean");
-      const agent = modeRef.current;
       // Refused, not queued: a queued turn would read whichever note is linked when it drains.
-      if (!isLiveAgent(agent) && busyRef.current) {
+      const beanBusy = (): boolean => {
+        if (isLiveAgent(modeRef.current) || !busyRef.current) return false;
         addStatus(`Bean is still answering — send "${p.label}" again when it's done.`, "info");
-        return;
-      }
+        return true;
+      };
+      if (beanBusy()) return;
       // "Continue in chat" from a note: link this chat to it before the first send so the
       // note body rides along (as framed user-role data) and saves default to update-in-place.
       let linked: LinkedNote | undefined;
@@ -555,15 +556,16 @@ export function ChatSession({
         threadRef.current = { id: crypto.randomUUID(), title: threadTitle(p.label) };
         onActive(threadRef.current.id);
       }
-      if (isLiveAgent(agent)) {
-        // An agent never sees linkedNote (that rides Bean turns), so the note goes in the ask, its
-        // image refs staged into `[Image #N]` labels it can open (#950).
+      // An agent never sees linkedNote (that rides Bean turns), so the note goes in the ask, its
+      // image refs staged into `[Image #N]` labels it can open (#950). Staging awaits, so an End or a
+      // switch meanwhile is seen: the note follows the chat to whoever has it now.
+      for (let agent = modeRef.current; isLiveAgent(agent); agent = modeRef.current) {
         const ask = linked
           ? `${p.prompt}\n\n${linkedNoteData({ ...linked, body: await noteForAgent(agent, linked.body, p.prompt) })}`
           : p.prompt;
-        sendToAgent(agent, ask, `▶ ${p.label}`);
-        return;
+        if (modeRef.current === agent) { sendToAgent(agent, ask, `▶ ${p.label}`); return; }
       }
+      if (beanBusy()) return;
       await sendRef.current(p.prompt, `▶ ${p.label}`, false, undefined, "skill");
     })();
   };
