@@ -64,7 +64,7 @@ describe("ChatWindow switches chats in place", () => {
     await flush();
     const first = mounts("chatAttach")[0]!;
     await send("hello there");
-    await act(async () => { listeners.onChatPrompt!({ prompt: "pick up the note", label: "Continue: n" }); });
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "pick up the note", label: "Continue: n" }); listeners.onChatPrompt!(undefined); });
     await flush();
     const second = mounts("chatAttach")[1]!;
     expect(second).not.toBe(first);
@@ -80,12 +80,22 @@ describe("ChatWindow switches chats in place", () => {
     expect(bean.chatThreadSave!.mock.calls.some((c) => c[1] === second && (c[0] as { title: string }).title.includes("Continue: n"))).toBe(true);
   });
 
+  it("a push runs only the stored copy it claims, so an already-claimed prompt never replays", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    bean.getPendingChatPrompt = vi.fn(async () => undefined);
+    await act(async () => { listeners.onChatPrompt!({ prompt: "already run", label: "x" }); });
+    await flush();
+    expect(bean.getPendingChatPrompt).toHaveBeenCalledTimes(1);
+    expect(bean.chat).not.toHaveBeenCalled();
+  });
+
   it("Add to current chat (here) lands in the chat on screen, used or not", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
     const first = mounts("chatAttach")[0]!;
     await send("hello there");
-    await act(async () => { listeners.onChatPrompt!({ prompt: "pick up the note", label: "Continue: n", here: true }); });
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "pick up the note", label: "Continue: n", here: true }); listeners.onChatPrompt!(undefined); });
     await flush();
     expect(mounts("chatAttach")).toEqual([first]);
     expect(bean.chat!.mock.calls.map((c) => c[1])).toEqual([first, first]);
@@ -100,7 +110,7 @@ describe("ChatWindow switches chats in place", () => {
     const ta = shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
     ta.value = "hello there";
     await act(async () => { ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
-    await act(async () => { listeners.onChatPrompt!({ prompt: "pick up the note", label: "Continue: n", here: true }); });
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "pick up the note", label: "Continue: n", here: true }); listeners.onChatPrompt!(undefined); });
     await flush();
     expect(shownChat().textContent).toContain('send "Continue: n" again');
     await act(async () => { answer({ reply: "first reply", model: "m" }); });

@@ -312,7 +312,7 @@ describe("ChatWindow slash commands", () => {
 
   it("commands parse only from the composer — a pushed chat prompt is sent as is", async () => {
     await mount();
-    await act(async () => { listeners.onChatPrompt!({ prompt: "/review-code x", label: "x" }); });
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "/review-code x", label: "x" }); listeners.onChatPrompt!(undefined); });
     await flush();
     expect(bean.chat!.mock.calls[0]![0]).toMatchObject({ message: "/review-code x", source: "skill" });
   });

@@ -179,8 +179,10 @@ export interface ChatSessionApi {
   memoryUpdated: (saved: Array<{ id: string; text: string; category?: string }>) => void;
   imageProgress: () => void;
   runPrompt: (p: ChatPrompt) => void;
-  /** Nothing said yet and no thread: a pushed prompt can start here instead of in a new chat. */
+  /** Nothing said, staged or saved yet: a pushed prompt can start here instead of in a new chat. */
   blank: () => boolean;
+  /** Not continued in Discord (that leaves the chat read-only). */
+  writable: () => boolean;
   notices: (notices: InterruptedRunNotice[]) => void;
   /** A sidebar pick ("new" or a thread id) while this chat is shown. */
   open: (target: string) => void;
@@ -516,6 +518,10 @@ export function ChatSession({
   // agent in agent mode, else Bean; anything else was confirmed for Bean, so it always goes to Bean.
   const runPrompt = (p: ChatPrompt): void => {
     void (async () => {
+      // Default listNotes() hides archived notes, so an archived note is never linked. Looked up
+      // first: the recipient and busy state below are read after it, so a session ended or a turn
+      // started meanwhile is seen.
+      const note = p.noteSlug ? (await window.bean.listNotes()).find((n) => n.slug === p.noteSlug) : undefined;
       if (isLiveAgent(modeRef.current) && !p.here) switchMode("bean");
       const agent = modeRef.current;
       // Refused, not queued: a queued turn would read whichever note is linked when it drains.
@@ -525,14 +531,11 @@ export function ChatSession({
       }
       // "Continue in chat" from a note: link this chat to it before the first send so the
       // note body rides along (as framed user-role data) and saves default to update-in-place.
-      if (p.noteSlug) {
-        // Default listNotes() hides archived notes, so an archived note is never linked.
-        const note = (await window.bean.listNotes()).find((n) => n.slug === p.noteSlug);
-        if (note) {
-          const linked = { slug: note.slug, title: note.title, version: note.version, body: note.body };
-          linkedNoteRef.current = linked;
-          setLinkedNote(linked);
-        }
+      let linked: LinkedNote | undefined;
+      if (note) {
+        linked = { slug: note.slug, title: note.title, version: note.version, body: note.body };
+        linkedNoteRef.current = linked;
+        setLinkedNote(linked);
       }
       // An untitled chat gets a thread now, so it's in history (not marked typed: no close memory).
       if (!threadRef.current && !unsavableRef.current) {
@@ -541,8 +544,7 @@ export function ChatSession({
       }
       if (isLiveAgent(agent)) {
         // An agent never sees linkedNote (that rides Bean turns), so the note goes in the ask.
-        const note = linkedNoteRef.current;
-        sendToAgent(agent, note && p.noteSlug === note.slug ? `${p.prompt}\n\n${linkedNoteData(note)}` : p.prompt, `▶ ${p.label}`);
+        sendToAgent(agent, linked ? `${p.prompt}\n\n${linkedNoteData(linked)}` : p.prompt, `▶ ${p.label}`);
         return;
       }
       await sendRef.current(p.prompt, `▶ ${p.label}`, false, undefined, "skill");
@@ -1425,10 +1427,14 @@ export function ChatSession({
     onSwitch(target, false);
   };
 
+  // No thread, no transcript, no staged PDF: New chat has nothing to leave, and a pushed prompt can
+  // start here (a staged PDF would ride along with it).
+  const untouched = (): boolean => !threadRef.current && itemsRef.current.length === 0 && !pdfRef.current;
+
   // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
     if (evictingRef.current || leavingRef.current) return;
-    if (target === "new" ? !threadRef.current && itemsRef.current.length === 0 : target === threadRef.current?.id) return;
+    if (target === "new" ? untouched() : target === threadRef.current?.id) return;
     // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
     // sidebar row to come back to — kept hidden, it would be unreachable).
     if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {
@@ -1494,7 +1500,8 @@ export function ChatSession({
       setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
     },
     runPrompt,
-    blank: () => !threadRef.current && itemsRef.current.length === 0,
+    blank: untouched,
+    writable: () => !continuedTo(itemsRef.current),
     // Rendered as a `reply` (not `status`) so it enters conversation history: a later "retry" needs
     // the full instruction (notice.text) in context, not just the short bubble text (notice.display).
     notices: (notices) => setItems((prev) => [

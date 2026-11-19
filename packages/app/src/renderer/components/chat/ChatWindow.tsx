@@ -151,8 +151,9 @@ export function ChatWindow() {
 
   // A prompt pushed from outside (Notes' Continue in chat, a Dashboard ask, a Plan run) starts its own
   // chat — never lands in the conversation on screen. An empty shown chat just takes it, and so does
-  // any shown chat for Notes' Add to current chat (`here`). Otherwise it waits here for the New chat
-  // switch (which may first ask about an incognito chat or running work).
+  // any shown chat that can still talk for Notes' Add to current chat (`here`) — one continued in
+  // Discord is read-only. Otherwise it waits here for the New chat switch (which may first ask about
+  // an incognito chat or running work).
   const pendingPromptRef = useRef<ChatPrompt | undefined>(undefined);
   const runPushedPrompt = (pushed: ChatPrompt): void => {
     // A Discord/Teams chat on screen can't take it: the desktop chat under it isn't "current", so
@@ -160,7 +161,7 @@ export function ChatWindow() {
     const p = syncedRef.current !== undefined ? { ...pushed, here: false } : pushed;
     setSyncedShown(undefined);
     const api = shownApi();
-    if (!api || p.here || api.blank()) { api?.runPrompt(p); return; }
+    if (!api || (p.here && api.writable()) || api.blank()) { api?.runPrompt(p); return; }
     pendingPromptRef.current = p;
     api.open("new");
   };
@@ -195,9 +196,11 @@ export function ChatWindow() {
     // getPendingPlan fixes for the Plan window.
     window.bean.getPendingDroppedUrl().then((u) => { if (u) { setSyncedShown(undefined); setDroppedUrl(u); } });
     window.bean.onComponentDroppedUrl((u) => { setSyncedShown(undefined); setDroppedUrl(u); });
-    // A chat-target skill run confirmed in the Plan popup. Pull + push, same race fix as the dropped URL.
-    window.bean.getPendingChatPrompt().then((p) => { if (p) runPushedPrompt(p); });
-    window.bean.onChatPrompt(runPushedPrompt);
+    // A pushed prompt (Plan, Dashboard, Notes). main stores it and also pushes it; both paths claim
+    // the one stored copy, so a prompt this window already ran can't replay at its next open.
+    const claimPrompt = (): void => { window.bean.getPendingChatPrompt().then((p) => { if (p) runPushedPrompt(p); }, () => {}); };
+    claimPrompt();
+    window.bean.onChatPrompt(claimPrompt);
     // A delegate run that was still going when Bean last quit — pull + push, same race fix.
     window.bean.getPendingInterruptedRunNotices().then((n) => { if (n?.length) to()?.notices(n); });
     window.bean.onInterruptedRunNotice((n) => to()?.notices(n));

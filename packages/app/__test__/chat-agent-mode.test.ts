@@ -345,7 +345,7 @@ describe("ChatWindow agent mode", () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
     await send("/claude");
-    await act(async () => { listeners.onChatPrompt!({ prompt: "run the skill", label: "skill" }); });
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "run the skill", label: "skill" }); listeners.onChatPrompt!(undefined); });
     await flush();
     expect(bean.liveStart).not.toHaveBeenCalled();
     expect(bean.chat).toHaveBeenCalledWith(expect.objectContaining({ message: "run the skill" }), expect.any(String));
@@ -358,14 +358,14 @@ describe("ChatWindow agent mode", () => {
     await send("/claude fix X");
     await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
     const note = { prompt: "Pick up Plan.", label: "Continue: Plan", noteSlug: "plan", here: true };
-    await act(async () => { listeners.onChatPrompt!(note); });
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce(note); listeners.onChatPrompt!(undefined); });
     await flush();
     expect(bean.liveSend).toHaveBeenCalledWith("s1", expect.stringContaining("Pick up Plan."), expect.any(String));
     expect(bean.liveSend!.mock.calls[0]![1]).toContain("<<<\nstep one\n>>>");
     expect(bean.chat).not.toHaveBeenCalled();
 
     await send("/bean");
-    await act(async () => { listeners.onChatPrompt!(note); });
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce(note); listeners.onChatPrompt!(undefined); });
     await flush();
     expect(bean.chat).toHaveBeenCalledWith(expect.objectContaining({ message: "Pick up Plan.", linkedNote: expect.objectContaining({ slug: "plan" }) }), expect.any(String));
     expect(bean.liveSend).toHaveBeenCalledTimes(1);
