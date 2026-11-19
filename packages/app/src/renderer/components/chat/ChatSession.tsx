@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel, type StopTarget } from "./ChatPanel.js";
-import { PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
+import { MAX_IMAGES_PER_MESSAGE, PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
   HANDOFF_ITEMS, chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
@@ -14,7 +14,7 @@ import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, linkedNoteData } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
-import { dataUrlToAttachment } from "../../shared/note-images.js";
+import { dataUrlToAttachment, labelNoteImages } from "../../shared/note-images.js";
 import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
@@ -538,12 +538,13 @@ export function ChatSession({
       // started meanwhile is seen.
       const note = p.noteSlug ? (await window.bean.listNotes()).find((n) => n.slug === p.noteSlug) : undefined;
       if (isLiveAgent(modeRef.current) && !p.here) switchMode("bean");
-      const agent = modeRef.current;
       // Refused, not queued: a queued turn would read whichever note is linked when it drains.
-      if (!isLiveAgent(agent) && busyRef.current) {
+      const beanBusy = (): boolean => {
+        if (isLiveAgent(modeRef.current) || !busyRef.current) return false;
         addStatus(`Bean is still answering — send "${p.label}" again when it's done.`, "info");
-        return;
-      }
+        return true;
+      };
+      if (beanBusy()) return;
       // "Continue in chat" from a note: link this chat to it before the first send so the
       // note body rides along (as framed user-role data) and saves default to update-in-place.
       let linked: LinkedNote | undefined;
@@ -557,11 +558,19 @@ export function ChatSession({
         threadRef.current = { id: crypto.randomUUID(), title: threadTitle(p.label) };
         onActive(threadRef.current.id);
       }
-      if (isLiveAgent(agent)) {
-        // An agent never sees linkedNote (that rides Bean turns), so the note goes in the ask.
-        sendToAgent(agent, linked ? `${p.prompt}\n\n${linkedNoteData(linked)}` : p.prompt, `▶ ${p.label}`);
+      // An agent never sees linkedNote (that rides Bean turns), so the note goes in the ask, its
+      // image refs staged into `[Image #N]` labels it can open (#950). Staging awaits, so an End or a
+      // switch meanwhile is seen: the note follows the chat to whoever has it now.
+      for (let agent = modeRef.current; isLiveAgent(agent); agent = modeRef.current) {
+        const staged = linked && await noteForAgent(agent, linked, p.prompt);
+        if (modeRef.current !== agent) continue;
+        staged?.warn();
+        sendToAgent(agent, staged ? `${p.prompt}\n\n${staged.data}` : p.prompt, `▶ ${p.label}`);
         return;
       }
+      if (beanBusy()) return;
+      // Another note added during staging may have relinked the chat: this prompt goes with its own.
+      if (linked) { linkedNoteRef.current = linked; setLinkedNote(linked); }
       await sendRef.current(p.prompt, `▶ ${p.label}`, false, undefined, "skill");
     })();
   };
@@ -873,6 +882,25 @@ export function ChatSession({
     const agent = modeRef.current;
     if (isLiveAgent(agent)) sendToAgent(agent, text);
     else void sendMessage(text, undefined, false, images);
+  };
+
+  // A note body for an agent: up to MAX_IMAGES_PER_MESSAGE of its images fetched, staged and
+  // swapped for labels; the rest keep their refs, with one status line each for failed and over-cap.
+  // `warn` posts them, called only once the note is really going to that agent.
+  const noteForAgent = async (agent: LiveCli, note: LinkedNote, ask: string): Promise<{ data: string; warn: () => void }> => {
+    const { text, failed, over } = await labelNoteImages(note.body, MAX_IMAGES_PER_MESSAGE, async (id) => {
+      const img = dataUrlToAttachment((await window.bean.noteImage(id).catch(() => undefined)) ?? "");
+      const path = img && await stageImage(img).catch(() => undefined);
+      return path && labelImage(path, `${ask}\n${note.body}`, agent);
+    });
+    const s = (n: number): string => (n === 1 ? "" : "s");
+    return {
+      data: linkedNoteData({ ...note, body: text }),
+      warn: () => {
+        if (failed) addStatus(`${failed} image${s(failed)} in this note couldn't be attached for ${AGENT_NAMES[agent]}.`, "error");
+        if (over) addStatus(`${over} more image${s(over)} in this note ${over === 1 ? "wasn't" : "weren't"} handed to ${AGENT_NAMES[agent]}.`, "info");
+      },
+    };
   };
 
   // Bean's pending image chips, carried into an agent: each is staged and appended as a label. No
