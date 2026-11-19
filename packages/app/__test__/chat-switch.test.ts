@@ -102,6 +102,61 @@ describe("ChatWindow switches chats in place", () => {
     expect(shownChat().textContent).toContain("hello there");
   });
 
+  // #947: a restoring chat has no thread and no items yet, but it isn't blank — a prompt run there
+  // would merge into the restored thread once it loads.
+  it("a pushed prompt during a history restore starts a new chat; the late restore changes nothing", async () => {
+    let restore: (v: unknown) => void = () => {};
+    bean.chatThreadGet!.mockImplementationOnce(() => new Promise((r) => { restore = r; }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await clickEl(otherRow());
+    const restoring = mounts("chatAttach")[1]!;
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "pick up the note", label: "Continue: n" }); listeners.onChatPrompt!(undefined); });
+    await flush();
+    const fresh = mounts("chatAttach")[2];
+    expect(fresh).toBeDefined();
+    expect(calls).toContain(`release ${restoring}`);
+    expect(bean.chat!.mock.calls.map((c) => c[1])).toEqual([fresh]);
+
+    await act(async () => { restore({ id: OTHER, title: "other chat", items: [{ kind: "reply", id: "item-1", text: "restored reply" }], noteSlug: null }); });
+    await flush();
+    expect(root.textContent).not.toContain("restored reply");
+    expect(shownChat().textContent).toContain("Continue: n");
+    expect(rowOf("other chat")?.classList.contains("bean-chat-sidebar-row--active")).toBe(false);
+    expect(bean.chatThreadSave!.mock.calls.some((c) => (c[0] as { id: string }).id === OTHER)).toBe(false);
+    expect(bean.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it("New chat during a history restore switches instead of doing nothing", async () => {
+    let restore: (v: unknown) => void = () => {};
+    bean.chatThreadGet!.mockImplementationOnce(() => new Promise((r) => { restore = r; }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await clickEl(otherRow());
+    await clickEl(root.querySelector(".bean-chat-sidebar-new"));
+    expect(bean.chatAttach).toHaveBeenCalledTimes(3);
+    await act(async () => { restore({ id: OTHER, title: "other chat", items: [{ kind: "reply", id: "item-1", text: "restored reply" }], noteSlug: null }); });
+    await flush();
+    expect(root.textContent).not.toContain("restored reply");
+  });
+
+  it("a restore that settles after its chat left takes none of the thread's late receipts", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await clickEl(otherRow());
+    const evicted = mounts("chatAttach")[1]!;
+    await clickEl(root.querySelector(".bean-chat-sidebar-new"));
+    await act(async () => { listeners.onMemoryUpdated!([{ id: "m1", text: "late fact" }], evicted); });
+    let restore: (v: unknown) => void = () => {};
+    bean.chatThreadGet!.mockImplementationOnce(() => new Promise((r) => { restore = r; }));
+    await clickEl(otherRow());
+    await clickEl(root.querySelector(".bean-chat-sidebar-new"));
+    await act(async () => { restore({ id: OTHER, title: "other chat", items: [{ kind: "reply", id: "item-1", text: "restored reply" }], noteSlug: null }); });
+    await flush();
+    await clickEl(otherRow());
+    expect(shownChat().textContent).toContain("late fact");
+  });
+
   it("Add to current chat while Bean is answering is refused with a note, not queued", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
