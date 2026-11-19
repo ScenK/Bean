@@ -243,9 +243,9 @@ container on the same volume before first start); `~/.bean` is `/data/.bean` the
    2. Add that id to `memberIds` in `discord.json`.
    3. Restart the container.
 
-   Members get memory, notes, todos and reminders, DMs included. Each member has a daily turn
-   cap (200); over the cap, Bean refuses the turn. Members get no delegates, live sessions,
-   skills or Mac control.
+   Members get memory, todos and reminders, DMs included. Each member has a daily turn
+   cap (200); over the cap, Bean refuses the turn. Members get no notes, delegates, live
+   sessions, skills or Mac control (notes are owner-only).
 
 ## Accepted risk
 

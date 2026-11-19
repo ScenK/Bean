@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { can, cardActionNeeds, dmAllowed, makeRoles, parseRoleCommand, type Capability } from "../src/chatops/roles.js";
+import { can, cardActionNeeds, dmAllowed, makeRoles, parseRoleCommand, roleLine, type Capability } from "../src/chatops/roles.js";
 
 const db = (): string => join(mkdtempSync(join(tmpdir(), "bean-roles-")), "bean.db");
 
@@ -36,11 +36,11 @@ test("setup mode (no owner) and a missing actor id fail closed", () => {
   expect(roles.allowGuestDms).toBe(false);
 });
 
-test("card actions: live-session and skill controls are owner-only, notes/todos/forget member, the rest admin", () => {
-  for (const a of ["start-live", "cancel-live", "resume-live", "live-mode", "live-editsubmit", "save-skill", "cancel-skill", "run-sprout", "cancel-sprout", "send-confirm", "send-cancel", "send-pick"]) {
+test("card actions: live-session and skill controls are owner-only, notes owner-only, todos/forget member, the rest admin", () => {
+  for (const a of ["start-live", "cancel-live", "resume-live", "live-mode", "live-editsubmit", "save-skill", "cancel-skill", "run-sprout", "cancel-sprout", "send-confirm", "send-cancel", "send-pick", "save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note"]) {
     expect(cardActionNeeds(a)).toBe("owner");
   }
-  for (const a of ["save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note", "queue-todo", "cancel-todo", "forget-memory", "cancel-reminder"]) {
+  for (const a of ["queue-todo", "cancel-todo", "forget-memory", "cancel-reminder"]) {
     expect(cardActionNeeds(a)).toBe("member");
   }
   for (const a of ["save-routine", "cancel-routine", "toggle-routine", "confirm", "cancel-proposal", "cancel-run", "skill", "cli", "model", "delegate-edit", "delegate-editsubmit", undefined]) {
@@ -55,9 +55,17 @@ test("members are household-wide (DMs too), win over admin grants, and need an o
   roles.addAdmins("chan", [{ id: "m", name: "M" }]); // membership is checked first
   expect(roles.roleOf({ fromId: "m", scopeId: "chan" })).toBe("member");
   expect(makeRoles({ dbPath: db(), surface: "discord", memberIds: ["m"] }).roleOf({ fromId: "m" })).toBe("guest");
-  expect(can("member", "memory") && can("member", "notes") && can("member", "todos")).toBe(true);
-  expect(["delegate", "systemControl", "liveSession", "skillWrites", "cancelRuns"].some((c) => can("member", c as Capability))).toBe(false);
+  expect(can("member", "memory") && can("member", "todos")).toBe(true);
+  expect(can("admin", "notes") || can("member", "notes")).toBe(false);
+  expect(["notes", "delegate", "systemControl", "liveSession", "skillWrites", "cancelRuns"].some((c) => can("member", c as Capability))).toBe(false);
   expect(dmAllowed("member", roles) && !dmAllowed("guest", roles)).toBe(true);
+});
+
+test("note asks get the owner-only line, never 'ask an admin'", () => {
+  const roles = makeRoles({ dbPath: db(), surface: "discord", ownerId: "o", ownerName: "Scen" });
+  expect(roleLine("guest", roles, "chan")).toContain('look up or save a note, reply exactly: "Only Scen can use notes."');
+  expect(roleLine("admin", roles, "chan")).toContain("use notes");
+  expect(roleLine("member", roles, undefined)).toContain("but notes,");
 });
 
 test("role commands parse with an optional leading slash", () => {

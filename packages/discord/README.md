@@ -19,8 +19,8 @@ endpoint.
    `{ "botToken": "<token>", "ownerId": "<your user id>", "ownerName": "<your name>" }`
    `ownerId` is the owner (full powers; sprout digests with no channel DM them). Everyone else
    is a guest (chat only) unless the owner runs `add-admin @name` in a channel; `admins` and
-   `whoami` list roles. `"memberIds": ["<user id>", ...]` makes members (memory, notes,
-   todos — everywhere, DMs included; no delegates, live sessions, skills or Mac control); restart
+   `whoami` list roles. `"memberIds": ["<user id>", ...]` makes members (memory and
+   todos — everywhere, DMs included; no notes, delegates, live sessions, skills or Mac control); restart
    to apply. `"allowGuestDms": true` lets guests DM Bean (default off). A legacy
    single-entry `allowedUserIds` is read as `ownerId`; several entries fail startup.
    Optional `"guildId": "<server id>"` registers slash commands to that one server instantly;

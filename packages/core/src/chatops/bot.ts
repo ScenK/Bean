@@ -2038,7 +2038,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         turnId = randomUUID();
         deps.onActivity?.({ type: "turn", phase: "start", id: turnId, who: msg.fromName, where: msg.channelName });
         // Guests get Bean's own model and nothing else: no catalog, recall, or todo/delegate tools.
-        // Members get recall, notes and todo queues (projects scope those), but no skill catalog.
+        // Members get recall and todo queues (notes are owner-only) (projects scope those), but no skill catalog.
         const canDelegate = can(role, "delegate");
         const canMemory = can(role, "memory");
         // Recall is scoped before ranking: a channel sees shared facts only; a DM adds the
