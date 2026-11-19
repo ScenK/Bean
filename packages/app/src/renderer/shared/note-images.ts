@@ -24,6 +24,27 @@ export async function resolveNoteImages(body: string, lookup: (id: string) => Pr
   return out + body.slice(from);
 }
 
+const REF = /!\[[^\]\n]*\]\(bean-image:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)/g;
+
+/** A note handed to a live agent (#950): the first `cap` distinct image ids, in body order, are
+ * passed to `label` one at a time (it stages the image and returns its `[Image #N]`), and every
+ * ref to a labelled id becomes that label. An id `label` can't attach (undefined) keeps its ref and
+ * counts as `failed`; distinct ids past the cap keep theirs and count as `over`. */
+export async function labelNoteImages(
+  body: string, cap: number, label: (id: string) => Promise<string | undefined>,
+): Promise<{ text: string; failed: number; over: number }> {
+  const ids = [...new Set(Array.from(body.matchAll(REF), (m) => m[1]!))];
+  const labels = new Map<string, string>();
+  let failed = 0;
+  for (const id of ids.slice(0, cap)) {
+    const l = await label(id);
+    if (l) labels.set(id, l);
+    else failed++;
+  }
+  const text = body.replace(REF, (ref, id: string) => labels.get(id) ?? ref);
+  return { text, failed, over: Math.max(0, ids.length - cap) };
+}
+
 const cache = new Map<string, Promise<string | undefined>>();
 // ponytail: unbounded per-window cache of data URLs; rows are immutable so it never goes stale —
 // add LRU eviction if people browse hundreds of image-heavy notes in one window.
