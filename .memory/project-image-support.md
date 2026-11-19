@@ -41,7 +41,7 @@
   ChatItem, `typed` and the liveStart `label` stay label-only, so no path reaches `bean.db`. A
   Bean-bound send holding mapped labels is refused inline; Bean-mode image turns hand over as
   `[image attached — not handed over]`. Previews (#951): a label map entry may carry the image's data URL
-  (`preview`; a Finder file is read in the renderer just for it — a failed read still labels). The
+  (`preview`; a Finder file is labeled at once, then read in the renderer just for it — a failed read leaves no thumbnail). The
   composer chips and sent-bubble thumbnails derive from the labels in the text, in the Bean-mode
   markup — renderer memory only, never on `ChatItem.images` (that drives `[image attached]`), so a
   restored chat shows bare labels.

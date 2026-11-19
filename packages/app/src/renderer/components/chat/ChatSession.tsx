@@ -378,6 +378,10 @@ export function ChatSession({
     imageLabelsRef.current.set(n, { path, agent, ...(preview ? { preview } : {}) });
     return imageLabel(n);
   };
+  const previewImage = (n: number, preview: string): void => {
+    const entry = imageLabelsRef.current.get(n);
+    if (entry) imageLabelsRef.current.set(n, { ...entry, preview });
+  };
   const stageImage = (img: ImageAttachment): Promise<string> => window.bean.chatStageImage(img.data, img.mimeType, mountId);
   // Text handed back to the composer (a rejected Continue live); a fresh object per hand-back.
   const [refill, setRefill] = useState<{ text: string } | undefined>(undefined);
@@ -1629,6 +1633,7 @@ export function ChatSession({
         onRemovePdf={removePdf}
         imageLabels={imageLabelsRef.current}
         onImageLabel={labelImage}
+        onImagePreview={previewImage}
         onStageImage={stageImage}
         mode={mode}
         agentProject={agentProject}

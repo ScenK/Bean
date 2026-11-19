@@ -14,7 +14,7 @@ import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGuard, pdfFileGuard, insertDroppedPath, readImageFile, itemAgent, type PinnedPdf, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import {
-  HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, isLiveAgent, labelPreviews, mappedImageLabels, offerAgent, parseSlash, removeImageLabel, type ImageLabels,
+  HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, imageLabelNumbers, isLiveAgent, labelPreviews, mappedImageLabels, offerAgent, parseSlash, removeImageLabel, type ImageLabels,
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
@@ -110,6 +110,7 @@ export function ChatPanel({
   onRemovePdf,
   imageLabels,
   onImageLabel,
+  onImagePreview,
   onStageImage,
   onConfirm,
   onCancel,
@@ -196,6 +197,8 @@ export function ChatPanel({
   /** Maps `path` to a fresh `[Image #N]` for `agent`; `composer` = the text it lands in (numbering);
    * `preview` = its data URL for the chip and bubble thumbnail (renderer memory only). */
   onImageLabel: (path: string, composer: string, agent: LiveCli, preview?: string) => string;
+  /** Sets label `n`'s preview once a Finder file's read lands (it is labeled before the read). */
+  onImagePreview: (n: number, preview: string) => void;
   /** Writes a pasted/dragged image to a private temp file; its path. */
   onStageImage: (img: ImageAttachment) => Promise<string>;
   onConfirm: (
@@ -276,6 +279,8 @@ export function ChatPanel({
   // Agent mode (#951): the composer's `[Image #N]` labels that have a preview — the chip strip
   // follows the text, re-read on every composer change (resizeInput runs on each one).
   const [labelChips, setLabelChips] = useState<Array<{ n: number; preview: string }>>([]);
+  // A preview landing after its label was sent: re-render so the bubble picks it up.
+  const [, setPreviewTick] = useState(0);
 
   const agentMode = mode !== "bean";
   const liveAgents = clis.filter(isLiveAgent);
@@ -313,14 +318,16 @@ export function ChatPanel({
   };
   // Agent mode (#628): an image is an `[Image #N]` label in the composer, mapped to a file the agent
   // reads by path. Inserted at the cursor as it is when the label is ready.
-  const insertImageLabel = (path: string, agent: LiveCli, preview?: string): void => {
+  const insertImageLabel = (path: string, agent: LiveCli, preview?: string): string | undefined => {
     const el = inputRef.current;
-    if (!el) return;
-    const next = insertDroppedPath(el.value, onImageLabel(path, el.value, agent, preview), el.selectionStart, el.selectionEnd);
+    if (!el) return undefined;
+    const label = onImageLabel(path, el.value, agent, preview);
+    const next = insertDroppedPath(el.value, label, el.selectionStart, el.selectionEnd);
     el.value = next.value;
     el.focus();
     el.setSelectionRange(next.cursor, next.cursor);
     resizeInput();
+    return label;
   };
   // The agent-mode cap counts the labels still in the composer, plus stages in flight.
   const labelsInComposer = (): number => mappedImageLabels(inputRef.current?.value ?? "", imageLabels).length + reservedSlotsRef.current;
@@ -389,20 +396,26 @@ export function ChatPanel({
     for (const src of sources) {
       const problem = imageFileGuard(src.type, src.size, agent ? labelsInComposer() : pendingImages.length + reservedSlotsRef.current);
       if (problem) { setImageError(problem); continue; }
+      // A Finder file is labeled with its own path at once — nothing is copied. It is read only for
+      // the chip's preview, which lands later; a failed read leaves the label with no thumbnail.
+      // A paste or a browser drag has no path, so it is staged first.
+      if (agent && src.path) {
+        const n = imageLabelNumbers(insertImageLabel(src.path, agent) ?? "")[0];
+        if (n !== undefined) {
+          void src.read().then((img) => {
+            onImagePreview(n, img.dataUrl);
+            resizeInput();
+            setPreviewTick((t) => t + 1);
+          }, () => {});
+        }
+        continue;
+      }
       reservedSlotsRef.current += 1;
       setImageReadsInFlight((n) => n + 1);
-      // A Finder file is labeled with its own path — nothing is copied; it is read only for the
-      // chip's preview, and a failed read still labels it (no thumbnail). A paste or a browser drag
-      // has no path, so it is staged first.
-      const path = agent ? src.path : "";
       void src.read()
         .then((img) => {
-          if (agent && path) insertImageLabel(path, agent, img.dataUrl);
-          else if (agent) stageIntoLabel(img, agent);
+          if (agent) stageIntoLabel(img, agent);
           else setPendingImages((prev) => [...prev, img]);
-        }, (err: unknown) => {
-          if (agent && path) insertImageLabel(path, agent);
-          else throw err;
         })
         .catch(() => setImageError("Couldn't read that image."))
         .finally(() => {

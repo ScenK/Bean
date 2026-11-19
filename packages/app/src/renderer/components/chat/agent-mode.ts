@@ -195,9 +195,10 @@ export const labelPreviews = (text: string, labels: ImageLabels): Array<{ n: num
     return preview ? [{ n, preview }] : [];
   });
 
-/** `text` with every `[Image #n]` removed (a chip's ✕). */
+/** `text` with every `[Image #n]` removed (a chip's ✕), each with at most one space after it;
+ * the rest of the draft (indentation, blank lines) is left exactly as typed. */
 export const removeImageLabel = (text: string, n: number): string =>
-  text.split(imageLabel(n)).join("").replace(/ {2,}/g, " ");
+  text.replace(new RegExp(`\\[Image #${n}\\] ?`, "g"), "");
 
 /** The next label number: one past the highest in the chat's user turns, the composer and the map,
  * so a number is never reused (not even one deleted from the composer before sending). */
