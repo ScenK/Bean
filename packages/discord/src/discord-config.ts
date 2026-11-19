@@ -13,8 +13,8 @@ export interface DiscordConfig {
   ownerName?: string;
   /** Let non-owners DM Bean (as guests). Default false: they get one fixed line. */
   allowGuestDms: boolean;
-  /** Household members' Discord user ids: memory, notes and todos everywhere, DMs included
-   * (no delegates, live sessions, skills or Mac control). Read at startup — restart to change. */
+  /** Household members' Discord user ids: memory and todos everywhere, DMs included
+   * (no notes, delegates, live sessions, skills or Mac control). Read at startup — restart to change. */
   memberIds: string[];
 }
 

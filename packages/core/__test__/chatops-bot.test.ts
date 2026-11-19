@@ -2084,9 +2084,9 @@ test("capability matrix: each role's tool list in a channel and a DM", async () 
       await bot.onMessage({ ...who, direct, conversationId: key, text: "remember that I like tea" }, fx());
     }
   }
-  const memberTools = ["propose_note", "retrieve_note", "remember", "propose_todo"];
+  const memberTools = ["remember", "propose_todo"];
   const adminTools = ["propose_delegate"];
-  const ownerTools = ["system_control", "propose_skill"];
+  const ownerTools = ["system_control", "propose_skill", "propose_note", "retrieve_note"];
   expect(tools.guest).toEqual([]);
   expect(tools["guest-dm"]).toBeUndefined(); // DM gate: no model call
   expect(tools["admin-dm"]).toBeUndefined(); // admins don't carry into DMs
@@ -2224,14 +2224,14 @@ test("a guest's forced proposal (tool not offered) produces no card and no IO; t
   expect(tools[0]).toEqual([]);
 });
 
-test("an admin's tool list has delegation and memory but no skill authoring or system control", async () => {
+test("an admin's tool list has delegation and memory but no notes, skill authoring or system control", async () => {
   const tools: string[][] = [];
   const { deps } = withRoles({ systemControlsEnabled: () => true });
   const chat = deps.chat;
   deps.chat = async (a) => { tools.push(a.tools.map((t) => t.name)); return chat(a); };
   await buildTeamsBot(deps).onMessage({ ...admin, text: "remember that I like tea" }, fx());
-  expect(tools[0]).toEqual(expect.arrayContaining(["propose_delegate", "propose_note", "retrieve_note", "remember"]));
-  expect(tools[0]).not.toContain("propose_skill");
+  expect(tools[0]).toEqual(expect.arrayContaining(["propose_delegate", "remember"]));
+  for (const t of ["propose_skill", "propose_note", "retrieve_note"]) expect(tools[0]).not.toContain(t);
   expect(tools[0]).not.toContain("system_control");
 });
 
@@ -3077,16 +3077,16 @@ const archiveIdOf = (effects: ReturnType<typeof fx>): string => {
   return m[1];
 };
 
-test("archive: a member's ask posts a card for the top match; confirm archives it and the receipt restores it", async () => {
+test("archive: the owner's ask posts a card for the top match; confirm archives it and the receipt restores it", async () => {
   const h = await archiveHousehold();
-  const asked = await h.ask("mia");
+  const asked = await h.ask("u1");
   expect(asked.cards[0]).toMatchObject({ kind: "note-archive-proposal", title: "Groceries", snippet: "milk and eggs", projectName: undefined });
-  const done = await h.tap("mia", "archive-note", archiveIdOf(asked));
+  const done = await h.tap("u1", "archive-note", archiveIdOf(asked));
   expect(done.updates.at(-1)?.card).toMatchObject({ kind: "note-archive-result", outcome: "archived", noteId: h.slug });
   expect(await h.notes.searchNotes(h.file, "groceries")).toEqual([]);
-  expect((await h.tap("mia", "restore-note", h.slug)).posted).toEqual(["Restored (by mia)."]);
+  expect((await h.tap("u1", "restore-note", h.slug)).posted).toEqual(["Restored (by u1)."]);
   expect((await h.notes.searchNotes(h.file, "groceries")).map((n) => n.slug)).toEqual([h.slug]);
-  expect((await h.tap("mia", "restore-note", h.slug)).posted).toEqual(["Already restored."]);
+  expect((await h.tap("u1", "restore-note", h.slug)).posted).toEqual(["Already restored."]);
 });
 
 test("archive: Restore after a purge creates nothing", async () => {
@@ -3097,37 +3097,42 @@ test("archive: Restore after a purge creates nothing", async () => {
   expect(await h.notes.loadNotes(h.file, { includeArchived: true })).toEqual([]);
 });
 
-test("archive: a guest is never offered the tool and can't tap either action", async () => {
+test("archive: a guest or member is never offered the tool and can't tap either action", async () => {
   const h = await archiveHousehold();
-  const asked = await h.ask("stranger");
-  expect(h.offered()).not.toContain("propose_note_archive");
-  expect(asked.cards).toEqual([]);
-  const id = archiveIdOf(await h.ask("mia"));
-  expect((await h.tap("stranger", "archive-note", id)).posted[0]).toContain("Only Scen or an admin");
+  for (const who of ["stranger", "mia"]) {
+    const asked = await h.ask(who);
+    expect(h.offered()).not.toContain("propose_note_archive");
+    expect(asked.cards).toEqual([]);
+  }
+  const id = archiveIdOf(await h.ask("u1"));
+  for (const who of ["stranger", "mia"]) {
+    expect((await h.tap(who, "archive-note", id)).posted[0]).toContain("Only Scen can");
+  }
+  expect(await h.notes.searchNotes(h.file, "groceries")).toHaveLength(1);
   await h.notes.archiveNote(h.file, h.slug);
-  await h.tap("stranger", "restore-note", h.slug);
+  for (const who of ["stranger", "mia"]) await h.tap(who, "restore-note", h.slug);
   expect(await h.notes.searchNotes(h.file, "groceries")).toEqual([]);
-  // The refused tap left the card usable.
+  // The refused taps left the card usable.
   await h.notes.restoreNote(h.file, h.slug);
-  await h.tap("mia", "archive-note", id);
+  await h.tap("u1", "archive-note", id);
   expect(await h.notes.searchNotes(h.file, "groceries")).toEqual([]);
 });
 
 test("archive: wrong-conversation, repeated and expired taps archive nothing", async () => {
   const h = await archiveHousehold();
-  const id = archiveIdOf(await h.ask("mia"));
-  expect((await h.tap("mia", "archive-note", id, "elsewhere")).posted).toEqual(["That archive request expired — ask me again."]);
+  const id = archiveIdOf(await h.ask("u1"));
+  expect((await h.tap("u1", "archive-note", id, "elsewhere")).posted).toEqual(["That archive request expired — ask me again."]);
   expect(await h.notes.searchNotes(h.file, "groceries")).toHaveLength(1);
-  await h.tap("mia", "cancel-archive-note", id);
-  expect((await h.tap("mia", "archive-note", id)).posted).toEqual(["That archive request expired — ask me again."]);
+  await h.tap("u1", "cancel-archive-note", id);
+  expect((await h.tap("u1", "archive-note", id)).posted).toEqual(["That archive request expired — ask me again."]);
   expect(await h.notes.searchNotes(h.file, "groceries")).toHaveLength(1);
   let now = 0;
   h.deps.noteArchiveProposals = new NoteArchiveProposalStore(() => now);
   const bot = buildTeamsBot(h.deps);
   const effects = fx();
-  await bot.onMessage({ ...msg, fromId: "mia", fromName: "mia", text: "archive my groceries note" }, effects);
+  await bot.onMessage({ ...msg, fromId: "u1", fromName: "u1", text: "archive my groceries note" }, effects);
   now = 11 * 60_000;
-  await bot.onCardAction({ conversationId: "c1", fromId: "mia", fromName: "mia", value: { beanAction: "archive-note", proposalId: archiveIdOf(effects) } }, effects);
+  await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "u1", value: { beanAction: "archive-note", proposalId: archiveIdOf(effects) } }, effects);
   expect(await h.notes.searchNotes(h.file, "groceries")).toHaveLength(1);
 });
 
