@@ -26,6 +26,7 @@ import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
 import type { Memory } from "../memory/memory.js";
+import type { RecallScope } from "../memory/store.js";
 import type { CliName } from "../launcher.js";
 import { cliOffersModel, type CliModels } from "../cli-models.js";
 import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
@@ -163,7 +164,7 @@ export interface TeamsBotDeps {
   loadPersona: () => Promise<Persona>;
   /** Scoped like core's loadMemories: absent = all, `null` = household-shared only, an id (or
    * list) = shared plus those speakers' private facts. */
-  loadMemories: (subject?: string | string[] | null) => Promise<Memory[]>;
+  loadMemories: (subject?: string | string[] | null, scope?: RecallScope) => Promise<Memory[]>;
   /** Every id the owner's private facts live under, across surfaces (core `ownerSubjectIds`).
    * The owner's DM recalls and dedupes against all of them; absent = just the speaker's id. */
   ownerSubjectIds?: () => Promise<string[]>;
@@ -497,16 +498,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     return captureChain = captureChain.then(async () => {
       if (!(await deps.autoMemoryEnabled?.())) return;
       const { candidates, rejected, failed } = await extractMemories(
-        transcript, await deps.loadMemories(recall), projects, { chat: deps.chat, model: deps.model }, { latestTurn: true, categorize: owner },
+        transcript, await deps.loadMemories(recall, { allSources: owner }), projects, { chat: deps.chat, model: deps.model }, { latestTurn: true, categorize: owner, member: !owner },
       );
       // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
       if (rejected > 0) console.warn(`[memory] DM capture rejected ${rejected} candidate(s)`);
       if (failed) throw new Error("extraction model call failed");
-      if (candidates.length === 0) return;
+      // Re-checked right before the insert: autoMemory switched off during the call wins.
+      if (candidates.length === 0 || !(await deps.autoMemoryEnabled?.())) return;
       const at = new Date().toISOString();
       const batch: Memory[] = candidates.map((c) => ({
         id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, subjectId: speakerId,
-        ...(owner && c.category ? { category: c.category } : {}), ...(c.context ? { context: c.context } : {}),
+        ...(owner && c.category ? { category: c.category } : {}),
+        ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
       }));
       await deps.appendMemories(batch);
       if (fx) for (const m of batch) {
@@ -1487,7 +1490,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fx.post("Nothing changed — already shared or forgotten.");
       return;
     }
-    const text = (await deps.loadMemories(null)).find((m) => m.id === memoryId)?.text;
+    const text = (await deps.loadMemories(null, { allSources: true })).find((m) => m.id === memoryId)?.text;
     await fx.post(`Shared with everyone (by ${actor}): ${text ?? "that fact"}. Only the owner can forget it now.`);
   }
 
@@ -2040,13 +2043,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const canMemory = can(role, "memory");
         // Recall is scoped before ranking: a channel sees shared facts only; a DM adds the
         // speaker's private ones — for the owner, every id their facts live under, so Discord and
-        // Teams DMs share one owner (#647). Writes still store msg.fromId.
+        // Teams DMs share one owner (#647). Writes still store msg.fromId. A fact captured from a
+        // channel is recalled in that channel and in the owner's DMs only — never in another
+        // channel or a member's DM.
         const recall = !msg.direct ? null
           : isOwner ? [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])] : msg.fromId;
+        const recallScope = msg.direct ? { allSources: isOwner }
+          : msg.scopeId ? { source: `${deps.chatter?.surface ?? ""}:${msg.scopeId}` } : {};
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
           canDelegate ? loadActiveSkills() : [],
           canDelegate || canMemory || can(role, "notes") ? deps.loadProjects() : [], deps.loadPersona(),
-          canMemory ? deps.loadMemories(recall) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines(!isOwner) : [],
+          canMemory ? deps.loadMemories(recall, recallScope) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines(!isOwner) : [],
         ]);
         // Owner only: who a routine may DM, and the existing names a draft would replace. A channel
         // sink targets the channel, never the session thread (threads archive).

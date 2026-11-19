@@ -66,7 +66,7 @@ export function sharedBotDeps(opts: {
     loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
     loadProjects: () => loadProjects(projectsFile(dir)),
     loadPersona: () => loadPersona(personaFile(dir), personaFile(builtinDir)),
-    loadMemories: (subject) => loadMemories(db, subject),
+    loadMemories: (subject, scope) => loadMemories(db, subject, scope),
     ownerSubjectIds: () => ownerSubjectIds(db, dir),
     loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
     saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),

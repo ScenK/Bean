@@ -20,7 +20,7 @@ const R2 = "a0000000-0000-4000-8000-000000000003";
 function setup() {
   let chatImpl = async (_req: ChatRequest, _c: number, _k: string, _signal: AbortSignal): Promise<ConverseResult> => ({ reply: "ok" });
   const memory = {
-    release: vi.fn(), captureTurn: vi.fn(async () => []), isIncognito: vi.fn(() => false), setIncognito: vi.fn(),
+    release: vi.fn(), noteTurn: vi.fn(() => false), isIncognito: vi.fn(() => false), setIncognito: vi.fn(),
     rememberOnClose: vi.fn(async () => []),
   };
   const delegateTasks = { start: vi.fn(async () => "t"), cancelMount: vi.fn() };

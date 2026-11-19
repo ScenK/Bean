@@ -365,7 +365,7 @@ describe("chat thread IPC", () => {
     expect(row(OTHER)).toBeUndefined();
   });
 
-  it("the per-turn memory receipt is tagged with the chat that asked", async () => {
+  it("a chat quiet for 10 minutes gets one memory receipt, tagged with the chat that asked; a new turn restarts the wait", async () => {
     let n = 0;
     const appended: Memory[][] = [];
     const { chat, invoke, emit } = ipcHarness({
@@ -378,10 +378,23 @@ describe("chat thread IPC", () => {
       getModel: () => "m",
       imageGen: undefined, beanDirPath: undefined, actions: [],
     });
-    emit(IPC.chatAttach, chat, A);
-    await invoke(IPC.chat, chat, { history: [], message: "I live in Seattle", source: "typed", turnId: "item-1" }, A);
-    await vi.waitFor(() => expect(chat.send).toHaveBeenCalled());
-    expect(chat.send).toHaveBeenCalledWith(IPC.memoryUpdated, { saved: [{ id: expect.any(String), text: "fact 1" }], mountId: A });
+    vi.useFakeTimers();
+    try {
+      emit(IPC.chatAttach, chat, A);
+      await invoke(IPC.chat, chat, { history: [], message: "I live in Seattle", source: "typed", turnId: "item-1" }, A);
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      await invoke(IPC.chat, chat, { history: [], message: "and I bike to work", source: "typed", turnId: "item-3" }, A);
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      // A delegate result restarts the wait too, rather than ending it.
+      await invoke(IPC.chat, chat, { history: [], message: "delegate finished", source: "loopback" }, A);
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(n).toBe(0); // nothing per turn, and each later turn restarted the wait
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(n).toBe(1); // one pass over both turns
+      expect(chat.send).toHaveBeenCalledWith(IPC.memoryUpdated, { saved: [{ id: expect.any(String), text: "fact 1" }], mountId: A });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // #740: Stop / Esc Esc for Bean's own turn. The model call never answers, so only an abort ends it.

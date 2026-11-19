@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import { cjkBigrams, ftsMatchQuery } from "../fts-text.js";
-import { OWNER_PIN_LIMIT, sanitizeCategory, sanitizeContext, type Memory } from "./memory.js";
+import { OWNER_PIN_LIMIT, isLive, sanitizeCategory, sanitizeContext, type Memory } from "./memory.js";
 
 interface MemoryRow {
   id: string; text: string; project_path: string | null; created_at: string; subject_id?: string | null;
   category: string | null; source_id: string | null; source_title: string | null; context: string | null;
+  expires_at?: string | null; evidence?: string | null;
 }
 
 function toMemory(row: MemoryRow): Memory {
@@ -17,26 +18,43 @@ function toMemory(row: MemoryRow): Memory {
     ...(row.source_id ? { sourceId: row.source_id } : {}),
     ...(row.source_title ? { sourceTitle: row.source_title } : {}),
     ...(row.context ? { context: row.context } : {}),
+    ...(row.expires_at ? { expiresAt: row.expires_at } : {}),
+    ...(row.evidence ? { evidence: row.evidence } : {}),
   };
 }
 
 // Declared async for call-site compatibility (every caller already awaits these) even though
 // node:sqlite's DatabaseSync is synchronous under the hood — same convention as outbox.ts.
-/** `subject` scopes recall, filtered in SQL before any ranking: absent = every row (desktop and
- * Persona, the owner's own machine), `null` = household-shared only (channels, routines), an id =
+/** What a scoped read may see of rows captured from a channel (`source_id` set): `source` = that
+ * one conversation's rows, `allSources` = every channel's (the owner's own surfaces). Neither =
+ * none — what was said in one channel isn't recalled in another, or in a member's DM. */
+export interface RecallScope { source?: string; allSources?: boolean; now?: number }
+
+/** `subject` scopes recall, filtered in SQL before any ranking: absent = every row, expired ones
+ * included (desktop and Persona, the owner's own machine — recall drops the expired in
+ * `selectRelevantMemories`), `null` = household-shared only (channels, routines), an id =
  * shared plus that speaker's private rows (their DMs), a list = shared plus any of those ids (the
- * owner's DMs, via `ownerSubjectIds`; empty = shared only). */
-export async function loadMemories(file: string, subject?: string | string[] | null): Promise<Memory[]> {
+ * owner's DMs, via `ownerSubjectIds`; empty = shared only). A scoped read never returns an
+ * expired row, and channel-captured rows only as `scope` allows. */
+export async function loadMemories(file: string, subject?: string | string[] | null, scope: RecallScope = {}): Promise<Memory[]> {
   const db = openDb(file);
-  const cols = "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title, context FROM memories";
-  const ids = subject === undefined ? undefined : subject === null ? [] : typeof subject === "string" ? [subject] : [...new Set(subject)];
-  const rows = (ids === undefined
-    ? db.prepare(`${cols} ORDER BY created_at`).all()
-    : ids.length === 0
-      ? db.prepare(`${cols} WHERE subject_id IS NULL ORDER BY created_at`).all()
-      : db.prepare(`${cols} WHERE subject_id IS NULL OR subject_id IN (${ids.map(() => "?").join(", ")}) ORDER BY created_at`)
-        .all(...ids)) as unknown as MemoryRow[];
-  return rows.map(toMemory);
+  const cols = "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title, context, expires_at, evidence FROM memories";
+  if (subject === undefined) return (db.prepare(`${cols} ORDER BY created_at`).all() as unknown as MemoryRow[]).map(toMemory);
+  const ids = subject === null ? [] : typeof subject === "string" ? [subject] : [...new Set(subject)];
+  const where = [
+    ids.length === 0 ? "subject_id IS NULL" : `(subject_id IS NULL OR subject_id IN (${ids.map(() => "?").join(", ")}))`,
+    "(expires_at IS NULL OR expires_at > ?)",
+    ...(scope.allSources ? [] : [scope.source === undefined ? "source_id IS NULL" : "(source_id IS NULL OR source_id = ?)"]),
+  ];
+  const args = [...ids, new Date(scope.now ?? Date.now()).toISOString(), ...(!scope.allSources && scope.source !== undefined ? [scope.source] : [])];
+  return (db.prepare(`${cols} WHERE ${where.join(" AND ")} ORDER BY created_at`).all(...args) as unknown as MemoryRow[]).map(toMemory);
+}
+
+/** Deletes rows that expired more than two weeks ago (the dream pass calls it). Returns the count.
+ * ponytail: no undo and no history row — the memory said itself when it stopped mattering. */
+export async function purgeExpiredMemories(file: string, nowMs: number): Promise<number> {
+  const cutoff = new Date(nowMs - 14 * 24 * 3_600_000).toISOString();
+  return Number(openDb(file).prepare("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?").run(cutoff).changes);
 }
 
 // Insert-only, no read step. A load → mutate in JS → replace-whole-list round trip is exactly the
@@ -50,7 +68,7 @@ export async function loadMemories(file: string, subject?: string | string[] | n
 export async function appendMemories(file: string, additions: Memory[]): Promise<void> {
   const db = openDb(file);
   const insert = db.prepare(
-    "INSERT INTO memories (id, text, project_path, created_at, subject_id, category, source_id, source_title, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO memories (id, text, project_path, created_at, subject_id, category, source_id, source_title, context, expires_at, evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   db.exec("BEGIN");
   try {
@@ -58,6 +76,7 @@ export async function appendMemories(file: string, additions: Memory[]): Promise
       insert.run(
         m.id, m.text, m.projectPath ?? null, m.createdAt, m.subjectId ?? null,
         sanitizeCategory(m.category), m.sourceId ?? null, m.sourceTitle ?? null, sanitizeContext(m.context),
+        m.expiresAt ?? null, m.evidence ?? null,
       );
     }
     db.exec("COMMIT");
@@ -327,6 +346,9 @@ export function selectRelevantMemories(
     limit?: number; skipThreshold?: number; pinCategory?: string; pinLimit?: number;
   } = {},
 ): Memory[] {
+  // Expired plans and deadlines never reach the model (the desktop read doesn't filter in SQL).
+  const now = Date.now();
+  memories = memories.filter((m) => isLive(m, now));
   if (memories.length <= skipThreshold) return memories;
 
   // loadMemories orders by created_at, so the tail is the newest.

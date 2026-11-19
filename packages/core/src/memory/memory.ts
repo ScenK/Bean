@@ -19,15 +19,28 @@ export interface Memory {
    * ("Only in staging") stays readable. The model's words, validated against that window —
    * recall marks it `re:`, never as the user's words. */
   context?: string;
+  /** ISO time after which the memory is no longer useful (a plan, a deadline): recall skips it
+   * from then on and the dream pass deletes it two weeks later. Absent = lasting. */
+  expiresAt?: string;
+  /** Snapshot of the conversation lines the memory was written from (≤300 chars) — provenance
+   * for the owner, never shown to the model at recall. */
+  evidence?: string;
 }
+
+/** True while a memory is still worth recalling. */
+export const isLive = (m: Memory, now: number = Date.now()): boolean => !m.expiresAt || Date.parse(m.expiresAt) > now;
 
 export interface MemoryCandidate {
   text: string;
   projectPath?: string;
   /** Sanitized English category the model picked; kept only on owner paths. */
   category?: string;
-  /** Validated topic label (see `validateContext`); absent when none or it failed. */
+  /** Legacy topic label (#856); episode synthesis writes self-contained text instead. */
   context?: string;
+  expiresAt?: string;
+  /** The numbered lines the model cited, and their text snapshot (see `Memory.evidence`). */
+  lines?: number[];
+  evidence?: string;
 }
 
 export function isValidMemory(v: unknown): v is Memory {
@@ -38,7 +51,7 @@ export function isValidMemory(v: unknown): v is Memory {
   if (typeof m.createdAt !== "string" || m.createdAt.trim() === "") return false;
   if (m.projectPath !== undefined && typeof m.projectPath !== "string") return false;
   if (m.subjectId !== undefined && typeof m.subjectId !== "string") return false;
-  for (const k of ["category", "sourceId", "sourceTitle", "context"]) if (m[k] !== undefined && typeof m[k] !== "string") return false;
+  for (const k of ["category", "sourceId", "sourceTitle", "context", "expiresAt", "evidence"]) if (m[k] !== undefined && typeof m[k] !== "string") return false;
   return true;
 }
 
@@ -160,7 +173,8 @@ export function memoriesBlock(
     const scope = m.projectPath ? `(project ${nameFor(m.projectPath)})` : `(about ${owner})`;
     const ctx = sanitizeContext(m.context);
     const re = ctx ? `[re: ${ctx}] ` : "";
-    return `- ${tag}${scope} ${re}${m.text.replace(/\s*[\r\n]+\s*/g, " ")} ${savedSuffix(m.createdAt)}`;
+    const until = m.expiresAt ? ` (relevant until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC)` : "";
+    return `- ${tag}${scope} ${re}${m.text.replace(/\s*[\r\n]+\s*/g, " ")} ${savedSuffix(m.createdAt)}${until}`;
   });
   // Framed as data with no authority: a saved preference still steers (even phrased as an
   // imperative), but never authorizes a tool, an action, or skipping a confirmation.

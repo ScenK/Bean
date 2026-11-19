@@ -175,8 +175,9 @@ export interface ChimeInDeps {
   chat: ConverseDeps["chat"];
   model: string;
   loadPersona: () => Promise<Persona>;
-  /** core's loadMemories scoping — the engine always passes `null` (household-shared only). */
-  loadMemories: (subject: null) => Promise<Memory[]>;
+  /** core's loadMemories scoping — the engine always passes `null` (household-shared only) and
+   * the conversation it is about to speak in. */
+  loadMemories: (subject: null, scope: { source: string }) => Promise<Memory[]>;
   conversations: {
     append(conversationId: string, turn: { role: "user" | "assistant"; content: string }): void;
     ambientCutoff(conversationId: string): number;
@@ -221,7 +222,7 @@ export function makeChimeIn(deps: ChimeInDeps): ChimeIn {
       const window = (await fx.fetchRecent(Math.max(startedAt - 15 * 60_000, deps.conversations.ambientCutoff(conv)))).slice(-50);
       if (window.length === 0) return;
       const block = formatAmbientBlock(window, startedAt);
-      const [persona, memories] = await Promise.all([deps.loadPersona(), deps.loadMemories(null)]);
+      const [persona, memories] = await Promise.all([deps.loadPersona(), deps.loadMemories(null, { source: `${deps.chatter.surface}:${scopeId}` })]);
       // Shared rows only (the null above), and never a local project path.
       const shared = selectRelevantMemories(memories.filter((m) => !m.subjectId), window.map((m) => m.text).join("\n"))
         .map(({ projectPath: _, ...m }) => m);

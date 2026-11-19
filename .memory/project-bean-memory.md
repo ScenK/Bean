@@ -26,39 +26,19 @@ see `db.ts`'s `migrateFromFiles`.
   A broken save (`failed`, or any load/store rejection) raises a sticky `memory:error` bubble
   ("Couldn't update memory") via `onMemoryFailure`; nothing worth saving shows no bubble. Logs
   carry the rejected *count* only, never fact text.
-- **Per-turn capture (#461):** after each typed, non-incognito chat reply (autoMemory on, no
-  explicit `remember` that turn, no converse error), the host's chat sessions (`chat-sessions.ts`) fire
-  `captureTurn` off the reply path: `extractMemories(…, { latestTurn: true })` cites only the
-  latest turn (≤6 prior turns ride as context), appends, and sends `memoryUpdated` to that chat
-  window → a `🧠 Memory updated — … · Undo` row (Undo = `deleteMemories` on exactly those ids). No
-  avatar bubble; a per-turn failure only logs (close retries it) — unless the window already
-  closed, then it raises the `memory:error` bubble. `memory.ts` tracks, per chat (mount id), the
-  turn ids captured/in flight, the saved ids (pending for dream until the window closes), the live
-  🕶 chip (`chatIncognito` channel — a request's `incognito` is a send-time snapshot, so it's
-  re-checked before the model call and the insert; a closed window's id is remembered so a reply
-  settling after close can't recreate its state and skip the chip; an incognito close also flips the
-  retained state an in-flight capture holds; the renderer sends the chip from the click handler,
-  never an effect, so a close right after the click can't beat it), and a queue: captures run one at a time so
-  facts are saved in turn order (later-saved-wins stays right). **Close is a catch-up:** turns carry their renderer id,
-  already-captured ones are downgraded to non-citable context, and facts undone in the window ride
-  along as `rejected` (shown to extraction as already remembered) so close won't re-save them.
-  Config `autoMemory` (default true; Settings → Memory) off = explicit remember/forget only.
-  The per-window `🕶` chip (incognito) makes a chat write nothing.
-- **Trust boundary:** `ChatTurn.source` is recorded when a turn arrives; only `role: "user"` +
-  `source: "typed"` turns are citable (`isCitable`). A delegate loopback, a composed skill prompt,
-  the Save-to-notes command, ambient chatter, and compaction summaries all travel as role "user",
-  so the role can't be trusted. Every candidate must `quote` a span of a typed turn
-  (`validateCandidate`), and every fact clause must be carried by one quote clause (or by a
-  comma-joined reason pair, `since/because X, Y`, when neither half is negated — never by words
-  pooled across unrelated clauses): Latin content
-  words (4+ chars, minus `FRAMING`) match on a shared prefix of min(len, 5) ≥ 4 chars, where a
-  4-char stem may only gain ≤2 chars ("live"~"lives", never "java"~"javascript"); Han/Kana/Hangul
-  runs need every character bigram present. Polarity is checked on each occurrence of the quote
-  *widened to its clause* in the source, so a cropped quote can't shed a negation. Instruction-
-  (EN + CJK/Korean cues), secret-, Bean-subject, >300-char, and mostly-link/code quotes are
-  rejected in code. `extractMemories` returns `{ candidates, rejected, failed }` (rejected =
-  validation rejects, failed = model call threw); desktop `rememberOnClose` acts on all three.
-  The recall block frames memories as data and tags them `[id]`.
+- **Episodes, not per-turn capture:** see [[project-episode-memory]] — a chat quiet for 10 min
+  (or switched away from / closed) gets one synthesis pass over the whole exchange; `memory.ts`
+  tracks, per chat (mount id), the turn ids already covered, the saved ids (pending for dream
+  until the window closes), the live 🕶 chip (re-checked before the model call and the insert)
+  and a queue so a close waits for an idle episode in flight. Config `autoMemory` (default true;
+  Settings → Memory) off = explicit remember/forget only. The per-window `🕶` chip makes a chat
+  write nothing.
+- **Trust boundary:** `ChatTurn.source` is recorded when a turn arrives; an episode needs at
+  least one new `role: "user"` + `source: "typed"` turn (`isCitable`) or no model call is made —
+  a delegate loopback, a composed skill prompt or a compaction summary alone starts nothing.
+  What a memory says is no longer matched against the typed words ([[project-episode-memory]]);
+  `extractMemories` returns `{ candidates, rejected, failed }`. The recall block frames memories
+  as data and tags them `[id]`.
 - **Explicit remember/forget:** `makeMemoryTools()` → direct `remember` + `forget_memory` action
   tools, offered only on a typed turn (`ChatRequest.source === "typed"` on desktop), authorized
   in `run()` by a typed-text-only intent classifier. Desktop shows a `🧠 Remembered — …` status
@@ -77,25 +57,13 @@ see `db.ts`'s `migrateFromFiles`.
   extraction + remember (`categorize: true`), owner-DM `captureDm` + remember. Member DMs,
   channels and channel capture drop whatever the model gave. Quote validation covers `text`
   only, so a Chinese fact with an English category passes; `sanitizeCategory` normalizes it.
-- **Context label (#856):** `memories.context` (nullable) is a one-line topic the extraction model
-  writes from the window it saw, so a fragment ("Only in the staging cluster") stays readable —
-  `text` validation is unchanged, so the referent can't go there. `validateContext` in code:
-  control chars/brackets stripped, ≤80 chars, instruction-/secret-/link-shaped rejected, every word
-  in that call's window, exact (normalized) — no prefix stand-ins; a failed label
-  is dropped, the fact still saves. Only `extractMemories` passes a window (desktop close/per-turn,
-  DM capture), so explicit `remember` and channel capture drop it (#857 adds channel context).
-  The spec always offers `context` (byte-stable). Recall renders `[re: <context>] <text>`; both
-  recall headers (`memoriesBlock` default + routine) carry `MEMORY_CONTEXT_CLAUSE` (topic note,
-  not the user's words); relevance ranking indexes `text + context`. Live check:
-  `memory-context.live.test.ts` prints the usable-label share.
-- **Capture bar is generous on purpose (owner ask, 2026-11):** extraction keeps current work,
-  decisions and anything needing a follow-up (category `Follow-up`), not only durable preferences —
-  only step-by-step task instructions and small talk are out. Token cost was explicitly accepted;
-  don't tighten the prompts back without asking. The quote-cited validation in code is unchanged.
-  Agent-mode steering the user typed is citable at close catch-up (`chatTurns` maps `live` →
-  `typed`, a composed `/skill` prompt → `skill`; a hand-off offer's opening is Bean's wording, so
-  `startSession` rows are `skill` unless `typed` is passed; agent finals ride as ≤1k non-citable context);
-  there is no per-turn capture for live turns.
+- **Context label (#856, legacy):** `memories.context` is no longer written — episode text is
+  self-contained. Old rows keep theirs: recall renders `[re: <context>] <text>` and dream's
+  `borrowsContext` rule still applies to them.
+- **Capture bar (owner ask, 2026-11-18, replaces "generous"):** one question — would it change
+  how Bean helps next week? See [[project-episode-memory]]. Agent-mode steering the user typed
+  counts as typed at close (`chatTurns` maps `live` → `typed`, a composed `/skill` prompt →
+  `skill`; agent finals ride as ≤1k context).
 - **Recall:** `converse()` ranks via `selectRelevantMemories()` — up to 40 memories inject all;
   above, an FTS5 bm25 top-30 against the latest user message.
 - **"You" is the only reserved category (#650, `OWNER_CATEGORY`):** on owner paths only — desktop

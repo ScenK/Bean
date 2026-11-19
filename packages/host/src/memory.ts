@@ -18,7 +18,7 @@ export interface MemoryHandlerDeps {
   sourceLabels?: () => Map<string, string>;
   deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   extractMemories: (
-    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean; categorize?: boolean },
+    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { categorize?: boolean },
   ) => Promise<ExtractResult>;
   loadProjects: (file: string) => Promise<Project[]>;
   converse: ConverseDeps["chat"];
@@ -31,7 +31,7 @@ export interface MemoryHandlerDeps {
   /** A close-time save broke (model call or store) — main shows a sticky failure bubble, so
    * "broken" no longer looks like "nothing worth saving". */
   onMemoryFailure?: () => void;
-  /** A per-turn capture saved something — main checks dream (no bubble: the chat's
+  /** A chat that went quiet saved something — main checks dream (no bubble: the chat's
    * "Memory updated" row is the receipt). */
   onTurnBatch?: (pendingIds: () => string[]) => void;
   getLastDream: (file: string) => Promise<DreamDigest | undefined>;
@@ -45,17 +45,20 @@ export interface MemoryHandlerDeps {
  * only: the Undo window lasts until the next batch (or an app restart). */
 export interface MemoryBatch { ids: string[]; at: string }
 
-/** A close-time transcript turn; `id` = the renderer's turn id (typed turns), matched against
- * the turns per-turn capture already handled. */
+/** A chat goes quiet for this long → its episode is written to memory (a close does it sooner). */
+export const EPISODE_IDLE_MS = 10 * 60_000;
+
+/** A transcript turn; `id` = the renderer's turn id (typed turns), matched against the turns an
+ * earlier episode of the same chat already covered. */
 export type CloseTurn = ChatTurn & { id?: string };
 
 export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   let lastBatch: MemoryBatch | undefined;
-  // Per chat (mount id — see buildChatMounts), dropped at its close or release: typed turns whose
-  // per-turn capture is in flight or done (close catch-up won't re-cite them), and the ids those
-  // captures saved — still undoable from the chat's "Memory updated" rows, so dream leaves them alone.
+  // Per chat (mount id — see buildChatMounts), dropped at its close or release: typed turns an
+  // earlier episode already covered (a later one sees them as context only), and the ids those
+  // episodes saved — still undoable from the chat's "Memory updated" rows, so dream leaves them alone.
   // `incognito` = the chat's live 🕶 chip (a request's flag is a send-time snapshot); `queue`
-  // runs captures one at a time so facts are saved — and timestamped — in turn order.
+  // runs episodes one at a time so the close catch-up sees what the last idle one covered.
   type ChatWindowState = { turns: Set<string>; ids: string[]; incognito: boolean; queue: Promise<unknown> };
   const windows = new Map<string, ChatWindowState>();
   // Chats already closed/released: a reply that settles after close must not recreate their state
@@ -81,14 +84,17 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     return p;
   };
   const pendingIds = (): string[] => [...(lastBatch?.ids ?? []), ...[...windows.values()].flatMap((w) => w.ids)];
-  const extract = async (transcript: ChatTurn[], extra: Memory[], latestTurn: boolean): Promise<Memory[]> => {
+  // Turns an earlier episode covered ride as context: not new, so never what a memory is about.
+  const uncovered = (transcript: CloseTurn[], w: ChatWindowState | undefined): ChatTurn[] =>
+    transcript.map(({ id, ...t }): ChatTurn => (id && w?.turns.has(id) ? { ...t, source: undefined } : t));
+  const extract = async (transcript: ChatTurn[], extra: Memory[]): Promise<Memory[]> => {
     const [existing, projects] = await Promise.all([
       deps.loadMemories(deps.dbFile),
       deps.loadProjects(deps.projectsFile),
     ]);
     const { candidates, rejected, failed } = await deps.extractMemories(
       transcript, extra.length ? [...existing, ...extra] : existing, projects,
-      { chat: deps.converse, model: deps.getModel() }, { latestTurn, categorize: true },
+      { chat: deps.converse, model: deps.getModel() }, { categorize: true },
     );
     // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
     if (rejected > 0) console.warn(`auto-remember: rejected ${rejected} candidate(s)`);
@@ -96,11 +102,11 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     const at = new Date().toISOString();
     return candidates.map((c) => ({
       id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, ...(c.category ? { category: c.category } : {}),
-      ...(c.context ? { context: c.context } : {}),
+      ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
     }));
   };
   const remember = async (transcript: ChatTurn[], extra: Memory[]): Promise<Memory[]> => {
-    const batch = await extract(transcript, extra, false);
+    const batch = await extract(transcript, extra);
     if (batch.length === 0) return [];
     const at = batch[0]!.createdAt;
     // Pending before the insert lands, so a dream snapshot can never see these rows without
@@ -130,49 +136,54 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     renameCategory: (from: string, to: string): Promise<number> => deps.renameMemoryCategory(deps.dbFile, from, to),
     ownerIds: (): Promise<string[]> => deps.ownerSubjectIds?.() ?? Promise.resolve([]),
     delete: async (ids: string[]): Promise<number> => (await deps.deleteMemories(deps.dbFile, ids)).length,
-    /** After a chat reply: capture this typed turn's facts (only it is citable; a few prior
-     * turns are context). Skipped when the turn used the explicit remember/forget tools or errored. */
-    captureTurn: async (key: string, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
-      if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error) return [];
-      if (closed.has(key)) return [];
+    /** After a chat reply. A turn that used the explicit remember/forget tools is marked covered
+     * (an episode must not re-save a fact from the words that just forgot it). Returns whether
+     * the chat should be watched for going quiet. */
+    noteTurn: (key: string, req: ChatRequest, result: ConverseResult): boolean => {
+      if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error || closed.has(key)) return false;
       const w = windowState(key);
-      if (w.incognito) return [];
-      if (req.turnId) w.turns.add(req.turnId);
-      // Handled before skipping: close catch-up must not re-cite a turn that just saved or
-      // forgot something explicitly (a forgotten fact would be re-saved from its own words).
-      if (result.remembered?.length || result.forgotten?.length) return [];
+      if (w.incognito) return false;
+      if (req.turnId && (result.remembered?.length || result.forgotten?.length)) w.turns.add(req.turnId);
+      return true;
+    },
+    /** The chat went quiet: write its episode — every turn since the last one — and keep the chat
+     * open. The covered turns become context for the next episode and for the close catch-up. */
+    rememberIdle: async (key: string, transcript: CloseTurn[]): Promise<Memory[]> => {
+      const w = windows.get(key);
+      if (!w || closed.has(key)) return [];
       // Re-checked before the model call and again before the insert: the chip can be switched
-      // on while this turn waits or extracts.
+      // on while this episode waits or extracts.
       const offRecord = (): boolean => w.incognito || !deps.autoMemory();
+      const ids = transcript.flatMap((t) => t.id ?? []); // this snapshot's turns, not later ones
       const run = w.queue.then(async (): Promise<Memory[]> => {
         if (offRecord()) return [];
-        const batch = await extract([...req.history, { role: "user", content: req.message, source: "typed" }], [], true);
-        if (batch.length === 0 || offRecord()) return [];
-        w.ids.push(...batch.map((m) => m.id)); // pending before the insert, same as the close batch
-        await deps.appendMemories(deps.dbFile, batch);
-        deps.onTurnBatch?.(pendingIds);
+        const batch = await extract(uncovered(transcript, w), []);
+        // Closed or released meanwhile: its receipt row is unreachable, so nothing is written
+        // here and nothing is marked covered — a close catch-up reviews these turns itself.
+        if (offRecord() || windows.get(key) !== w) return [];
+        if (batch.length > 0) {
+          w.ids.push(...batch.map((m) => m.id)); // pending before the insert, same as the close batch
+          await deps.appendMemories(deps.dbFile, batch);
+          deps.onTurnBatch?.(pendingIds);
+        }
+        for (const id of ids) w.turns.add(id);
         return batch;
-      }).catch((err: unknown) => {
-        if (req.turnId) w.turns.delete(req.turnId);
-        // Chat still open: close catch-up retries this turn. Already closed: catch-up skipped
-        // it as in flight, so nothing will — surface it like a failed close save.
-        if (windows.get(key) !== w) deps.onMemoryFailure?.();
-        throw err;
       });
+      // A failure covers nothing: the next quiet spell or the close retries these turns.
       w.queue = run.catch(() => {});
       return track(run);
     },
-    /** A chat's 🕶 chip changed — gates its per-turn captures from now on. */
+    /** A chat's 🕶 chip changed — gates its episodes from now on. */
     setIncognito: (key: string, on: boolean): void => {
       if (!closed.has(key)) windowState(key).incognito = on;
     },
     /** A chat's live 🕶 chip — also keeps its delegate instructions out of `delegate_runs`. */
     isIncognito: (key: string): boolean => windows.get(key)?.incognito ?? false,
-    /** The chat mount is gone without a close catch-up: drop its state; a late reply captures nothing. */
+    /** The chat mount is gone without a close catch-up: drop its state; nothing more is written. */
     release: close,
-    /** Chat close: a catch-up — extract → validate → append in the background, no review
-     * card. Turns per-turn capture handled stay as context only; `rejected` = facts the user
-     * undid in this chat, shown to extraction as already remembered so they aren't re-saved. */
+    /** Chat close: the last episode — synthesize → append in the background, no review card.
+     * Turns an idle episode covered stay as context only; `rejected` = facts the user undid in
+     * this chat, shown to extraction as already remembered so they aren't re-saved. */
     rememberOnClose: async (
       transcript: CloseTurn[], opts: { incognito?: boolean; rejected?: string[]; key?: string },
     ): Promise<Memory[]> => {
@@ -181,14 +192,17 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       if (w && opts.incognito) w.incognito = true;
       if (opts.key !== undefined) close(opts.key);
       if (opts.incognito || !deps.autoMemory()) return [];
-      const turns = transcript.map(({ id, ...t }): ChatTurn => (id && w?.turns.has(id) ? { ...t, source: undefined } : t));
       const rejected = (opts.rejected ?? []).map((text): Memory => ({ id: "", text, createdAt: "" }));
-      return track(remember(turns, rejected).catch((err: unknown) => {
+      // After an idle episode still in flight, so the turns it covers aren't written twice.
+      return track((w?.queue ?? Promise.resolve()).then(async () => {
+        if (!deps.autoMemory()) return []; // switched off while the idle episode ran
+        return remember(uncovered(transcript, w), rejected);
+      }).catch((err: unknown) => {
         deps.onMemoryFailure?.();
         throw err;
       }));
     },
-    /** Resolves once every capture and close catch-up started so far has finished (either way). */
+    /** Resolves once every episode and close catch-up started so far has finished (either way). */
     settled: async (): Promise<void> => { await Promise.allSettled([...inFlight]); },
     batch: (): MemoryBatch | undefined => lastBatch,
     lastDream: (): Promise<DreamDigest | undefined> => deps.getLastDream(deps.dbFile),

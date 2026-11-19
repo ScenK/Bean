@@ -93,7 +93,8 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     tools: deps.tools,
     loadSkills: () => loadLayeredSkills(skillsDir(deps.builtinDir), skillsDir(dir)),
     // Household-shared only: routines never see a member's private facts.
-    memories: () => loadMemories(db, null),
+    // The owner's own automation: shared rows from every channel, never a private one.
+    memories: () => loadMemories(db, null, { allSources: true }),
     getRoutineDigestContext: deps.getRoutineDigestContext,
     ...(deps.onStatus ? { onStatus: deps.onStatus } : {}),
     ...(deps.notify ? { notify: deps.notify } : {}),

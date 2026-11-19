@@ -434,6 +434,10 @@ export function openDb(file: string): DatabaseSync {
     // so a dream merge and its undo keep it.
     ["memories", "context", "TEXT"],
     ["memories_history", "context", "TEXT"],
+    // Episode memory: when a dated memory stops mattering (NULL = lasting), and a snapshot of the
+    // lines it was written from. Dream never merges a dated row, so history doesn't carry them.
+    ["memories", "expires_at", "TEXT"],
+    ["memories", "evidence", "TEXT"],
     // Member todos (#283): the non-owner chatops speaker who queued it; NULL = the owner's (desktop,
     // watch-created, legacy rows, or the owner on chat) — only NULL rows may reach delegate/command steps.
     ["todos", "created_by", "TEXT"],

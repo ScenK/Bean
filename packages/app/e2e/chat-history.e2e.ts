@@ -74,7 +74,6 @@ test("chat history: incognito removes the chat and blocks the close write", { ta
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
   stub.queue({ content: "First!" });
-  stub.queue({ content: "" }); // the per-turn memory capture: nothing to remember
   stub.queue({ content: "Second!" });
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   const file = dbFile(join(home.homeDir, ".bean"));
@@ -379,8 +378,6 @@ test("chat history: rename a chat inline in the sidebar", async () => {
   saveDesktopChat(file, { id: closedId, title: "old chat", itemsJson: JSON.stringify([{ kind: "user", id: "a", text: "old chat" }]) });
   const stub = await startStubOpenAI();
   stub.queue({ content: "Hello there!" });
-  // Turn 1's per-turn memory capture takes one of these, whichever order it lands in.
-  stub.queue({ content: "Again!" });
   stub.queue({ content: "Again!" });
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   try {
