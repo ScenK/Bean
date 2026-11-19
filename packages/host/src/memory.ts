@@ -59,7 +59,9 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   // episodes saved — still undoable from the chat's "Memory updated" rows, so dream leaves them alone.
   // `incognito` = the chat's live 🕶 chip (a request's flag is a send-time snapshot); `queue`
   // runs episodes one at a time so the close catch-up sees what the last idle one covered.
-  type ChatWindowState = { turns: Set<string>; ids: string[]; incognito: boolean; queue: Promise<unknown> };
+  // `forgotten` = texts this chat's forget tool removed: every episode sees them as already
+  // remembered, so a turn that stated the fact earlier can't re-save it.
+  type ChatWindowState = { turns: Set<string>; ids: string[]; forgotten: string[]; incognito: boolean; queue: Promise<unknown> };
   const windows = new Map<string, ChatWindowState>();
   // Chats already closed/released: a reply that settles after close must not recreate their state
   // (and lose the chip) — close catch-up already covered that turn under the close-time flag.
@@ -67,7 +69,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   const closed = new Set<string>();
   const windowState = (key: string): ChatWindowState => {
     let w = windows.get(key);
-    if (!w) windows.set(key, w = { turns: new Set(), ids: [], incognito: false, queue: Promise.resolve() });
+    if (!w) windows.set(key, w = { turns: new Set(), ids: [], forgotten: [], incognito: false, queue: Promise.resolve() });
     return w;
   };
   const close = (key: string): void => {
@@ -83,6 +85,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     p.then(done, done);
     return p;
   };
+  const asKnown = (texts: string[]): Memory[] => [...new Set(texts)].map((text): Memory => ({ id: "", text, createdAt: "" }));
   const pendingIds = (): string[] => [...(lastBatch?.ids ?? []), ...[...windows.values()].flatMap((w) => w.ids)];
   // Turns an earlier episode covered ride as context: not new, so never what a memory is about.
   const uncovered = (transcript: CloseTurn[], w: ChatWindowState | undefined): ChatTurn[] =>
@@ -144,6 +147,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       const w = windowState(key);
       if (w.incognito) return false;
       if (req.turnId && (result.remembered?.length || result.forgotten?.length)) w.turns.add(req.turnId);
+      if (result.forgotten?.length) w.forgotten.push(...result.forgotten.map((m) => m.text));
       return true;
     },
     /** The chat went quiet: write its episode — every turn since the last one — and keep the chat
@@ -157,7 +161,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       const ids = transcript.flatMap((t) => t.id ?? []); // this snapshot's turns, not later ones
       const run = w.queue.then(async (): Promise<Memory[]> => {
         if (offRecord()) return [];
-        const batch = await extract(uncovered(transcript, w), []);
+        const batch = await extract(uncovered(transcript, w), asKnown(w.forgotten));
         // Closed or released meanwhile: its receipt row is unreachable, so nothing is written
         // here and nothing is marked covered — a close catch-up reviews these turns itself.
         if (offRecord() || windows.get(key) !== w) return [];
@@ -192,7 +196,8 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       if (w && opts.incognito) w.incognito = true;
       if (opts.key !== undefined) close(opts.key);
       if (opts.incognito || !deps.autoMemory()) return [];
-      const rejected = (opts.rejected ?? []).map((text): Memory => ({ id: "", text, createdAt: "" }));
+      // The renderer's undone texts plus this chat's forgets (the quit path sends `rejected: []`).
+      const rejected = asKnown([...(opts.rejected ?? []), ...(w?.forgotten ?? [])]);
       // After an idle episode still in flight, so the turns it covers aren't written twice.
       return track((w?.queue ?? Promise.resolve()).then(async () => {
         if (!deps.autoMemory()) return []; // switched off while the idle episode ran

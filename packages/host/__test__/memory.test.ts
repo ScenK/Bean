@@ -173,6 +173,38 @@ test("a turn that remembered or forgot something explicitly is covered, so no ep
   expect(appended).toEqual([]);
 });
 
+test("a chat's forgotten facts ride every later episode as already remembered, including the quit-path close", async () => {
+  const seen: string[][] = [];
+  const { handlers } = memoryHandlersFor({
+    extractMemories: async (_t, ex) => { seen.push(ex.map((m) => m.text)); return { candidates: [], rejected: 0, failed: false }; },
+  });
+  const forgot = { reply: "Done.", forgotten: [{ id: "x", text: "Lives in Seattle", createdAt: "" }] };
+  handlers.noteTurn("f1", turnReq, reply);
+  handlers.noteTurn("f1", { ...turnReq, message: "forget that", turnId: "item-2" }, forgot);
+  const episode = [turn("item-1", "I live in Seattle"), turn("item-2", "forget that")];
+  await handlers.rememberIdle("f1", episode);
+  await handlers.rememberOnClose(episode, { key: "f1", rejected: [] });
+  expect(seen).toEqual([["prefers pnpm", "Lives in Seattle"], ["prefers pnpm", "Lives in Seattle"]]);
+});
+
+test("an off-the-record forget is not tracked", async () => {
+  const seen: string[][] = [];
+  const forgot = { reply: "Done.", forgotten: [{ id: "x", text: "Lives in Seattle", createdAt: "" }] };
+  const { handlers } = memoryHandlersFor({
+    extractMemories: async (_t, ex) => { seen.push(ex.map((m) => m.text)); return { candidates: [], rejected: 0, failed: false }; },
+  });
+  handlers.noteTurn("f2", turnReq, reply);
+  handlers.noteTurn("f2", { ...turnReq, incognito: true, turnId: "item-2" }, forgot);
+  await handlers.rememberIdle("f2", [turn("item-1", "I live in Seattle")]);
+  expect(seen).toEqual([["prefers pnpm"]]);
+  let on = true;
+  const off = memoryHandlersFor({ autoMemory: () => on });
+  on = false;
+  off.handlers.noteTurn("f3", turnReq, forgot);
+  on = true;
+  expect(await off.handlers.rememberOnClose([turn("item-1", "x")], { key: "f3" })).toHaveLength(1); // default fake asserts no extras
+});
+
 test("a failed idle episode covers nothing: the close catch-up retries it, and it raises no bubble itself", async () => {
   let fail = true;
   const { handlers, failures } = memoryHandlersFor({
