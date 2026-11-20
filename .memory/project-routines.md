@@ -92,14 +92,15 @@ await something that takes it (deadlock). **Generation = `until`**: the admitted
 `until` must still match at commit — a sibling's ending or a restore changes it, so a stale done is
 delivered and recorded as an ordinary run (no `done`, no footer — the record is saved after the
 election) and a stale poll's items are dropped; claims stop too, and also once the deadline passes
-(unless the drain started on an already-ended sprout, by hand in the grace).
+(unless the run was admitted on an already-ended sprout — by hand in the grace; `grace` is read
+synchronously at admission, never after an await).
 Don't answer a new race with per-race flags/markers — the previous attempt (`ended`/`ending`/
 `expiring` sets, a persisted pending-ending marker + replay) failed four review rounds.
 Done commit (winner, lease held): deliver, then pause with `until: <finishedAt>`, drop the queue. A
 failed hand-off: record → needs-attention with the error, sprout paused (`until` kept), queue kept
 for the owner — no re-delivery. Expiry (tick, lease holder, idle sprout only — a live run may
 still reach done): post `Nothing by <date> — extend?` (`ending: "expired"`, never recorded), then
-pause + drop. Dropping closes the dropped todos' chat receipts (`failed`, `ENDED_BEFORE_RUN`) for
+pause + drop, and clear a startup `missed` flag (else a restored cron sprout waits for Run now). Dropping closes the dropped todos' chat receipts (`failed`, `ENDED_BEFORE_RUN`) for
 the dispatch sweep — never delete them. A failed post leaves it on for the next tick (a crash may re-post). Known gap: the done commit holds the lane while `deliverDigest` composes the chat brief (a model
 call). One `mayFire()` at commit; lease handovers mid-commit are out of scope. Either ending is chatops `context: true`,
 ignores `chatopsOnlyOnProblems`, and isn't deduped against the asking chat (`askedFrom`): the

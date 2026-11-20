@@ -276,12 +276,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   /** The single run (maxParallel 1, plain routines): one runRoutine call drains the queue.
    * Resolves with the run's status (a throw before a record exists counts as failed). A stopped
    * run is recorded but goes to no sink and triggers no post-run watch poll. */
-  async function execute(routine: Routine, ctl: AbortController, opts: RunOpts): Promise<FillResult> {
+  async function execute(routine: Routine, ctl: AbortController, opts: RunOpts, grace: boolean): Promise<FillResult> {
     let run: RunOutcome = { status: "failed" };
     let stoppedRun = false;
     try {
       await stamp(routine.name);
-      const result = checkSinks(routine, await deps.runRoutine(routine, undefined, ctl.signal, deps.claimTodo ? laneClaim(routine, deps.claimTodo) : undefined));
+      const result = checkSinks(routine, await deps.runRoutine(routine, undefined, ctl.signal, deps.claimTodo ? laneClaim(routine, deps.claimTodo, grace) : undefined));
       run = outcomeOf(result);
       stoppedRun = result.stopped === true;
       const save = (record: RunRecord): Promise<void> => appendAndPrune(routine.name, record);
@@ -308,21 +308,21 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     running.set(routine.name, count(routine.name) + 1);
     let claimed = false;
     const once = (): Promise<TodoItem | undefined> => (claimed ? Promise.resolve(undefined) : (claimed = true, claimById(todoId)));
-    return worker(routine, once, admit(routine.name), {}, false);
+    return worker(routine, once, admit(routine.name), {}, false, ended(routine));
   }
 
   /** A maxParallel worker: claim a todo, run it as its own run, repeat until nothing's pending.
    * `postRun` false = its end polls nothing (a Run-now run, #923).
    * A lost claim ends the worker with no bubble, record or digest. Resolves with one status per
    * claimed todo. */
-  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>, ctl: AbortController, opts: RunOpts, postRun = true): Promise<FillResult> {
+  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>, ctl: AbortController, opts: RunOpts, postRun: boolean, grace: boolean): Promise<FillResult> {
     const runs: RunOutcome[] = [];
     let stoppedRun = false;
     // A stopped worker claims nothing more; a todo whose claim was in flight at the Stop still
     // goes to runRoutine, which fails it unrun (its signal is already aborted).
     // Each claim is admitted in the sprout's lane against the current definition: once a sibling's
     // done ended the sprout or a restore came in (either changes `until`), or it's archived, it stops.
-    const admitted = laneClaim(routine, claim);
+    const admitted = laneClaim(routine, claim, grace);
     const next = (): Promise<TodoItem | undefined> => (ctl.signal.aborted ? Promise.resolve(undefined) : admitted(routine.name));
     try {
       for (let todo = await next(); todo; todo = await next()) {
@@ -392,13 +392,13 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
   /** A drain's claim, admitted in the sprout's lane against the current definition: it stops once
    * a sibling's done ended the sprout or a restore came in (either changes `until`), once it's
-   * archived, and once its deadline passes — unless the drain started on an already-ended sprout
-   * (by hand, within the grace). */
-  function laneClaim(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>): (name: string) => Promise<TodoItem | undefined> {
-    const endedAtStart = ended(routine);
+   * archived, and once its deadline passes — unless `grace`: the sprout had already ended when the
+   * run was admitted (read synchronously at admission, before any await — only a run by hand gets
+   * that, the tick never admits an ended sprout). */
+  function laneClaim(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>, grace: boolean): (name: string) => Promise<TodoItem | undefined> {
     return (name) => withSprout(name, async () => {
       const c = await find(name);
-      return c && !isArchived(c, now()) && c.until === routine.until && (endedAtStart || !ended(c)) ? claim(name) : undefined;
+      return c && !isArchived(c, now()) && c.until === routine.until && (grace || !ended(c)) ? claim(name) : undefined;
     });
   }
 
@@ -411,11 +411,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     const free = slots - count(routine.name);
     if (free <= 0) return { runs: [], stopped: false };
     running.set(routine.name, count(routine.name) + free);
-    if (slots === 1 || !deps.claimTodo) return execute(routine, admit(routine.name), opts);
+    const grace = ended(routine); // at admission, before any await (see laneClaim)
+    if (slots === 1 || !deps.claimTodo) return execute(routine, admit(routine.name), opts, grace);
     const claim = deps.claimTodo;
     const ctls = Array.from({ length: free }, () => admit(routine.name));
     await stamp(routine.name).catch((err: unknown) => console.error(`bean: routine "${routine.name}" stamp failed`, err));
-    const all = await Promise.all(ctls.map((ctl) => worker(routine, claim, ctl, opts)));
+    const all = await Promise.all(ctls.map((ctl) => worker(routine, claim, ctl, opts, true, grace)));
     return { runs: all.flatMap((r) => r.runs), stopped: all.some((r) => r.stopped) };
   }
 
@@ -624,6 +625,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       await deps.deliverDigest(c, { digest, results: [], ending: "expired", record: { startedAt: at, finishedAt: at, status: "ok", digest, steps: [] } });
       await save({ ...c, enabled: false });
       await deps.dropPendingTodos?.(c.name);
+      // A missed fire is moot once it ended: a restore must schedule normally, not wait for Run now.
+      missedNames.delete(c.name);
+      await updateState(c.name, (s) => ({ ...(s ?? { history: [] }), missed: undefined }));
     });
   }
 

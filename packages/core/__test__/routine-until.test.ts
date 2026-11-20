@@ -176,6 +176,24 @@ describe("the done ending (scheduler)", () => {
     expect(hist.find((h) => !h.done)).toMatchObject({ digest: "found by a" });
   });
 
+  it("the grace exception is read at admission: a stamp landing past the deadline doesn't grant it", async () => {
+    let clock = at(2026, 12, 20, 23, 59);
+    let states: Record<string, RoutineState> = {};
+    const t = setup([watchQueue({ until: "2026-12-20" })], {
+      now: () => clock,
+      saveStates: async (next) => { states = next; clock = at(2026, 12, 21, 0, 1); }, // the run's stamp crosses it
+      loadStates: async () => states,
+    });
+    t.queue.push(todo("a"));
+    const claimed: string[] = [];
+    vi.mocked(t.deps.runRoutine).mockImplementation(async (_r, _todo, _signal, claim) => {
+      for (let item = await claim!("w"); item; item = await claim!("w")) claimed.push(item.id);
+      return { record: { startedAt: "x", finishedAt: "x", status: "ok", digest: "ran", steps: [] }, digest: "ran", results: [] };
+    });
+    await t.sched.runNow("w");
+    expect(claimed).toEqual([]);
+  });
+
   it("a drain started before the deadline claims nothing past it; one started by hand in the grace keeps draining", async () => {
     const t = setup([watchQueue({ until: "2026-12-20" })]);
     t.setClock(at(2026, 12, 20, 23, 0));
@@ -330,6 +348,23 @@ describe("expiry (scheduler)", () => {
     t.setClock(at(2026, 12, 21, 0, 30));
     await t.sched.tick();
     expect(t.deps.deliverDigest).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cron sprout flagged missed at startup drops the flag when it expires, so a restore schedules normally", async () => {
+    const cron: Routine = { name: "c", enabled: true, cron: "0 9 * * *", until: "2026-12-20", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
+    const t = setup([cron]);
+    t.deps.saveStates({ c: { lastRun: at(2026, 12, 1, 9, 0).toISOString(), history: [] } });
+    t.sched.start(); // flags it missed
+    t.sched.stop();
+    await vi.waitFor(() => expect(t.states().c?.missed).toBe(true));
+    t.setClock(at(2026, 12, 21, 9, 0));
+    await t.sched.tick();
+    expect(t.routine("c").enabled).toBe(false);
+    expect(t.states().c?.missed).toBeUndefined();
+    t.setRoutines([{ ...cron, until: "2027-01-31" }]); // restored
+    t.setClock(at(2026, 12, 22, 9, 1));
+    await t.sched.tick();
+    expect(t.deps.runRoutine).toHaveBeenCalledTimes(1);
   });
 
   it("a failed post leaves it on, so the next tick tries again (post first, then pause)", async () => {
