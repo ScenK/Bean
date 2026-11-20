@@ -39,6 +39,12 @@ describe("cleanChatSinks", () => {
     expect(cleanChatSinks({ chatops: [{ transport: "teams", channel: " " }], chatopsOnlyOnProblems: true, chatopsVerbatim: true, notify: true }))
       .toEqual({ notify: true });
   });
+
+  it("keeps the Home sink untouched, with or without chat sinks", () => {
+    const home = { ttlMinutes: 15 };
+    expect(cleanChatSinks({ chatops: [{ transport: "teams", channel: " " }], chatopsVerbatim: true, home }).home).toBe(home);
+    expect(cleanChatSinks({ chatops: [{ transport: "teams" }], home }).home).toBe(home);
+  });
 });
 
 describe("chatTargets", () => {
@@ -60,7 +66,11 @@ describe("destinations", () => {
       "Discord DM to user u1",
       "Teams conversation 19:abc@thread.v2",
     ]);
-    expect(off).toEqual(["no note", "no desktop notification"]);
+    expect(off).toEqual(["no note", "no desktop notification", "no Home chat"]);
+  });
+
+  it("names the Home chat", () => {
+    expect(destinations({ home: { ttlMinutes: 30 } }, undefined).on).toEqual(["Posted to your Home chat"]);
   });
 });
 

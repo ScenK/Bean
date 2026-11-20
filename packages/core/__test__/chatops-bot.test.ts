@@ -3026,16 +3026,17 @@ describe("owner routines from chat (#285)", () => {
     expect(effects.posted.at(-1)).not.toContain("/p/bean");
   });
 
-  test("Routine.projects survives disable/enable and an owner's chat replacement", async () => {
-    const h = setup(routineJson, [{ ...(routineJson as Routine), projects: ["/w/app", "/w/gone"] }]);
+  test("Routine.projects and sinks.home survive disable/enable and an owner's chat replacement", async () => {
+    const home = { ttlMinutes: 30 };
+    const h = setup(routineJson, [{ ...(routineJson as Routine), projects: ["/w/app", "/w/gone"], sinks: { ...(routineJson as Routine).sinks, home } }]);
     const effects = fx();
     await h.bot.onMessage({ ...msg, text: "disable mia-summary" }, effects);
     await h.bot.onMessage({ ...msg, text: "enable mia-summary" }, effects);
-    expect(h.store[0]).toMatchObject({ enabled: true, projects: ["/w/app", "/w/gone"] });
+    expect(h.store[0]).toMatchObject({ enabled: true, projects: ["/w/app", "/w/gone"], sinks: { home } });
     await h.bot.onMessage({ ...msg, text: "weekday 7am summary to Mia" }, effects);
     const card = effects.cards.at(-1) as { proposalId: string };
     await h.bot.onCardAction(tap("save-routine", card.proposalId), effects);
-    expect(h.store).toEqual([{ ...routineJson, projects: ["/w/app", "/w/gone"] }]);
+    expect(h.store).toEqual([{ ...routineJson, projects: ["/w/app", "/w/gone"], sinks: { ...(routineJson as Routine).sinks, home } }]);
   });
 });
 

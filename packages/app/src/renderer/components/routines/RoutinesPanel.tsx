@@ -534,6 +534,7 @@ export function RoutinesPanel() {
     setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : rest });
   };
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
+  if (draft.sinks.home) sinkTargets.push("your Home chat");
 
   const routineRow = (sectionKey: string, { routine: r, also, problems }: SproutRow) => (
     <div
@@ -1204,6 +1205,38 @@ export function RoutinesPanel() {
             />
             Send a desktop notification
           </label>
+          <label class="bean-routines-sink-row">
+            <input
+              type="checkbox"
+              checked={draft.sinks.home !== undefined}
+              onChange={(e) => {
+                const { home: _h, ...rest } = draft.sinks;
+                setDraft({ ...draft, sinks: (e.target as HTMLInputElement).checked ? { ...rest, home: {} } : rest });
+              }}
+            />
+            Post to Home chat
+          </label>
+          {draft.sinks.home ? (
+            <label class="bean-routines-sink-row bean-routines-sink-suboption bean-routines-home-ttl">
+              Drop if unread after
+              {/* An invalid number stays in the draft so the save is refused with core's message
+                  (describeRoutineError), never silently replaced by the last valid value. */}
+              <input
+                type="number"
+                min={1}
+                step={1}
+                class="bean-routines-pill-input"
+                aria-label="Drop the Home post if unread after this many minutes"
+                value={draft.sinks.home.ttlMinutes ?? ""}
+                onInput={(e) => {
+                  const v = (e.target as HTMLInputElement).value.trim();
+                  setDraft({ ...draft, sinks: { ...draft.sinks, home: v === "" ? {} : { ttlMinutes: Number(v) } } });
+                }}
+              />
+              min
+              <span class="bean-routines-sink-hint">blank = keep until read</span>
+            </label>
+          ) : null}
           {(["discord", "teams"] as const).map((transport) => {
             const label = transport === "discord" ? "Discord" : "Teams";
             const room = transport === "discord" ? "channel" : "conversation";

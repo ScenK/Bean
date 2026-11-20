@@ -1438,9 +1438,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     try {
       if (createOnly) await r.create(routine);
       else {
-        // Replacing a sprout keeps its display-only "Listed under" (the draft tool has no such field).
-        const listed = (await r.load()).find((x) => x.name === name)?.projects;
-        await r.save(listed && routine.projects === undefined ? { ...routine, projects: listed } : routine);
+        // Replacing a sprout keeps its display-only "Listed under" and its Home sink (the draft
+        // tool has neither field; Home is set in the desktop's sprout editor).
+        const saved = (await r.load()).find((x) => x.name === name);
+        let next = saved?.projects && routine.projects === undefined ? { ...routine, projects: saved.projects } : routine;
+        if (saved?.sinks.home && next.sinks.home === undefined) next = { ...next, sinks: { ...next.sinks, home: saved.sinks.home } };
+        await r.save(next);
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") await fail(nameTaken(name));

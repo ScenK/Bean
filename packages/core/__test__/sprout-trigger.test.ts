@@ -31,6 +31,7 @@ describe("planSproutRun", () => {
     } });
     const paused = planSproutRun({ ...schedule, enabled: false, sinks: { chatops: [{ transport: "discord" }, { transport: "discord", channel: "c" }], notify: true } }, 0, true);
     expect(paused).toMatchObject({ plan: { paused: true, resultsTo: "this chat, Discord, a desktop notification" } });
+    expect(planSproutRun({ ...schedule, sinks: { note: true, home: {} } }, 0, true)).toMatchObject({ plan: { resultsTo: "this chat, a note, the Home chat" } });
   });
   it("todo sprout works through its queue; an empty one is blocked", () => {
     expect(planSproutRun(todoSprout, 3, true)).toMatchObject({ plan: { action: "run", actionLine: "Works through 3 queued todos" } });

@@ -194,3 +194,61 @@ test("routines: chat sinks show and edit a DM plus several channels per transpor
     await home.cleanup();
   }
 });
+
+/** "Post to Home chat" (#962): ticking saves `sinks.home`, the minutes field sets `ttlMinutes`
+ * (an invalid value is refused with a message, the file untouched), the enabled and todo-driven
+ * flips keep it, and unticking removes it while the other sinks stay. */
+test("routines: Post to Home chat round-trips sinks.home and its unread timeout", async () => {
+  const home = await makeBeanHome();
+  const file = join(home.homeDir, ".bean", "routines", "homey.json");
+  await writeFile(file, JSON.stringify({
+    name: "homey", enabled: false, cron: "0 6 * * *", sinks: { note: true },
+    steps: [{ kind: "chat", instruction: "check the build" }],
+  }), "utf8");
+  const saved = async (): Promise<Record<string, unknown>> =>
+    (JSON.parse(await readFile(file, "utf8")) as { sinks: Record<string, unknown> }).sinks;
+  const ttl = "Drop the Home post if unread after this many minutes";
+
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const avatar = await app.firstWindow();
+    const [win] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("routines")),
+    ]);
+    await win.locator(".bean-routines-row", { hasText: "homey" }).click();
+    await expect(win.getByLabel(ttl)).toHaveCount(0);
+    await win.getByLabel("Post to Home chat").check();
+    await expect(win.locator(".bean-routines-digest-line")).toContainText("your Home chat");
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(saved).toEqual({ note: true, home: {} });
+    // Edit only once the save has settled, or its late "Saved ✓" lands on the edited draft.
+    await expect(win.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+
+    await win.getByLabel(ttl).fill("0");
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect(win.locator(".bean-status--error")).toContainText("ttlMinutes must be a whole number");
+    expect(await saved()).toEqual({ note: true, home: {} });
+
+    await win.getByLabel(ttl).fill("45");
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(saved).toEqual({ note: true, home: { ttlMinutes: 45 } });
+    await expect(win.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+
+    await win.getByRole("switch").click();
+    await expect.poll(async () => (JSON.parse(await readFile(file, "utf8")) as { enabled: boolean }).enabled).toBe(true);
+    await win.getByRole("button", { name: "⚡ Todo-driven" }).click();
+    await expect.poll(async () => (JSON.parse(await readFile(file, "utf8")) as { todoDriven?: boolean }).todoDriven).toBe(true);
+    expect(await saved()).toEqual({ note: true, home: { ttlMinutes: 45 } });
+
+    await win.reload();
+    await win.locator(".bean-routines-row", { hasText: "homey" }).click();
+    await expect(win.getByLabel(ttl)).toHaveValue("45");
+    await win.getByLabel("Post to Home chat").uncheck();
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(saved).toEqual({ note: true });
+  } finally {
+    await app.close();
+    await home.cleanup();
+  }
+});
