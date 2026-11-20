@@ -168,8 +168,8 @@ test("an expanded sprout's Stop keeps its width as the run count changes", async
       detail: "", steps: ["Pull repos", "Run test suites"], step: 1, startedAt: now, state: "running" });
     await push([run("routine:nightly:1")]);
     await page.locator('.bean-bubble[data-id="routine:nightly:1"]').click();
-    // Hold the stack as a resting pointer would (the window regrows under a real one, so it's flaky).
-    await page.locator(".bean-bubble-stack").dispatchEvent("pointerenter");
+    // Hold the stack as a pointer moving over it would (the window regrows under a real one, so it's flaky).
+    await page.locator(".bean-bubble-stack").dispatchEvent("pointermove");
     const stop = page.locator(".bean-bubble-stop");
     const bubble = page.locator('.bean-bubble[data-id="routine:nightly:1"]');
     await expect(stop).toHaveText("Stop");

@@ -66,7 +66,7 @@ test("the stack holds still under the pointer: a vanished memory bubble's click 
   b.update([delegate, memory]);
   const stack = box.querySelector(".bean-bubble-stack")!;
   const ids = (): string[] => [...box.querySelectorAll<HTMLElement>(".bean-bubble")].map((n) => n.dataset.id!);
-  stack.dispatchEvent(new Event("pointerenter"));
+  stack.dispatchEvent(new Event("pointermove"));
   b.update([{ ...delegate, line: "new output" }]); // the memory bubble's linger ran out
   expect(ids()).toEqual(["delegate:1", "memory:batch"]);
   box.querySelector<HTMLElement>('.bean-bubble[data-id="memory:batch"]')!.click();
@@ -86,7 +86,7 @@ test("the stack holds still under the pointer: a vanished memory bubble's click 
 test("a frozen stack's Stop counts runs that started under the pointer and still shows Stopping", () => {
   const { box, b, open } = mount([job("routine:r:1", { routine: "r" })]);
   open("routine:r:1");
-  box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointerenter"));
+  box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointermove"));
   b.update([job("routine:r:1", { routine: "r" }), job("routine:r:2", { routine: "r" })]);
   expect(box.querySelectorAll(".bean-bubble")).toHaveLength(1); // held
   expect(box.querySelector(".bean-bubble-stop")!.textContent).toBe("Stop all 2 runs");
@@ -98,7 +98,7 @@ test("a held bubble that's gone stops reading as running, and a still pointer re
   vi.useFakeTimers();
   try {
     const { box, b } = mount([job("chat:1", { kind: "chat", line: "Thinking…", steps: undefined })]);
-    box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointerenter"));
+    box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointermove"));
     b.update([]); // the reply arrived: main drops the turn's bubble
     expect(box.querySelector(".bean-bubble-meta")!.textContent).toBe("done");
     vi.advanceTimersByTime(HOLD_MS); // e.g. the avatar hid without a pointerleave
@@ -142,6 +142,24 @@ describe("Home bubble (#961)", () => {
     el.click();
     expect(onOpenHome).toHaveBeenCalledTimes(2);
     expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("a click ends the pointer hold, so main dropping the drained bubble renders at once (#970)", () => {
+    const { box, b, onDismiss, onOpenHome } = setup([home(2), job("a", {})]);
+    const stack = box.querySelector(".bean-bubble-stack")!;
+    stack.dispatchEvent(new Event("pointermove"));
+    box.querySelector<HTMLElement>(`.bean-bubble[data-id="${HOME_JOB_ID}"]`)!.click();
+    expect(onOpenHome).toHaveBeenCalledTimes(1);
+    b.update([job("a", {})]);
+    expect(box.querySelector(`.bean-bubble[data-id="${HOME_JOB_ID}"]`)).toBeNull();
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("a stack that lands under a still pointer doesn't hold: only movement does (#970)", () => {
+    const { box, b } = setup([job("a", {})]);
+    box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointerenter"));
+    b.update([job("a", {}), home(1)]);
+    expect(box.querySelector(`.bean-bubble[data-id="${HOME_JOB_ID}"]`)).not.toBeNull();
   });
 
   it("with four other jobs, newest-slot Home stays visible; folded, the pill counts its posts and keeps the failure count", () => {
