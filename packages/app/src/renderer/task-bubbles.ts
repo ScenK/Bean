@@ -8,6 +8,7 @@ import type { DashboardTarget } from "../channels.js";
 // so a misclick can't lose data. A finished routine likewise: one click dismisses it and opens that
 // run in the Dashboard, whose card is the lasting record of a failure. A chat's delegate or live
 // session opens that chat (dismissing it once finished) — the chat shows its detail and output.
+// The Home bubble (#961) opens today's Home and never dismisses: only draining the posts clears it.
 // A running sprout's expanded detail carries the one control: Stop. It sits beside the bubble's
 // <button> (a button can't nest one), overlaid on room reserved in the detail.
 const ICONS = {
@@ -17,6 +18,7 @@ const ICONS = {
   bot: '<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01"/><path d="M8 17h.01"/>',
   reminder: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   live: '<path d="m5 8 4 4-4 4"/><path d="M12 17h7"/>',
+  home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
   memory: '<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 3 5 3 3 0 0 0 5 1V5a3 3 0 0 0-3-1z"/><path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-3 5 3 3 0 0 1-5 1"/>',
   done: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   failed: '<path d="M12 7v6"/><path d="M12 17h.01"/>',
@@ -31,6 +33,7 @@ const clock = (ms: number): string => {
 };
 
 const meta = (j: TaskJob, now: number): string => {
+  if (j.kind === "home") return "";
   if (j.state !== "running") return j.count && j.count > 1 ? `${j.state} ×${j.count}` : j.state;
   const elapsed = clock(now - j.startedAt);
   return j.steps && j.step !== undefined ? `${j.step + 1}/${j.steps.length} · ${elapsed}` : elapsed;
@@ -45,7 +48,7 @@ export function liveBadgeAgent(jobs: readonly TaskJob[]): TaskJob["agent"] {
   return best?.agent;
 }
 
-const iconKey = (j: TaskJob): keyof typeof ICONS => (j.state === "running" ? j.kind : j.state);
+const iconKey = (j: TaskJob): keyof typeof ICONS => (j.state === "running" || j.kind === "home" ? j.kind : j.state);
 
 const opensRun = (j: TaskJob): boolean => j.kind === "routine" && j.state !== "running";
 // A chat's delegate or live session: the chat is where you answer it ("Waiting for you").
@@ -74,6 +77,8 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
     ? `title="Open in Dashboard" aria-label="${esc(`${j.name} — ${j.line}. Open in Dashboard`)}"`
     : opensChat(j)
       ? `title="Open chat" aria-label="${esc(`${j.name} — ${j.line}. Open chat`)}"`
+      : j.kind === "home"
+        ? `title="Open Home" aria-label="${esc(`${j.line}. Open Home`)}"`
       : `aria-expanded="${open}"`;
   const html = `
     <button type="button" class="bean-bubble bean-bubble--${j.state}${tail ? " bean-bubble--tail" : ""}${fresh ? " bean-bubble--new" : ""}" data-id="${esc(j.id)}" ${action}>
@@ -107,6 +112,7 @@ export function createTaskBubbles(
   onOpenRun: (target: DashboardTarget) => void = () => {},
   onOpenChat: (mountId: string) => void = () => {},
   onStop: (routine: string) => void = () => {},
+  onOpenHome: () => void = () => {},
 ) {
   let jobs: TaskJob[] = [];
   let openId: string | undefined;
@@ -138,9 +144,12 @@ export function createTaskBubbles(
     const html = shown.map((j, i) =>
       bubble(j, j.id === openId, openId !== undefined && j.id !== openId, i === shown.length - 1, !seen.has(j.id), now,
         j.id === openId ? stopLabel(j, jobs) : undefined));
-    const failed = hidden.filter((j) => j.state === "failed").length;
+    const failed = hidden.filter((j) => j.state === "failed" && j.kind !== "home").length;
+    const posts = hidden.find((j) => j.kind === "home")?.count ?? 0;
     // Oldest end of the stack (farthest from the bean), so it lands there in either direction.
-    if (hidden.length) html.unshift(`<button type="button" class="bean-bubble-more" aria-expanded="false">+${hidden.length} more${failed ? ` · ${failed} failed` : ""}</button>`);
+    if (hidden.length) {
+      html.unshift(`<button type="button" class="bean-bubble-more" aria-expanded="false">+${hidden.length} more${failed ? ` · ${failed} failed` : ""}${posts ? ` · ${posts} post${posts === 1 ? "" : "s"}` : ""}</button>`);
+    }
     else if (showAll) html.unshift('<button type="button" class="bean-bubble-more" aria-expanded="true">Show fewer</button>');
     stack.innerHTML = (below ? html.reverse() : html).join("");
     seen = new Set(jobs.map((j) => j.id));
@@ -171,6 +180,10 @@ export function createTaskBubbles(
     if (job?.kind === "memory") {
       onDismiss(id);
       onOpenMemory();
+      return;
+    }
+    if (job?.kind === "home") {
+      onOpenHome();
       return;
     }
     if (job && opensRun(job)) {

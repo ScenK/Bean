@@ -534,6 +534,10 @@ export function RoutinesPanel() {
     setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : rest });
   };
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
+  // Home always gets the brief (chatopsVerbatim and only-on-problems are chatops-only), except a
+  // stepless run, which has nothing to brief and posts the digest.
+  const briefTargets = brief ? [...chatTargetList] : [];
+  if (draft.sinks.home) (stepless ? sinkTargets : briefTargets).push("your Home chat");
 
   const routineRow = (sectionKey: string, { routine: r, also, problems }: SproutRow) => (
     <div
@@ -1204,6 +1208,43 @@ export function RoutinesPanel() {
             />
             Send a desktop notification
           </label>
+          <label class="bean-routines-sink-row">
+            <input
+              type="checkbox"
+              checked={draft.sinks.home !== undefined}
+              onChange={(e) => {
+                const { home: _h, ...rest } = draft.sinks;
+                setDraft({ ...draft, sinks: (e.target as HTMLInputElement).checked ? { ...rest, home: {} } : rest });
+              }}
+            />
+            Post to Home chat
+          </label>
+          {draft.sinks.home ? (
+            <label class="bean-routines-sink-row bean-routines-sink-suboption bean-routines-home-ttl">
+              Drop if unread after
+              {/* An invalid number stays in the draft so the save is refused with core's message
+                  (describeRoutineError), never silently replaced by the last valid value. */}
+              <input
+                type="number"
+                min={1}
+                step={1}
+                class="bean-routines-pill-input"
+                aria-label="Drop the Home post if unread after this many minutes"
+                // NaN = malformed text the user is still typing: leave the field's text alone.
+                value={Number.isNaN(draft.sinks.home.ttlMinutes) ? undefined : draft.sinks.home.ttlMinutes ?? ""}
+                onInput={(e) => {
+                  const input = e.target as HTMLInputElement;
+                  const v = input.value.trim();
+                  // Malformed text ("-", "1e") reads as "" with badInput set: keep it invalid (NaN),
+                  // never as blank, or it would silently drop the expiry.
+                  const ttlMinutes = input.validity.badInput ? Number.NaN : v === "" ? undefined : Number(v);
+                  setDraft({ ...draft, sinks: { ...draft.sinks, home: ttlMinutes === undefined ? {} : { ttlMinutes } } });
+                }}
+              />
+              min
+              <span class="bean-routines-sink-hint">blank = keep until read</span>
+            </label>
+          ) : null}
           {(["discord", "teams"] as const).map((transport) => {
             const label = transport === "discord" ? "Discord" : "Teams";
             const room = transport === "discord" ? "channel" : "conversation";
@@ -1299,8 +1340,8 @@ export function RoutinesPanel() {
         <div class="bean-routines-footer">
           <span class="bean-routines-digest-line">
             <span class="bean-routines-bean-chip" />
-            {brief
-              ? <span>Posts a brief to <b>{chatTargetList.join(", ")}</b>{sinkTargets.length > 0 ? <> and a digest to <b>{sinkTargets.join(", ")}</b></> : null}</span>
+            {briefTargets.length > 0
+              ? <span>Posts a brief to <b>{briefTargets.join(", ")}</b>{sinkTargets.length > 0 ? <> and a digest to <b>{sinkTargets.join(", ")}</b></> : null}</span>
               : sinkTargets.length > 0
                 ? <>Posts a digest to <b>{sinkTargets.join(", ")}</b></>
                 : "No digest sink — results stay in run history."}

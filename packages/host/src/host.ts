@@ -13,7 +13,7 @@ import {
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
   listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
   isWatchSeeded, clearWatch, watchSourceKey, briefMessages, parseBrief, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat,
-  deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, detectTools,
+  deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
   saveModelMemory, resolveDelegateSelection, liveRuns,
@@ -40,6 +40,7 @@ import { createRoutineBuilder } from "./routine-builder.js";
 import { buildRoutineHandlers } from "./routines.js";
 import type { ClientId, HostPush } from "./shell-ops.js";
 import { createRoutineBubbles, createTaskStatus, type TaskJob } from "./task-status.js";
+import { createHomeBubble } from "./home-bubble.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { busyWork, UPDATING, type CoreLatch } from "./core-update.js";
 
@@ -257,6 +258,8 @@ export async function createHost(deps: HostDeps) {
     await saveRoutine(routinesPath, r, models);
   };
   const routineBubbles = createRoutineBubbles(taskStatus);
+  // The avatar's Home bubble (#961); set once the chat threads exist (a post can't land before).
+  let homeBubble: ReturnType<typeof createHomeBubble> | undefined;
   // Routine host + scheduler (core routine-wiring.ts), on the same resolved login-shell PATH
   // spawn as delegate-tasks (safety-packaged-app-path-detection).
   const routines = createRoutineWiring({
@@ -274,9 +277,11 @@ export async function createHost(deps: HostDeps) {
     tools: actionTools,
     getRoutineDigestContext: () => runtime.getRoutineDigestContext(),
     onStatus: routineBubbles.onStatus,
-    notify: async ({ target, ...msg }) => {
-      if (deps.notification.available()) await deps.notification.send({ ...msg, ...(target ? { meta: { open: "dashboard", target } } : {}) });
+    notify: async ({ target, home, ...msg }) => {
+      const meta = home ? { open: "home" } : target ? { open: "dashboard", target } : undefined;
+      if (deps.notification.available()) await deps.notification.send({ ...msg, ...(meta ? { meta } : {}) });
     },
+    onHomePost: () => homeBubble?.refresh(),
     canSchedule: () => schedulerLease.held() && !updating, // fails closed past the last good renewal
     alarm: (routine, error) => {
       if (deps.notification.available()) {
@@ -480,7 +485,15 @@ export async function createHost(deps: HostDeps) {
   const threads = buildChatThreadHandlers({
     dbFile: db, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats,
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (file) => listPendingHomePosts(file), saveDesktopChatDraining,
+    onDrained: () => homeBubble?.refresh(),
   });
+  homeBubble = createHomeBubble({
+    count: () => countPendingHomePosts(db),
+    nextExpiry: () => nextHomePostExpiry(db),
+    status: taskStatus,
+  });
+  homeBubble.refresh(); // boot: posts left pending bring the bubble back
+  deps.onQuit(() => homeBubble?.stop());
   const sessions = createChatSessions({
     isChatClient, chat, memory, threads, delegateTasks, liveTasks, push,
     onRelease: deps.onChatRelease,
@@ -629,6 +642,8 @@ export async function createHost(deps: HostDeps) {
     detectedClis,
     cancelDelegate: delegateTasks.cancel,
     dismissTask: taskStatus.dismiss,
+    /** Today's pending Home posts (#961): a remote shell's bubble and dot poll this. */
+    homePending: (): number => countPendingHomePosts(db),
     /** A chat's live-session project (mount key) — what a relative Cmd+click path resolves against. */
     liveProjectOf: liveTasks.projectOf,
   };

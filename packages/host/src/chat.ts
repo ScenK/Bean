@@ -239,6 +239,8 @@ export interface ChatThreadHandlerDeps {
   /** Home posts (#960); absent = Home opens with no posts and a save drains nothing. */
   listPendingHomePosts?: (file: string) => HomePost[];
   saveDesktopChatDraining?: (file: string, chat: DesktopChatInput, drained: readonly string[], now?: Date) => string;
+  /** A save drained Home posts (#961): the host recounts its bubble. */
+  onDrained?: () => void;
   now?: () => Date;
   dbFile: string;
 }
@@ -401,6 +403,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
         : deps.saveDesktopChat(deps.dbFile, chat, at);
       for (const x of drained) mine?.ids.delete(x);
       threads.set(key, o.id);
+      if (drained.length > 0) deps.onDrained?.();
       return { id: o.id, title, updatedAt: at.toISOString(), ...(isHome(o.id) ? { home: true as const } : {}) };
     },
     /** 🕶 on: latch first, then delete the chat's saved row. Off: nothing — the latch is sticky. */

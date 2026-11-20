@@ -95,6 +95,10 @@ contextBridge.exposeInMainWorld("bean", {
   openChatMount: (mountId: string): void => ipcRenderer.send(IPC.openChatMount, mountId),
   onShowChatMount: (cb: (mountId: string) => void) =>
     ipcRenderer.on(IPC.showChatMount, (_e, mountId: string) => cb(mountId)),
+  openChatHome: (): void => ipcRenderer.send(IPC.openChatHome),
+  homePending: (): Promise<number> => ipcRenderer.invoke(IPC.homePending),
+  onChatShowHome: (cb: () => void) => ipcRenderer.on(IPC.chatShowHome, () => cb()),
+  getPendingChatHome: (): Promise<boolean> => ipcRenderer.invoke(IPC.getPendingChatHome),
   planDrop: (skillName: string, droppedUrl: string): Promise<RouteSuggestion> =>
     ipcRenderer.invoke(IPC.planDrop, skillName, droppedUrl),
   runInChat: (prompt: string, label: string, noteSlug?: string, here?: boolean): void =>

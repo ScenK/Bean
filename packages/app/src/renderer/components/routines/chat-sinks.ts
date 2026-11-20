@@ -65,5 +65,6 @@ export function destinations(sinks: RoutineSinks, recipients: SinkRecipients | u
   }
   if (sinks.note) on.push("Saved as a note on your Daily Dashboard"); else off.push("no note");
   if (sinks.notify) on.push("Desktop notification"); else off.push("no desktop notification");
+  if (sinks.home) on.push("Posted to your Home chat"); else off.push("no Home chat");
   return { on, off };
 }

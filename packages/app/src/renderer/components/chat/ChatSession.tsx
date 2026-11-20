@@ -219,6 +219,8 @@ export interface ChatSessionProps {
   sessions: Map<string, ChatSessionApi>;
   /** Mounted but not shown — it has work in flight (#517). */
   hidden: boolean;
+  /** Home posts are pending (#961): a shown Home offers them on the jump-down pill. */
+  homePending?: boolean;
   clis: CliName[];
   runModels: AvailableModel[];
   prefillUrl?: ChatDrop;
@@ -250,7 +252,7 @@ export interface ChatSessionProps {
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
 export function ChatSession({
-  mountId, restoreId, startIncognito, prompt, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
+  mountId, restoreId, startIncognito, prompt, sessions, hidden, homePending = false, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
 }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -496,18 +498,21 @@ export function ChatSession({
     flushRef.current = true;
     return true;
   };
-  // A hidden Home doesn't drain. Shown (again), it asks main for the pending posts first: that list
-  // replaces the held one, so a post that expired or landed meanwhile is right. A failed read appends
-  // nothing; the next show asks again.
-  useEffect(() => {
-    if (hidden || !homeRef.current) return;
+  // A hidden Home doesn't drain. Opened (shown again, picked again, its jump-down pill), it asks main
+  // for the pending posts first: that list replaces the held one, so a post that expired or landed
+  // meanwhile is right. A failed read appends nothing; a failed save drains nothing (#961: the count,
+  // so the bubble, dot and pill, stays) — the next open asks again, and re-saves posts already here.
+  const pullPosts = (): void => {
+    if (hiddenRef.current || !homeRef.current) return;
     window.bean.chatThreadGet("home", mountId).then((t) => {
       if (goneRef.current || hiddenRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
       for (const p of t.home.posts) undrainedRef.current.add(p.id);
       waitingPostsRef.current = t.home.posts;
       if (appendPosts()) setItems(itemsRef.current);
+      else void saveThread();
     }, () => {});
-  }, [hidden]);
+  };
+  useEffect(() => { if (!hidden) pullPosts(); }, [hidden]);
   // Midnight with Home open: this thread stays (now plain history); the next post starts the new day's Home.
   const endHomeDay = (): void => {
     homeRef.current = false;
@@ -597,6 +602,8 @@ export function ChatSession({
     }, (err: unknown) => {
       if (goneRef.current) return;
       restoringRef.current = false;
+      // Not on Home after all: the Home row takes a click again, which retries (#961).
+      if (restoreId === "home" && !hiddenRef.current) onActive(undefined, false);
       addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error");
     });
   }, []);
@@ -1554,7 +1561,10 @@ export function ChatSession({
   // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
     if (evictingRef.current || leavingRef.current) return;
-    if (target === "new" ? untouched() : target === threadRef.current?.id || (target === "home" && homeRef.current)) return;
+    // Home picked again (its bubble, a banner): already here, so just catch up on its posts (#961). A
+    // mount still restoring Home counts as Home: the restore brings the posts.
+    if (target === "home" && (homeRef.current || (restoreId === "home" && restoringRef.current))) { pullPosts(); return; }
+    if (target === "new" ? untouched() : target === threadRef.current?.id) return;
     // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
     // sidebar row to come back to — kept hidden, it would be unreachable).
     if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {
@@ -1708,6 +1718,8 @@ export function ChatSession({
       ) : null}
       <ChatPanel
         hidden={hidden}
+        homePosts={home && homePending}
+        onHomePosts={pullPosts}
         mountId={mountId}
         inputRef={composerRef}
         terminalOpen={terminalOpen}

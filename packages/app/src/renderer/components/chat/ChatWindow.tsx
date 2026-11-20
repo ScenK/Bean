@@ -105,6 +105,8 @@ export function ChatWindow() {
   const [threads, setThreads] = useState<DesktopChatListing[]>([]);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
   const [homeActive, setHomeActive] = useState(false);
+  // Home posts waiting (#961): the avatar's Home bubble, from the job feed every window gets.
+  const [homePending, setHomePending] = useState(false);
   const [busy, setBusy] = useState(false);
   // Synced chats (Discord/Teams, SyncedChat.tsx): shown over the current desktop chat, which stays
   // mounted (hidden) underneath — picking a desktop row or New chat goes back through it.
@@ -231,6 +233,11 @@ export function ChatWindow() {
     window.bean.onMemoryUpdated((saved, from) => onMemoryUpdated(saved, from));
     // Progress for a chat that's gone is dropped, never shown in another one.
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
+    window.bean.homePending().then((n) => setHomePending(n > 0), () => {});
+    window.bean.onTaskStatus((jobs) => setHomePending(jobs.some((j) => j.kind === "home")));
+    // The Home bubble, the avatar with posts pending, or a sprout banner: show today's Home.
+    window.bean.getPendingChatHome().then((h) => { if (h) openThreadRef.current("home"); }, () => {});
+    window.bean.onChatShowHome(() => openThreadRef.current("home"));
     // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.
     window.bean.onShowChatMount((mountId) => {
       // An idle owner may be evicted by now (a finished task's bubble outlives it): its thread reopens.
@@ -434,6 +441,7 @@ export function ChatWindow() {
           synced={synced}
           activeId={syncedListing ? syncedShown : activeId}
           homeActive={homeActive && !syncedListing}
+          homePending={homePending}
           busy={busy}
           working={new Set([...Object.values(working), ...(syncedWorking ? [syncedWorking] : [])])}
           unread={unread}
@@ -458,6 +466,7 @@ export function ChatWindow() {
           startIncognito={incognito === true}
           sessions={sessions}
           hidden={mountId !== shown || syncedListing !== undefined}
+          homePending={homePending}
           clis={clis}
           runModels={runModels}
           prefillUrl={mountId === shown ? droppedUrl : undefined}

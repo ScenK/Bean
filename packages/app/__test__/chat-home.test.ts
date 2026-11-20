@@ -52,6 +52,7 @@ describe("ChatWindow Home", () => {
       chatRelease: vi.fn(),
       setChatIncognito: vi.fn(),
       rememberOnClose: vi.fn(),
+      homePending: vi.fn(async () => 0),
     };
     (window as unknown as { bean: unknown }).bean = new Proxy(bean, {
       get: (t, k: string) => t[k] ?? (k.startsWith("on") ? (cb: (...a: unknown[]) => void) => { listeners[k] = cb; } : async () => undefined),
@@ -148,6 +149,77 @@ describe("ChatWindow Home", () => {
     await click(homeRow());
     expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(1);
     await vi.waitFor(() => expect(savedPosts()).toEqual(["p2"]));
+  });
+
+  it("#961: a post landing in a shown Home shows the jump-down pill; its click appends, drains and clears it", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    await vi.waitFor(() => expect(savedPosts()).toEqual(["p1", "p2"]));
+    expect(root.querySelector(".bean-chat-sidebar-dot")).toBeNull();
+    expect(shownChat().querySelector(".bean-jump-down")).toBeNull();
+
+    // A post lands: the count goes up, the dot and the pill show; nothing is pushed into the chat.
+    const p3 = { id: "p3", sprout: "digest", body: "late one", createdAt: now };
+    await act(async () => { listeners.onTaskStatus!([{ id: "home:posts", kind: "home", count: 1 }]); });
+    await flush();
+    expect(root.querySelector(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).not.toBeNull();
+    const pill = shownChat().querySelector(".bean-jump-down");
+    expect(pill?.getAttribute("aria-label")).toBe("New posts");
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
+
+    // A failed load leaves the pill for the next click.
+    bean.chatThreadGet!.mockRejectedValueOnce(new Error("Not connected"));
+    await click(pill);
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
+    expect(shownChat().querySelector(".bean-jump-down")).not.toBeNull();
+
+    bean.chatThreadGet!.mockResolvedValueOnce(homeThread([p3]));
+    await click(shownChat().querySelector(".bean-jump-down"));
+    expect(shownChat().textContent).toContain("late one");
+    await vi.waitFor(() => expect(savedPosts()).toEqual(["p1", "p2", "p3"]));
+    // The drain recounts to zero: dot and pill go.
+    await act(async () => { listeners.onTaskStatus!([]); });
+    await flush();
+    expect(root.querySelector(".bean-chat-sidebar-dot")).toBeNull();
+    expect(shownChat().querySelector(".bean-jump-down")).toBeNull();
+  });
+
+  it("#961: picking Home again (bubble, banner) catches up; a failed save is retried there, not lost", async () => {
+    bean.chatThreadSave!.mockRejectedValueOnce(new Error("disk full"));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    await vi.waitFor(() => expect(bean.chatThreadSave).toHaveBeenCalledTimes(1));
+    const gets = bean.chatThreadGet!.mock.calls.length;
+    await act(async () => { listeners.onChatShowHome!(); });
+    await flush();
+    expect(bean.chatThreadGet!.mock.calls.length).toBe(gets + 1);
+    // Nothing new to append, but the posts never drained: the open saves them again.
+    await vi.waitFor(() => expect(bean.chatThreadSave).toHaveBeenCalledTimes(2));
+    expect(savedPosts()).toEqual(["p1", "p2"]);
+  });
+
+  it("#961: a failed Home restore isn't Home — the Home row retries it", async () => {
+    bean.chatThreadGet!.mockRejectedValueOnce(new Error("Not connected to me@box — reconnecting."));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    await vi.waitFor(() => expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull());
+    await click(homeRow());
+    expect(bean.chatThreadGet).toHaveBeenCalledTimes(2);
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).not.toBeNull();
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
+  });
+
+  it("#961: the Home row's dot follows the pending count, also beside another chat", async () => {
+    bean.homePending!.mockResolvedValueOnce(2);
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    expect(root.querySelector(".bean-chat-sidebar-home .bean-chat-sidebar-dot")?.getAttribute("aria-label")).toBe("New posts");
+    await act(async () => { listeners.onTaskStatus!([]); });
+    await flush();
+    expect(root.querySelector(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).toBeNull();
   });
 
   it("Home's Off the record opens a separate off-the-record chat; Home is never taken off the record", async () => {

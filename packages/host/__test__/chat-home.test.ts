@@ -10,13 +10,13 @@ import { buildChatThreadHandlers, HOME_TARGET } from "../src/chat.js";
 
 // Today's Home (#960) over a real bean.db: the host hands pending posts to the chat that opens it and
 // drains only those, with the save that holds them.
-function setup(at = new Date(2026, 10, 19, 12)) {
+function setup(at = new Date(2026, 10, 19, 12), onDrained = () => {}) {
   const dbFile = join(mkdtempSync(join(tmpdir(), "bean-home-")), "bean.db");
   const clock = { now: at };
   const threads = buildChatThreadHandlers({
     dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats,
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (f) => listPendingHomePosts(f, () => clock.now), saveDesktopChatDraining,
-    now: () => clock.now,
+    now: () => clock.now, onDrained,
   });
   const post = (body: string): string => insertHomePost(dbFile, { sprout: "digest", body }, undefined, () => clock.now);
   const pending = (): string[] => listPendingHomePosts(dbFile, () => clock.now).map((p) => p.id);
@@ -25,6 +25,17 @@ function setup(at = new Date(2026, 10, 19, 12)) {
 const posts = (...ids: string[]) => ids.map((postId) => ({ kind: "post", id: `i-${postId}`, postId, sprout: "digest", at: "x", text: "t" }));
 
 describe("Home thread", () => {
+  it("a draining save (only) recounts the bubble (#961)", () => {
+    let recounts = 0;
+    const { threads, post, home } = setup(undefined, () => { recounts++; });
+    const p1 = post("one");
+    threads.get("a", HOME_TARGET);
+    threads.save("a", { id: home, title: "Home", items: [] });
+    expect(recounts).toBe(0);
+    threads.save("a", { id: home, title: "Home", items: posts(p1) });
+    expect(recounts).toBe(1);
+  });
+
   it("opens as an empty thread with the pending posts, and the save holding them drains them", () => {
     const { threads, post, pending, home } = setup();
     const p1 = post("one");
