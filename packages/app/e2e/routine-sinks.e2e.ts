@@ -219,7 +219,7 @@ test("routines: Post to Home chat round-trips sinks.home and its unread timeout"
     await win.locator(".bean-routines-row", { hasText: "homey" }).click();
     await expect(win.getByLabel(ttl)).toHaveCount(0);
     await win.getByLabel("Post to Home chat").check();
-    await expect(win.locator(".bean-routines-digest-line")).toContainText("your Home chat");
+    await expect(win.locator(".bean-routines-digest-line")).toContainText("Posts a brief to your Home chat and a digest to your Daily Dashboard");
     await win.getByRole("button", { name: "Save sprout" }).click();
     await expect.poll(saved).toEqual({ note: true, home: {} });
     // Edit only once the save has settled, or its late "Saved ✓" lands on the edited draft.
@@ -234,6 +234,15 @@ test("routines: Post to Home chat round-trips sinks.home and its unread timeout"
     await win.getByRole("button", { name: "Save sprout" }).click();
     await expect.poll(saved).toEqual({ note: true, home: { ttlMinutes: 45 } });
     await expect(win.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+
+    // Malformed keyboard input ("-" reads as "" with badInput) is refused, never saved as "keep".
+    await win.getByLabel(ttl).selectText();
+    await win.keyboard.type("-");
+    await expect(win.getByLabel(ttl)).toBeFocused();
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect(win.locator(".bean-status--error")).toContainText("ttlMinutes must be a whole number");
+    expect(await saved()).toEqual({ note: true, home: { ttlMinutes: 45 } });
+    await win.getByLabel(ttl).fill("45");
 
     await win.getByRole("switch").click();
     await expect.poll(async () => (JSON.parse(await readFile(file, "utf8")) as { enabled: boolean }).enabled).toBe(true);

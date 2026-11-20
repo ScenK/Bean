@@ -3038,6 +3038,20 @@ describe("owner routines from chat (#285)", () => {
     await h.bot.onCardAction(tap("save-routine", card.proposalId), effects);
     expect(h.store).toEqual([{ ...routineJson, projects: ["/w/app", "/w/gone"], sinks: { ...(routineJson as Routine).sinks, home } }]);
   });
+
+  test("an owner's chat replacement never sets or changes sinks.home, whatever the draft carries", async () => {
+    const drafted = { ...routineJson, sinks: { ...routineJson.sinks, home: { ttlMinutes: 5 } } };
+    const replace = async (existing: Routine): Promise<Routine | undefined> => {
+      const h = setup(drafted, [existing]);
+      const effects = fx();
+      await h.bot.onMessage({ ...msg, text: "weekday 7am summary to Mia" }, effects);
+      await h.bot.onCardAction(tap("save-routine", (effects.cards.at(-1) as { proposalId: string }).proposalId), effects);
+      return h.store[0];
+    };
+    const saved = routineJson as Routine;
+    expect((await replace({ ...saved, sinks: { ...saved.sinks, home: { ttlMinutes: 30 } } }))?.sinks.home).toEqual({ ttlMinutes: 30 });
+    expect((await replace(saved))?.sinks).toEqual(routineJson.sinks);
+  });
 });
 
 // Note archive (#306): real bean.db notes, a model that proposes an archive on cue, real roles.

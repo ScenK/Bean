@@ -534,7 +534,10 @@ export function RoutinesPanel() {
     setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : rest });
   };
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
-  if (draft.sinks.home) sinkTargets.push("your Home chat");
+  // Home always gets the brief (chatopsVerbatim and only-on-problems are chatops-only), except a
+  // stepless run, which has nothing to brief and posts the digest.
+  const briefTargets = brief ? [...chatTargetList] : [];
+  if (draft.sinks.home) (stepless ? sinkTargets : briefTargets).push("your Home chat");
 
   const routineRow = (sectionKey: string, { routine: r, also, problems }: SproutRow) => (
     <div
@@ -1227,10 +1230,15 @@ export function RoutinesPanel() {
                 step={1}
                 class="bean-routines-pill-input"
                 aria-label="Drop the Home post if unread after this many minutes"
-                value={draft.sinks.home.ttlMinutes ?? ""}
+                // NaN = malformed text the user is still typing: leave the field's text alone.
+                value={Number.isNaN(draft.sinks.home.ttlMinutes) ? undefined : draft.sinks.home.ttlMinutes ?? ""}
                 onInput={(e) => {
-                  const v = (e.target as HTMLInputElement).value.trim();
-                  setDraft({ ...draft, sinks: { ...draft.sinks, home: v === "" ? {} : { ttlMinutes: Number(v) } } });
+                  const input = e.target as HTMLInputElement;
+                  const v = input.value.trim();
+                  // Malformed text ("-", "1e") reads as "" with badInput set: keep it invalid (NaN),
+                  // never as blank, or it would silently drop the expiry.
+                  const ttlMinutes = input.validity.badInput ? Number.NaN : v === "" ? undefined : Number(v);
+                  setDraft({ ...draft, sinks: { ...draft.sinks, home: ttlMinutes === undefined ? {} : { ttlMinutes } } });
                 }}
               />
               min
@@ -1332,8 +1340,8 @@ export function RoutinesPanel() {
         <div class="bean-routines-footer">
           <span class="bean-routines-digest-line">
             <span class="bean-routines-bean-chip" />
-            {brief
-              ? <span>Posts a brief to <b>{chatTargetList.join(", ")}</b>{sinkTargets.length > 0 ? <> and a digest to <b>{sinkTargets.join(", ")}</b></> : null}</span>
+            {briefTargets.length > 0
+              ? <span>Posts a brief to <b>{briefTargets.join(", ")}</b>{sinkTargets.length > 0 ? <> and a digest to <b>{sinkTargets.join(", ")}</b></> : null}</span>
               : sinkTargets.length > 0
                 ? <>Posts a digest to <b>{sinkTargets.join(", ")}</b></>
                 : "No digest sink — results stay in run history."}
