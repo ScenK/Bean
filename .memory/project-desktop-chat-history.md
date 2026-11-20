@@ -89,7 +89,10 @@ capped at 20k chars, the list at 500 items (oldest dropped — except the latest
 `DESKTOP_CHAT_MAX_BYTES`). User/reply items carry `at` (ISO, #977; kept only when it parses) and a user
 item the core's gap `marker` it went out under. **Time dividers** (`timeDividers`): above an item `at`
 3 h+ past the **newest** earlier `at` (a post lands later than its `at`), labelled with its absolute
-local time; no calendar-day rule, untimed (older) items never fire one. `restoreItems` remaps every id with `newId()` (a restored `item-3` would
+local time; no calendar-day rule, untimed (older) items never fire one; each post in a batch counts
+(later ones draw theirs inside the fold); `at` must be an ISO instant with a zone. A queued Bean turn
+(loopbacks) starts from an effect after the previous turn renders — `itemsRef` follows the render, so
+draining in `finally` sent history without that turn's reply/marker. `restoreItems` remaps every id with `newId()` (a restored `item-3` would
 collide with the new load's counter) and drops `source` from user turns, so restored turns are context
 only for memory extraction. A restored done delegate has no `taskId`, so no event can loop it back.
 

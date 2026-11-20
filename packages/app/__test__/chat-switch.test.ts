@@ -380,6 +380,33 @@ describe("ChatWindow switches chats in place", () => {
     expect(shownChat().textContent).toContain("it was cut off by a restart");
   });
 
+  it("a loopback queued behind a gap-marked turn sends that turn with its marker and reply (#977)", async () => {
+    const plan = { routine: "digest", action: "run", actionLine: "Runs its steps once now", resultsTo: "a note", paused: false, queuesNew: false };
+    const then = new Date(Date.now() - 5 * 3_600_000).toISOString();
+    bean.chatThreadGet!.mockResolvedValueOnce({
+      id: OTHER, title: "other chat", noteSlug: null,
+      items: [
+        { kind: "user", id: "item-0", text: "earlier", at: then },
+        { kind: "sprout", id: "item-1", plan, state: "running", jobId: "job1" },
+        { kind: "sprout", id: "item-2", plan, state: "running", jobId: "job2" },
+      ],
+      sprouts: [{ jobId: "job1", status: "ok", text: "first ✓" }, { jobId: "job2", status: "ok", text: "second ✓" }],
+    });
+    bean.chat!.mockResolvedValueOnce({ reply: "one", model: "m", gapMarker: "[— M —]" });
+    bean.chat!.mockResolvedValueOnce({ reply: "two", model: "m" });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await clickEl(otherRow());
+    await flush();
+    await vi.waitFor(() => expect(bean.chat).toHaveBeenCalledTimes(2));
+    const [first, second] = bean.chat!.mock.calls.map((c) => c[0] as { gap?: boolean; history: Array<{ role: string; content: string }> });
+    expect(first!.gap).toBe(true);
+    expect(second!.gap).toBeUndefined();
+    const marked = second!.history.findIndex((t) => t.content.startsWith("[— M —]\n[sprout result"));
+    expect(marked).toBeGreaterThanOrEqual(0);
+    expect(second!.history[marked + 1]).toMatchObject({ role: "assistant", content: "one" });
+  });
+
   it("a hidden chat that went idle is evicted at the next switch", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();

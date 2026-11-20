@@ -270,10 +270,13 @@ export function ChatPanel({
   const caps = useCapabilities();
   // A time divider (#977) above each item the chat resumed at after a quiet spell — restored chats too.
   const dividers = timeDividers(items);
-  const withDividers = (nodes: ComponentChildren[]): ComponentChildren[] => nodes.map((node, i) => {
-    const at = dividers.get(items[i]!.id);
-    return at ? [<div key={`gap-${items[i]!.id}`} class="bean-chat-divider">{dividerLabel(at)}</div>, node] : node;
-  });
+  const divider = (id: string): ComponentChildren => {
+    const at = dividers.get(id);
+    return at ? <div key={`gap-${id}`} class="bean-chat-divider">{dividerLabel(at)}</div> : null;
+  };
+  // An item that renders nothing (a batch's later post — drawn inside its fold) gets no divider here.
+  const withDividers = (nodes: ComponentChildren[]): ComponentChildren[] =>
+    nodes.map((node, i) => (node == null ? node : [divider(items[i]!.id), node]));
   // A remote core (#812): no terminal pane, and this machine's file paths mean nothing there.
   const pty = caps.has("pty");
   const localPaths = caps.has("pathOpen");
@@ -796,7 +799,7 @@ export function ChatPanel({
             // Drained together = one batch: its first post renders the whole fold, the rest nothing.
             const batch = it.batch === undefined ? [it] : items.filter((x): x is typeof it => x.kind === "post" && x.batch === it.batch);
             if (batch[0] !== it) return null;
-            const one = (p: typeof it) => (
+            const one = (p: typeof it) => [p === batch[0] ? null : divider(p.id), (
               <div key={p.id} class="bean-chat-row">
                 <span class="bean-chat-row-avatar"><AgentAvatar agent="bean" /></span>
                 <div class="bean-bubble bean-bubble--bean bean-post">
@@ -804,7 +807,7 @@ export function ChatPanel({
                   <Markdown text={p.text} />
                 </div>
               </div>
-            );
+            )];
             if (batch.length < 2) return one(it);
             return (
               <details key={it.id} class="bean-post-batch" open>

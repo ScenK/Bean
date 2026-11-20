@@ -399,20 +399,24 @@ describe("time dividers (#977)", () => {
     expect(resumesAfterGap([{ kind: "user", id: "x", text: "untimed" }], iso(0))).toBe(false);
   });
 
-  it("a batch of posts renders as one fold: only its first post can take a divider", () => {
-    const d = timeDividers([user("u1", 0), post("p1", 4 * H, "b"), post("p2", 8 * H, "b")]);
-    expect([...d.keys()]).toEqual(["p1"]);
+  it("each post in a batch counts on its own: a later post's long gap still gets a divider", () => {
+    const d = timeDividers([user("u1", 0), post("p1", 1 * H, "b"), post("p2", 9 * H, "b")]);
+    expect([...d.keys()]).toEqual(["p2"]);
   });
 
   it("at and marker survive save and restore, a malformed at is dropped, so restore shows the same dividers", () => {
     const items: ChatItem[] = [
       user("u1", 0), { kind: "user", id: "u2", text: "back", at: iso(4 * H), marker: "[— 2026-11-20 13:00 +00:00 —]" },
       { kind: "reply", id: "r2", text: "hi", at: "not a time" },
+      // Date.parse takes these, but they aren't instants: a bare number, a zone-less wall time.
+      { kind: "reply", id: "r3", text: "hi", at: "1" }, { kind: "reply", id: "r4", text: "hi", at: "2026-11-20T09:00:00" },
+      { kind: "user", id: "u5", text: "hi", at: "2026-11-20T09:00:00.000+05:30" },
     ];
     const saved = normalizeForSave(items);
     expect(saved[1]).toMatchObject({ at: iso(4 * H), marker: "[— 2026-11-20 13:00 +00:00 —]" });
-    expect(saved[2]).not.toHaveProperty("at");
-    const restored = restoreItems(JSON.parse(JSON.stringify(saved)));
+    for (const i of [2, 3, 4]) expect(saved[i]).not.toHaveProperty("at");
+    expect(saved[5]).toHaveProperty("at", "2026-11-20T09:00:00.000+05:30");
+    const restored = restoreItems(JSON.parse(JSON.stringify(saved.slice(0, 5))));
     expect([...timeDividers(restored).values()]).toEqual([iso(4 * H)]);
   });
 

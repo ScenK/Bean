@@ -416,6 +416,7 @@ export function ChatSession({
   const [beanTurn, setBeanTurnState] = useState<{ id: string; stopping?: boolean } | undefined>(undefined);
   const setBeanTurn = (t: { id: string; stopping?: boolean } | undefined): void => { beanTurnRef.current = t; setBeanTurnState(t); };
   const queuedSendsRef = useRef<QueuedSend[]>([]);
+  const [turnsSettled, setTurnsSettled] = useState(0);
   const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
   const delegateTaskIdsRef = useRef(new Map<string, string>());
   const pendingDelegateEventsRef = useRef(new Map<string, DelegateEvent[]>());
@@ -752,11 +753,16 @@ export function ChatSession({
       busyRef.current = false;
       setBusy(false);
       if (beanTurnRef.current?.id === turnId) setBeanTurn(undefined);
-      const next = queuedSendsRef.current.shift();
-      if (next) void sendMessage(next.text, next.display, true, undefined, next.source);
+      setTurnsSettled((n) => n + 1);
     }
   };
   sendRef.current = sendMessage;
+  // A queued turn starts only once the one before it has rendered: itemsRef follows the render, so its
+  // history then holds that turn's reply, summary and gap marker (#977).
+  useEffect(() => {
+    const next = queuedSendsRef.current.shift();
+    if (next) void sendRef.current(next.text, next.display, true, undefined, next.source);
+  }, [turnsSettled]);
 
   const addStatus = (text: string, tone: "info" | "done" | "error", details?: string[], id = newId()): void => {
     setItems((prev) => [...prev, { kind: "status", id, text, tone, ...(details?.length ? { details } : {}) }]);

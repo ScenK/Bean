@@ -62,6 +62,19 @@ describe("ChatWindow Home", () => {
   });
   afterEach(() => { render(null, root); document.body.innerHTML = ""; localStorage.clear(); });
 
+  it("a post in a batch that lands 3 h+ after everything before it gets its divider inside the fold (#977)", async () => {
+    const ago = (h: number): string => new Date(Date.now() - h * 3_600_000).toISOString();
+    bean.chatThreadGet!.mockResolvedValue({
+      ...homeThread([{ id: "p1", sprout: "digest", body: "early", createdAt: ago(9) }, { id: "p2", sprout: "inbox", body: "late", createdAt: ago(0) }]),
+      items: [{ kind: "user", id: "u", text: "morning", at: ago(10) }],
+    });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    expect(shownChat().querySelectorAll(".bean-chat-divider")).toHaveLength(1);
+    expect(shownChat().querySelector(".bean-post-batch .bean-chat-divider + .bean-chat-row")?.textContent).toContain("late");
+  });
+
   it("opens Home from the pinned row: posts appear once as one block, drain with the save, and start no turn", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();

@@ -20,9 +20,11 @@ const cap = (s: string): string => (s.length > THREAD_TEXT_MAX ? `${s.slice(0, T
 // A live agent's display is its progress prose ending in the final answer: keep the end.
 const capEnd = (s: string): string => (s.length > THREAD_TEXT_MAX ? `…${s.slice(-THREAD_TEXT_MAX)}` : s);
 const withPlaceholder = (text: string, had: boolean): string => (had ? `${text}\n${IMAGE_PLACEHOLDER}` : text);
-/** A saved `at` that parses as a time, or nothing — a bad one never reaches the divider rule. */
+// An instant, not a wall time: ISO with an explicit zone, so it means the same moment in any zone.
+const ISO_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+/** A saved `at` that is an ISO instant, or nothing — a bad one never reaches the divider rule. */
 const validAt = (at: unknown): { at?: string } =>
-  (typeof at === "string" && at.length <= 40 && !Number.isNaN(Date.parse(at)) ? { at } : {});
+  (typeof at === "string" && ISO_AT.test(at) && !Number.isNaN(Date.parse(at)) ? { at } : {});
 
 function normalizeItem(it: ChatItem): ChatItem | undefined {
   switch (it.kind) {
@@ -262,17 +264,14 @@ const atMs = (it: ChatItem): number => (it.kind === "user" || it.kind === "reply
 
 /** The time dividers (#977): item id → its `at`, for each item GAP_MS or more past the NEWEST
  * earlier timestamped item (not the one just above — a post lands later than its `at`). No earlier
- * time = no divider; a batch's later posts never get one (the batch renders as one fold). */
+ * time = no divider. Posts in a batch count one by one (ChatPanel draws theirs inside the fold). */
 export function timeDividers(items: readonly ChatItem[]): Map<string, string> {
   const out = new Map<string, string>();
   let newest = -Infinity;
-  const batches = new Set<string>();
   for (const it of items) {
     const t = atMs(it);
     if (Number.isNaN(t)) continue;
-    const inBatch = it.kind === "post" && it.batch !== undefined && batches.has(it.batch);
-    if (it.kind === "post" && it.batch !== undefined) batches.add(it.batch);
-    if (newest > -Infinity && t - newest >= GAP_MS && !inBatch) out.set(it.id, (it as { at: string }).at);
+    if (newest > -Infinity && t - newest >= GAP_MS) out.set(it.id, (it as { at: string }).at);
     newest = Math.max(newest, t);
   }
   return out;
