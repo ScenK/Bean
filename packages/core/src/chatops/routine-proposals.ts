@@ -20,6 +20,9 @@ export interface PendingRoutine {
   proposedById: string;
   /** false = an admin's draft: it saves switched off, create-only, and the owner gets a DM. */
   byOwner: boolean;
+  /** The owner's draft: the saved sprout of its name when the card was posted (JSON; absent = none).
+   * Save refuses once that changed, so a stale card never overwrites newer edits (#982). */
+  prior?: string;
   /** Where it was drafted (the conversation's display name), for the owner notice. */
   where?: string;
   cardActivityId?: string;

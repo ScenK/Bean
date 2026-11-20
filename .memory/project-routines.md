@@ -129,7 +129,8 @@ saved definition's JSON snapshot taken at card time — any edit in Sprouts mean
 `until`, then goes through the panel's own `routines.save` (lane/restore/rebase); a watch saves
 off, then `enableWatch` seeds it from now. No "Open in editor" button: selecting a sprout in an
 already-open Sprouts window needs a new open-target channel — cut, edit in Sprouts after saving.
-Chatops Save also refuses a draft whose `until` has passed.
+Chatops Save also refuses a draft whose `until` has passed, and an owner replacement refuses once
+the saved sprout changed since the card (`PendingRoutine.prior`, same JSON-snapshot rule).
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
 `stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
 never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.

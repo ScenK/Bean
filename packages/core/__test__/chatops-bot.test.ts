@@ -3096,6 +3096,17 @@ describe("owner routines from chat (#285)", () => {
     expect(h.store).toEqual([{ ...routineJson, projects: ["/w/app", "/w/gone"], sinks: { ...(routineJson as Routine).sinks, home } }]);
   });
 
+  test("an owner's replacement card refuses once the sprout was edited after it was posted (#982)", async () => {
+    const h = setup(routineJson, [{ ...(routineJson as Routine) }]);
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, text: "weekday 7am summary to Mia" }, effects);
+    const edited = { ...(routineJson as Routine), cron: "0 8 * * 1-5" };
+    h.store[0] = edited; // changed in desktop Sprouts while the card sat
+    await h.bot.onCardAction(tap("save-routine", (effects.cards.at(-1) as { proposalId: string }).proposalId), effects);
+    expect(h.store).toEqual([edited]);
+    expect(effects.posted.at(-1)).toMatch(/"mia-summary" changed since this card/);
+  });
+
   test("an owner's chat replacement never sets or changes sinks.home, whatever the draft carries", async () => {
     const drafted = { ...routineJson, sinks: { ...routineJson.sinks, home: { ttlMinutes: 5 } } };
     const replace = async (existing: Routine): Promise<Routine | undefined> => {

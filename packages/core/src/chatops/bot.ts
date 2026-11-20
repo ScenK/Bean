@@ -1444,12 +1444,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fail(nameTaken(name));
       return;
     }
+    const saved = createOnly ? undefined : (await r.load()).find((x) => x.name === name);
+    if (!createOnly && (saved === undefined ? undefined : JSON.stringify(saved)) !== pending.prior) {
+      await fail(`"${name}" changed since this card — ask me again`);
+      return;
+    }
     try {
       if (createOnly) await r.create(routine);
       else {
         // Replacing a sprout keeps its display-only "Listed under", and its Home sink is always the
         // saved one: Home is set only on the desktop, whatever the draft carries.
-        const saved = (await r.load()).find((x) => x.name === name);
         const next = saved?.projects && routine.projects === undefined ? { ...routine, projects: saved.projects } : routine;
         const { home: _draftHome, ...sinks } = next.sinks;
         await r.save({ ...next, sinks: saved?.sinks.home ? { ...sinks, home: saved.sinks.home } : sinks });
@@ -2401,7 +2405,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             const taken = (await deps.routines.load()).some((x) => x.name.toLowerCase() === name.toLowerCase());
             proposal = { ...proposal, routine: { ...proposal.routine, enabled: false }, ...(taken ? { problem: nameTaken(name) } : {}) };
           }
+          const target = isOwner ? (await deps.routines.load()).find((x) => x.name === String(proposal.routine.name)) : undefined;
           const pending = deps.routines.proposals.add({
+            ...(target ? { prior: JSON.stringify(target) } : {}),
             proposal, conversationId: msg.conversationId, proposedBy: msg.fromName,
             proposedById: msg.fromId, byOwner: isOwner, ...(msg.channelName ? { where: msg.channelName } : {}),
             ...(routineAuthoring?.channelId ? { channelId: routineAuthoring.channelId } : {}),
