@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ComponentChildren, RefObject } from "preact";
+import { Fragment, type ComponentChildren, type RefObject } from "preact";
 import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
@@ -7,6 +7,7 @@ import { SkillCard } from "./SkillCard.js";
 import { TodoCard } from "./TodoCard.js";
 import { SproutRunCard } from "./SproutRunCard.js";
 import { SendCard } from "./SendCard.js";
+import { RoutineDraftCard } from "./RoutineDraftCard.js";
 import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { TerminalPane, type TabShortcut } from "./TerminalPane.js";
@@ -16,6 +17,7 @@ import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGua
 import {
   HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, imageLabelNumbers, isLiveAgent, labelPreviews, mappedImageLabels, offerAgent, parseSlash, removeImageLabel, type ImageLabels,
 } from "./agent-mode.js";
+import { dividerLabel, timeDividers } from "./chat-thread.js";
 import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
 import { copyPath, useCapabilities } from "../../shared/capabilities.js";
@@ -126,6 +128,8 @@ export function ChatPanel({
   onSproutDismiss,
   onSendConfirm,
   onSendDismiss,
+  onRoutineDraftSave,
+  onRoutineDraftDismiss,
   onOfferStart,
   onOfferDismiss,
   onDelegateConfirm,
@@ -225,6 +229,8 @@ export function ChatPanel({
   onSproutDismiss: (id: string) => void;
   onSendConfirm: (id: string, optionId: string) => void;
   onSendDismiss: (id: string) => void;
+  onRoutineDraftSave: (id: string) => void;
+  onRoutineDraftDismiss: (id: string) => void;
   onOfferStart: (id: string) => void;
   onOfferDismiss: (id: string) => void;
   onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }) => void;
@@ -267,6 +273,17 @@ export function ChatPanel({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const caps = useCapabilities();
+  // A time divider (#977) above each item the chat resumed at after a quiet spell — restored chats too.
+  const dividers = timeDividers(items);
+  const divider = (id: string): ComponentChildren => {
+    const at = dividers.get(id);
+    return at ? <div key={`gap-${id}`} class="bean-chat-divider">{dividerLabel(at)}</div> : null;
+  };
+  // Each row and its divider in one fragment keyed by the item, so a trim of older rows never remounts
+  // (and resets) the rows kept. An item that renders nothing (a batch's later post — drawn inside its
+  // fold) gets no divider here.
+  const withDividers = (nodes: ComponentChildren[]): ComponentChildren[] =>
+    nodes.map((node, i) => (node == null ? node : <Fragment key={items[i]!.id}>{divider(items[i]!.id)}{node}</Fragment>));
   // A remote core (#812): no terminal pane, and this machine's file paths mean nothing there.
   const pty = caps.has("pty");
   const localPaths = caps.has("pathOpen");
@@ -691,7 +708,7 @@ export function ChatPanel({
             {localPaths ? <div class="bean-panel-empty-text">{MOD_LABEL}-click a link or path to open it</div> : null}
           </PanelEmptyState>
         ) : null}
-        {items.map((it, i) => {
+        {withDividers(items.map((it, i) => {
           if (it.kind === "user") {
             const bubble = (
               <div key={it.id} class="bean-bubble bean-bubble--user">
@@ -789,7 +806,7 @@ export function ChatPanel({
             // Drained together = one batch: its first post renders the whole fold, the rest nothing.
             const batch = it.batch === undefined ? [it] : items.filter((x): x is typeof it => x.kind === "post" && x.batch === it.batch);
             if (batch[0] !== it) return null;
-            const one = (p: typeof it) => (
+            const one = (p: typeof it) => <Fragment key={p.id}>{p === batch[0] ? null : divider(p.id)}{(
               <div key={p.id} class="bean-chat-row">
                 <span class="bean-chat-row-avatar"><AgentAvatar agent="bean" /></span>
                 <div class="bean-bubble bean-bubble--bean bean-post">
@@ -797,7 +814,7 @@ export function ChatPanel({
                   <Markdown text={p.text} />
                 </div>
               </div>
-            );
+            )}</Fragment>;
             if (batch.length < 2) return one(it);
             return (
               <details key={it.id} class="bean-post-batch" open>
@@ -886,6 +903,17 @@ export function ChatPanel({
               />
             );
           }
+          if (it.kind === "routine") {
+            return (
+              <RoutineDraftCard
+                key={it.id}
+                card={it.card}
+                state={it.state}
+                onSave={() => onRoutineDraftSave(it.id)}
+                onDismiss={() => onRoutineDraftDismiss(it.id)}
+              />
+            );
+          }
           if (it.kind === "sprout") {
             return (
               <SproutRunCard
@@ -954,7 +982,7 @@ export function ChatPanel({
               onCancel={() => onCancel(it.id)}
             />
           );
-        })}
+        }))}
       </div>
       {continued ? (
         <div class="bean-chat-continued" role="note">

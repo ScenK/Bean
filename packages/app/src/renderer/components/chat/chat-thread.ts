@@ -20,20 +20,29 @@ const cap = (s: string): string => (s.length > THREAD_TEXT_MAX ? `${s.slice(0, T
 // A live agent's display is its progress prose ending in the final answer: keep the end.
 const capEnd = (s: string): string => (s.length > THREAD_TEXT_MAX ? `…${s.slice(-THREAD_TEXT_MAX)}` : s);
 const withPlaceholder = (text: string, had: boolean): string => (had ? `${text}\n${IMAGE_PLACEHOLDER}` : text);
+// An instant, not a wall time: ISO with an explicit zone, so it means the same moment in any zone.
+const ISO_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+/** A saved `at` that is an ISO instant, or nothing — a bad one never reaches the divider rule. */
+const validAt = (at: unknown): { at?: string } =>
+  (typeof at === "string" && ISO_AT.test(at) && !Number.isNaN(Date.parse(at)) ? { at } : {});
 
 function normalizeItem(it: ChatItem): ChatItem | undefined {
   switch (it.kind) {
     case "working":
       return undefined;
     case "user": {
-      const { images, pdf, pending: _p, ...rest } = it;
+      const { images, pdf, pending: _p, at, marker, ...rest } = it;
       const text = withPlaceholder(it.text, !!images?.length);
-      return { ...rest, text: cap(pdf ? `${text}\n${pdfPlaceholder(pdf.name)}` : text), ...(it.display !== undefined ? { display: cap(it.display) } : {}) };
+      return {
+        ...rest, ...validAt(at), text: cap(pdf ? `${text}\n${pdfPlaceholder(pdf.name)}` : text),
+        ...(it.display !== undefined ? { display: cap(it.display) } : {}),
+        ...(typeof marker === "string" && marker.length <= 100 ? { marker } : {}),
+      };
     }
     case "reply": {
-      const { images, session: _s, tail: _t, streaming, ...rest } = it;
+      const { images, session: _s, tail: _t, streaming, at, ...rest } = it;
       return {
-        ...rest,
+        ...rest, ...validAt(at),
         text: cap(withPlaceholder(it.text, !!images?.length)),
         ...(it.display !== undefined ? { display: capEnd(it.display) } : {}),
         ...(streaming ? { footer: "— turn interrupted" } : {}),
@@ -62,6 +71,7 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
     case "offer":
       return it.state === "pending" ? { ...it, state: "expired" } : it;
     case "send": // main's pending proposal is gone after a reload
+    case "routine":
       return it.state === "pending" || it.state === "sending" ? { ...it, state: "expired" } : it;
     case "sprout":
       // An admitted run keeps its job id and stays running: the restore settles it from main's record
@@ -146,7 +156,7 @@ export function boundLive(items: ChatItem[], pending: ReadonlySet<string>): Chat
     : trimOldest(items, THREAD_ITEMS_MAX, (it) => unsettled(it) || (it.kind === "post" && pending.has(it.postId)));
 }
 
-const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot", "continued", "post", "summary"]);
+const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "routine", "status", "memory", "forgot", "continued", "post", "summary"]);
 
 /** A saved transcript back into the window: well-formed items only, normalized again, fresh ids (a
  * restored `item-3` would collide with this load's counter), and user turns stripped of `source` —
@@ -248,6 +258,35 @@ export function settleRestoredSprouts(
   }
   return { items: next, loopbacks, changed };
 }
+
+/** How long a quiet spell must be for the chat to mark where it resumed (#977). */
+export const GAP_MS = 3 * 60 * 60 * 1000;
+const atMs = (it: ChatItem): number => (it.kind === "user" || it.kind === "reply" || it.kind === "post") && it.at ? Date.parse(it.at) : NaN;
+
+/** The time dividers (#977): item id → its `at`, for each item GAP_MS or more past the NEWEST
+ * earlier timestamped item (not the one just above — a post lands later than its `at`). No earlier
+ * time = no divider. Posts in a batch count one by one (ChatPanel draws theirs inside the fold). */
+export function timeDividers(items: readonly ChatItem[]): Map<string, string> {
+  const out = new Map<string, string>();
+  let newest = -Infinity;
+  for (const it of items) {
+    const t = atMs(it);
+    if (Number.isNaN(t)) continue;
+    if (newest > -Infinity && t - newest >= GAP_MS) out.set(it.id, (it as { at: string }).at);
+    newest = Math.max(newest, t);
+  }
+  return out;
+}
+
+/** Whether a message made at `at`, after `earlier`, gets a divider — so Bean gets the gap marker. */
+export const resumesAfterGap = (earlier: readonly ChatItem[], at: string): boolean =>
+  timeDividers([...earlier, { kind: "user", id: "\0next", text: "", at }]).has("\0next");
+
+/** A divider's label, in the viewer's local time: absolute, never relative ("Thu, Nov 20 · 9:12 AM"). */
+export const dividerLabel = (at: string): string => {
+  const d = new Date(at);
+  return `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+};
 
 /** A Home post as a chat item. Posts drained together share `batch`. */
 export function postItem(p: { id: string; sprout: string; body: string; createdAt: string }, batch?: string): Extract<ChatItem, { kind: "post" }> {

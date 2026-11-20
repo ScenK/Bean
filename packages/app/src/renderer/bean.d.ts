@@ -8,7 +8,7 @@ import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveRes
 import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
 import type { InterruptedRunNotice } from "../ipc.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, RoutineBuildView, DestinationView, NameRawResult, SendResult } from "@bean/host";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, RoutineBuildView, DestinationView, NameRawResult, SendResult, RoutineDraftResult } from "@bean/host";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "../synced-chats.js";
 import type { DeskContinueReply, DeskContinueRequest } from "../desk-continue.js";
 import type { AliasResult } from "@bean/core";
@@ -252,6 +252,8 @@ declare global {
       destinationsNameRaw(surface: string, conversationId: string, alias: string): Promise<NameRawResult>;
       /** Confirms a propose_send card: queues its frozen body to the picked option. */
       sendToDestination(proposalId: string, optionId: string): Promise<SendResult>;
+      /** Saves a propose_routine card's draft, switched on (#982). */
+      routineDraftSave(id: string): Promise<RoutineDraftResult>;
       chatopsStart(bot: ChatopsBot): void;
       chatopsStop(bot: ChatopsBot): void;
       onChatopsEvent(cb: (e: ChatopsEvent) => void): void;

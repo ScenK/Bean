@@ -67,7 +67,7 @@ export function StepFlow(props: { steps: RoutineStep[]; lanes?: number[] }) {
                   <title>{label}</title>{clip(label, 12)}
                 </text>
               ) : null}
-              {cap ? <text class={`bean-flow-cap${edge.to === "stop" ? " bean-flow-cap--stop" : ""}`} x={cap.x} y={cap.y} text-anchor="middle">{edge.to === "stop" ? "■ stop" : "● end"}</text> : null}
+              {cap ? <text class={`bean-flow-cap${edge.to === "stop" ? " bean-flow-cap--stop" : ""}`} x={cap.x} y={cap.y} text-anchor="middle">{edge.to === "stop" ? "■ stop" : edge.to === "quiet" ? "○ quiet" : edge.to === "done" ? "✓ done" : "● end"}</text> : null}
             </g>
           );
         })}

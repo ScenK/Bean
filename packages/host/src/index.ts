@@ -19,6 +19,7 @@ export * from "./memory-digest.js";
 export * from "./notes.js";
 export * from "./remote.js";
 export * from "./routine-builder.js";
+export * from "./routine-drafts.js";
 export * from "./routines.js";
 export * from "./runtime-config.js";
 export * from "./shell-ops.js";

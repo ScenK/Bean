@@ -18,6 +18,11 @@ latest user.
   latest-turn-only images), so the prefix breaks only when the attached set changes.
 - **Recall** (`What you remember`, selection depends on `latestUserText`) — its own user
   message after history, before the trailing system message.
+- **Gap marker** (#977) — when the shell's divider rule fires for a desktop message it sends
+  `gap: true`; the host builds `gapMarkerLine` (core-local, locale-free) once, converse prefixes the
+  latest user message with it, and it rides back as `gapMarker` so the shell stores it on the user
+  item and `chatTurns` re-emits the exact same `marker\ntext`. Never rebuild it from a clock later.
+  Optional on the wire both ways (no contract bump): an older peer just sends no marker.
 - **Trailing context system message** — just before the latest user message: `Current date and
   time` and the chatops `roleNote`. New volatile *code-built* context belongs here.
 
