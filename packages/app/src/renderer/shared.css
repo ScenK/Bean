@@ -2719,6 +2719,7 @@ button, input, textarea, select, a {
   margin-left: 22px;
   font-size: 12px;
 }
+.bean-routines-home-ttl .bean-routines-pill-input { flex: none; width: 72px; min-width: 0; }
 .bean-routines-sink-group { display: flex; flex-direction: column; gap: 6px; }
 .bean-routines-sink-dest { display: flex; flex-direction: column; gap: 4px; }
 .bean-routines-sink-add {

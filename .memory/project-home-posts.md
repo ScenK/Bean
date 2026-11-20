@@ -1,7 +1,7 @@
 # Home posts (`home_posts`, `sinks.home`)
 
 Epic #958 (Home chat). Story #959 is the core half; #960 the Home thread and its drain; #961 the
-unread dot, the avatar bubble and the jump-down pill; the sprout-editor controls come later.
+unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor controls.
 
 - `sinks.home: { ttlMinutes? }` on a sprout → `deliverDigest` inserts **one** `home_posts` row per
   delivered run (core `home-posts.ts`). The body is the chat brief (`chatSinkBody`), built even when
@@ -67,3 +67,15 @@ unread dot, the avatar bubble and the jump-down pill; the sprout-editor controls
   avatar's plain open-chat when a fresh `homePending` read is positive) pushes `chatShowHome` to an
   open window and leaves `getPendingChatHome` for one still loading. Main also replays the job list
   once the avatar has loaded — boot jobs were otherwise pushed to nobody.
+
+## Sprout editor (#962)
+
+- "Post to Home chat" under DIGEST SINKS writes `sinks.home: {}`; the nested minutes field sets
+  `ttlMinutes` (blank = keep). An invalid number stays in the draft so core's
+  `describeRoutineError` refuses the save with its message — no renderer-side copy of the rule.
+  Malformed text ("-") reads as `""` with `validity.badInput`: it's stored as NaN, never as blank.
+- Every sink rewrite keeps `home`: `cleanChatSinks` and the panel's spreads, and an owner's chat
+  replacement of a sprout always takes it from the saved file, ignoring any `home` in the draft
+  (`bot.ts`; `propose_routine` parses JSON, so a draft can carry one). The builder brief can't set Home (`cleanSinks` drops it); turn it on in the editor.
+- Named in the builder review (`destinations()`), the run card's "results go to"
+  (`sprout-trigger.ts`) and the editor footer (as a brief target unless the sprout is stepless). e2e: `routine-sinks.e2e.ts`.
