@@ -80,6 +80,13 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
       return it.surface === "discord" && typeof it.conversationId === "string" && it.conversationId && typeof it.title === "string"
         ? { kind: "continued", id: it.id, surface: "discord", conversationId: it.conversationId.slice(0, 200), title: it.title.slice(0, 100) }
         : undefined;
+    case "post": // known fields only, like `continued`: sprout output never brings extra keys back
+      return typeof it.postId === "string" && typeof it.sprout === "string" && typeof it.at === "string" && typeof it.text === "string"
+        ? {
+          kind: "post", id: it.id, postId: it.postId.slice(0, 100), sprout: it.sprout.slice(0, 100), at: it.at.slice(0, 40), text: cap(it.text),
+          ...(typeof it.batch === "string" ? { batch: it.batch.slice(0, 100) } : {}),
+        }
+        : undefined;
   }
 }
 
@@ -93,7 +100,7 @@ export function normalizeForSave(items: readonly ChatItem[]): ChatItem[] {
   return out;
 }
 
-const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot", "continued"]);
+const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot", "continued", "post"]);
 
 /** A saved transcript back into the window: well-formed items only, normalized again, fresh ids (a
  * restored `item-3` would collide with this load's counter), and user turns stripped of `source` —
@@ -194,4 +201,17 @@ export function settleRestoredSprouts(
     if (r.loopback) loopbacks.push(r.loopback);
   }
   return { items: next, loopbacks, changed };
+}
+
+/** A Home post as a chat item. Posts drained together share `batch`. */
+export function postItem(p: { id: string; sprout: string; body: string; createdAt: string }, batch?: string): Extract<ChatItem, { kind: "post" }> {
+  return { kind: "post", id: newId(), postId: p.id, sprout: p.sprout, at: p.createdAt, text: cap(p.body), ...(batch ? { batch } : {}) };
+}
+
+/** Posts not already in the transcript (by post id), as items — one batch when there are several. */
+export function newPostItems(items: readonly ChatItem[], posts: ReadonlyArray<{ id: string; sprout: string; body: string; createdAt: string }>): ChatItem[] {
+  const held = new Set(items.flatMap((it) => (it.kind === "post" ? [it.postId] : [])));
+  const fresh = posts.filter((p) => !held.has(p.id));
+  const batch = fresh.length > 1 ? `batch-${fresh[0]!.id}` : undefined;
+  return fresh.map((p) => postItem(p, batch));
 }

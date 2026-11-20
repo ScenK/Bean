@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from "@playwright/t
 import { launchBean } from "./fixtures/launch-app.js";
 import { installFakeCli, makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
+import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, homeThreadId, insertHomePost, listPendingHomePosts, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
 import { join } from "node:path";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -673,5 +673,39 @@ test("continue in Discord: a continued chat is read-only and Open thread shows t
     await expect(synced.locator(".bean-chat-continue")).toHaveCount(0);
   } finally {
     await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
+
+// #960: sprout posts drain into today's Home when it's shown — once, with no model turn — and a
+// relaunch restores them from the transcript without draining them again.
+test("chat history: Home drains pending sprout posts once and restores them after a relaunch", async () => {
+  const home = await makeBeanHome({ autoMemory: false });
+  const stub = await startStubOpenAI(); // nothing queued: a model turn would fail the run
+  const env = { HOME: home.homeDir, OPENAI_BASE_URL: stub.url };
+  const file = dbFile(join(home.homeDir, ".bean"));
+  insertHomePost(file, { sprout: "digest", body: "3 PRs merged" });
+  insertHomePost(file, { sprout: "inbox", body: "2 new emails" });
+  let app = await launchBean(env);
+  try {
+    let chat = await openChat(app);
+    await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
+    await expect(chat.locator(".bean-post-batch summary")).toHaveText("While you were away · 2");
+    await expect(chat.locator(".bean-post")).toHaveCount(2);
+    await expect.poll(() => listPendingHomePosts(file).length).toBe(0);
+    const row = getDesktopChat(file, homeThreadId());
+    expect((JSON.parse(row!.itemsJson) as Array<{ kind: string }>).map((it) => it.kind)).toEqual(["post", "post"]);
+    // Pinned, not a dated row.
+    await expect(chat.locator(".bean-chat-sidebar-row")).toHaveCount(0);
+    await closeChat(app, chat);
+    await app.close();
+
+    app = await launchBean(env);
+    chat = await openChat(app);
+    await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
+    await expect(chat.locator(".bean-post")).toHaveCount(2);
+    await expect(chat.locator(".bean-post").first()).toContainText("3 PRs merged");
+    expect(stub.requests).toHaveLength(0);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });

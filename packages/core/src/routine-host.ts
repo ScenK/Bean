@@ -17,6 +17,7 @@ import { claimTodo, listTodos, updateTodoStatus, type TodoItem, type TodoStatus 
 import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine, type RoutineChatopsSink } from "./routine-store.js";
 import { listDestinations } from "./destinations.js";
 import { todoDispatchOrigins } from "./dispatch-store.js";
+import { insertHomePost } from "./home-posts.js";
 import type { RunOrigin } from "./routine-scheduler.js";
 import { stepGroups } from "./routine-graph.js";
 import {
@@ -64,8 +65,12 @@ export interface RoutineHostDeps {
   onStatus?: (e: RoutineHostStatus) => void;
   /** Desktop notification sink; absent = `sinks.notify` is skipped. `target` names the run, so a
    * click can open it (other hosts ignore it). */
-  notify?: (msg: { title: string; body: string; target?: { routine: string; startedAt: string } }) => Promise<void>;
+  notify?: (msg: { title: string; body: string; target?: { routine: string; startedAt: string }; home?: true }) => Promise<void>;
   newId?: () => string;
+  /** The scheduler lease: only its holder writes `sinks.home` posts. Absent = held. */
+  holdsLease?: () => boolean;
+  /** A `sinks.home` post was just inserted (#961): the host recounts its bubble. */
+  onHomePost?: () => void;
 }
 
 export interface RoutineHost {
@@ -221,11 +226,12 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
   /** What chat sinks post: an ok run summed up as one short brief in the persona's voice,
    * conclusion first (one model call over every step's output, shared by every chat sink). Brief
    * skipped = the final step's output as it is; the sprout asks for it, or nothing to brief = the
-   * full digest. Only the chat copy is rewritten: record, note and notification keep `result.digest`. */
-  const chatSinkBody = async (routine: Routine, result: RoutineRunResult): Promise<string> => {
+   * full digest. Only the chat copy is rewritten: record, note and notification keep `result.digest`.
+   * `verbatim` = chatops' `chatopsVerbatim`; the Home post always asks for the brief. */
+  const chatSinkBody = async (routine: Routine, result: RoutineRunResult, verbatim = routine.sinks.chatopsVerbatim === true): Promise<string> => {
     // Failed / needs-attention runs keep their problem lines out of a model; a stepless run
     // ("No pending todos", a notify-only watch fire) has nothing to brief.
-    if (routine.sinks.chatopsVerbatim === true || result.record.status !== "ok" || result.stopped || result.results.length === 0) {
+    if (verbatim || result.record.status !== "ok" || result.stopped || result.results.length === 0) {
       return result.digest;
     }
     let persona: Persona;
@@ -267,7 +273,22 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     });
     const asked = targets.length > 0 ? askedFrom(result, origin) : [];
     const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
+    const holds = (): boolean => deps.holdsLease?.() ?? true;
+    const home = routine.sinks.home !== undefined && holds() ? routine.sinks.home : undefined;
+    let posted = false;
     const chatBody = kept.length > 0 || brief ? await chatSinkBody(routine, result) : result.digest;
+    if (home) {
+      // chatopsVerbatim is chatops' rule: Home still gets the brief (a second call only then).
+      const homeBody = (kept.length > 0 || brief) && routine.sinks.chatopsVerbatim !== true ? chatBody : await chatSinkBody(routine, result, false);
+      // Re-checked after the brief's await: a lease lost meanwhile belongs to the new holder.
+      if (holds()) {
+        insertHomePost(dbFile(dir), {
+          sprout: routine.name, body: homeBody, ...(home.ttlMinutes !== undefined ? { ttlMinutes: home.ttlMinutes } : {}),
+        }, newId);
+        posted = true;
+        deps.onHomePost?.();
+      }
+    }
     for (const { sink, channel } of kept) {
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel, userId: sink.user,
@@ -281,6 +302,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       await deps.notify({
         title: `Sprout: ${routine.name}`, body: result.digest,
         target: { routine: routine.name, startedAt: result.record.startedAt },
+        // Posted to Home too: the banner opens Home (#961), where the post waits, not the Dashboard.
+        ...(posted ? { home: true as const } : {}),
       });
     }
     return brief ? chatBody : undefined;

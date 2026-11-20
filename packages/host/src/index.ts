@@ -23,3 +23,4 @@ export * from "./routines.js";
 export * from "./runtime-config.js";
 export * from "./shell-ops.js";
 export * from "./task-status.js";
+export * from "./home-bubble.js";

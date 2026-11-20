@@ -83,6 +83,8 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
 
 export function ChatPanel({
   hidden,
+  homePosts = false,
+  onHomePosts,
   mountId,
   inputRef,
   terminalOpen,
@@ -135,6 +137,7 @@ export function ChatPanel({
   onUnlink,
   incognito,
   onToggleIncognito,
+  home,
   continueButton,
   continued,
   onOpenContinued,
@@ -154,6 +157,10 @@ export function ChatPanel({
 }: {
   /** A chat kept mounted in the background while another one is shown. */
   hidden?: boolean;
+  /** Today's Home with posts pending (#961): the jump-down pill shows even at the bottom, and its
+   * click loads them. A failed load leaves the count, so the pill stays for the next click. */
+  homePosts?: boolean;
+  onHomePosts?: () => void;
   /** This chat's mount: its terminal pane's shell is keyed by it. */
   mountId: string;
   /** The composer, owned by ChatSession: an unsent draft keeps the chat mounted on a switch. */
@@ -231,6 +238,8 @@ export function ChatPanel({
   // Off the record: nothing from this chat is remembered at close.
   incognito: boolean;
   onToggleIncognito: () => void;
+  /** Today's Home (#960): its empty state, and Off the record opens a separate chat. */
+  home?: boolean;
   /** Continue in Discord's header button (ContinueDiscord), when this chat may offer it. */
   continueButton?: ComponentChildren;
   /** The thread this chat moved to: read-only, Open thread instead of a composer. */
@@ -652,7 +661,8 @@ export function ChatPanel({
           role="switch"
           class={`bean-chat-incognito${incognito ? " bean-chat-incognito--on" : ""}`}
           aria-checked={incognito}
-          title={incognito ? "This chat won't be remembered or kept in history" : "Off the record — also removes this chat from history."}
+          title={home ? "Home stays on the record — this opens a separate, off-the-record chat."
+            : incognito ? "This chat won't be remembered or kept in history" : "Off the record — also removes this chat from history."}
           onClick={onToggleIncognito}
         >
           <span class="bean-switch" aria-hidden="true" />
@@ -671,7 +681,11 @@ export function ChatPanel({
         </button> : null}
       </div>
       <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
-        {items.length === 0 ? (
+        {items.length === 0 && home ? (
+          <PanelEmptyState message="Home">
+            <div class="bean-panel-empty-text">Sprouts set to Post to Home land here.</div>
+          </PanelEmptyState>
+        ) : items.length === 0 ? (
           <PanelEmptyState message="What are we brewing today?">
             <div class="bean-panel-empty-text">Ask Bean to do something, or just say hi.</div>
             {localPaths ? <div class="bean-panel-empty-text">{MOD_LABEL}-click a link or path to open it</div> : null}
@@ -768,6 +782,27 @@ export function ChatPanel({
               <details key={it.id} class={`bean-status bean-status--${it.tone} bean-status--details`}>
                 <summary>{it.text} ▸</summary>
                 {it.details.map((d) => <div class="bean-status-detail">{d}</div>)}
+              </details>
+            );
+          }
+          if (it.kind === "post") {
+            // Drained together = one batch: its first post renders the whole fold, the rest nothing.
+            const batch = it.batch === undefined ? [it] : items.filter((x): x is typeof it => x.kind === "post" && x.batch === it.batch);
+            if (batch[0] !== it) return null;
+            const one = (p: typeof it) => (
+              <div key={p.id} class="bean-chat-row">
+                <span class="bean-chat-row-avatar"><AgentAvatar agent="bean" /></span>
+                <div class="bean-bubble bean-bubble--bean bean-post">
+                  <div class="bean-post-head">🌱 {p.sprout} · {new Date(p.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</div>
+                  <Markdown text={p.text} />
+                </div>
+              </div>
+            );
+            if (batch.length < 2) return one(it);
+            return (
+              <details key={it.id} class="bean-post-batch" open>
+                <summary>While you were away · {batch.length}</summary>
+                {batch.map(one)}
               </details>
             );
           }
@@ -927,8 +962,11 @@ export function ChatPanel({
         </div>
       ) : (
       <div class="bean-chat-input">
-        {showJump ? (
-          <button type="button" class="bean-jump-down" aria-label="Jump to latest" onClick={scrollToBottom}>
+        {showJump || homePosts ? (
+          <button
+            type="button" class="bean-jump-down" aria-label={homePosts ? "New posts" : "Jump to latest"}
+            onClick={() => { scrollToBottom(); if (homePosts) onHomePosts?.(); }}
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></svg>
           </button>
         ) : null}

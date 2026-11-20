@@ -414,6 +414,7 @@ describe("dashboard targets", () => {
     expect(notificationOpens({ open: "dashboard", target: { routine: "r", startedAt: at } })).toEqual({ kind: "dashboard", target: { routine: "r", startedAt: at } });
     expect(notificationOpens({ open: "dashboard", target: { routine: 1 } })).toEqual({ kind: "dashboard" });
     expect(notificationOpens({ open: "routines" })).toEqual({ kind: "routines" });
+    expect(notificationOpens({ open: "home" })).toEqual({ kind: "chat", home: true }); // #961
     expect(notificationOpens(undefined)).toEqual({ kind: "chat" });
   });
 });

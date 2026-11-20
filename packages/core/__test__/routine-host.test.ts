@@ -14,6 +14,7 @@ import { listStepAttempts } from "../src/step-attempts.js";
 import { saveSkillProposals } from "../src/retro.js";
 import { addTodo, claimTodo, listTodos } from "../src/todo-store.js";
 import { openDispatch } from "../src/dispatch-store.js";
+import { listPendingHomePosts } from "../src/home-posts.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bean-host-")); });
@@ -314,6 +315,60 @@ describe("createRoutineHost", () => {
       await deliver({ sinks: { ...sinks, chatopsOnlyOnProblems: true } });
       await deliver({ sinks: { note: true } });
       expect(calls).toHaveLength(0);
+    });
+
+    it("a home sink inserts one post holding the brief, even with no chat sink; no home sink inserts nothing", async () => {
+      const onHomePost = vi.fn();
+      const { h, calls, notify } = briefHost({ onHomePost });
+      const res = await h.runOneRoutine(routine([{ kind: "chat", instruction: "check" }]));
+      await h.deliverDigest(routine([{ kind: "chat", instruction: "check" }], { sinks: { note: true, notify: true } }), res);
+      expect(listPendingHomePosts(dbFile(dir))).toEqual([]);
+      expect(calls).toHaveLength(0);
+      expect(onHomePost).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenLastCalledWith(expect.not.objectContaining({ home: true }));
+      await h.deliverDigest(routine([{ kind: "chat", instruction: "check" }], { sinks: { note: true, notify: true, home: { ttlMinutes: 30 } } }), res);
+      const posts = listPendingHomePosts(dbFile(dir));
+      expect(posts).toHaveLength(1);
+      expect(posts[0]).toMatchObject({ sprout: "r", body: BRIEF });
+      expect(Date.parse(posts[0]!.expiresAt!) - Date.parse(posts[0]!.createdAt)).toBe(30 * 60_000);
+      expect(calls).toHaveLength(1);
+      expect(await posted()).toEqual([]);
+      expect((await loadNotes(dbFile(dir)))[0]?.body).toBe(REPORT);
+      // #961: the host recounts its bubble, and the banner opens Home, where the post waits.
+      expect(onHomePost).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ body: REPORT, home: true }));
+    });
+
+    it("chatopsVerbatim keeps the digest for chatops, but Home still gets the brief", async () => {
+      const { h, calls } = briefHost();
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { chatops: [{ transport: "discord" }], chatopsVerbatim: true, home: {} } });
+      await h.deliverDigest(r, await h.runOneRoutine(r));
+      expect((await posted()).map((m) => m.body)).toEqual([REPORT]);
+      expect(listPendingHomePosts(dbFile(dir)).map((p) => p.body)).toEqual([BRIEF]);
+      expect(calls).toHaveLength(1);
+    });
+
+    it("a lease lost while the brief is written inserts no home post", async () => {
+      let held = true;
+      const { h } = briefHost({ holdsLease: () => held });
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { home: {} } });
+      const res = await h.runOneRoutine(r);
+      const { h: losing } = briefHost({
+        holdsLease: () => held,
+        converse: async () => { held = false; return { content: BRIEF, toolCalls: [] }; },
+      });
+      await losing.deliverDigest(r, res);
+      expect(listPendingHomePosts(dbFile(dir))).toEqual([]);
+      held = true;
+      await h.deliverDigest(r, res);
+      expect(listPendingHomePosts(dbFile(dir))).toHaveLength(1);
+    });
+
+    it("a host without the scheduler lease writes no home post", async () => {
+      const { h } = briefHost({ holdsLease: () => false });
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { home: {} } });
+      await h.deliverDigest(r, await h.runOneRoutine(r));
+      expect(listPendingHomePosts(dbFile(dir))).toEqual([]);
     });
 
     it("a requested brief is the chat body, written even with no chat sink and posted nowhere", async () => {

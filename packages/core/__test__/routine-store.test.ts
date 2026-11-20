@@ -90,6 +90,16 @@ describe("Routine.projects (display only)", () => {
     await writeFile(join(dir, "morning-triage.json"), JSON.stringify(routine({ projects: [] })));
     expect(await loadRoutines(dir)).toEqual([routine()]);
   });
+  it("validates the home sink and round-trips it", async () => {
+    const dir = await tmp();
+    await saveRoutine(dir, routine({ sinks: { home: { ttlMinutes: 30 } } }));
+    expect((await loadRoutines(dir))[0]?.sinks).toEqual({ home: { ttlMinutes: 30 } });
+    await saveRoutine(dir, routine({ sinks: { home: {} } }));
+    expect((await loadRoutines(dir))[0]?.sinks).toEqual({ home: {} });
+    for (const home of [true, null, [], { ttlMinutes: 0 }, { ttlMinutes: 1.5 }, { ttlMinutes: "5" }, { ttlMinutes: 200000000000 }]) {
+      expect(describeRoutineError({ ...routine(), sinks: { home } })).toMatch(/home sink/);
+    }
+  });
   it("strict load throws on an unreadable dir, but a missing dir is still []", async () => {
     const dir = await tmp();
     await writeFile(join(dir, "file"), "x");
