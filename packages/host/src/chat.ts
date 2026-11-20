@@ -60,6 +60,7 @@ export interface ChatHandlerDeps {
 export function buildChatHandler(deps: ChatHandlerDeps) {
   // signal = the turn's Stop (registerIpc's per-mount controller); converse() then resolves `stopped`.
   return async (req: ChatRequest, clientId?: ClientId, mountId?: string, signal?: AbortSignal): Promise<ConverseResult> => {
+    const arrived = new Date(); // the gap marker's time (#977): when the message came, not after compaction
     // The renderer's imageFileGuard is UX only; main re-checks before anything reaches OpenAI (#733).
     if (req.images !== undefined) checkImageAttachments(req.images);
     // Renderer input is untrusted: a spoofed (non-%PDF-) or oversize document fails the turn here.
@@ -109,7 +110,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     const compacted = await compactHistory(req.history, req.summary, { chat: deps.converse, model: deps.getModel() }, signal);
     // The shell says a long gap came before this message (#977); the time is the core's, which a
     // remote shell can't know. It rides back so the shell keeps it on the turn, frozen.
-    const gapMarker = req.gap === true ? gapMarkerLine(new Date()) : undefined;
+    const gapMarker = req.gap === true ? gapMarkerLine(arrived) : undefined;
     const result = await converse({
       history: compacted.history,
       latestUserText: req.message,

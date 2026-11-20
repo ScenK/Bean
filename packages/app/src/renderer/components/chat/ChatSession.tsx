@@ -750,8 +750,12 @@ export function ChatSession({
       setItems((prev) => [...prev.filter((it) => it.id !== workingId), { kind: "status", id: newId(), text: `Failed to reach Bean.${why}`, tone: "error" }]);
       setStatus("error");
     } finally {
-      busyRef.current = false;
-      setBusy(false);
+      // A queued turn keeps the chat busy until the effect below hands it off, so nothing sent
+      // meanwhile overtakes it.
+      if (queuedSendsRef.current.length === 0) {
+        busyRef.current = false;
+        setBusy(false);
+      }
       if (beanTurnRef.current?.id === turnId) setBeanTurn(undefined);
       setTurnsSettled((n) => n + 1);
     }
@@ -761,7 +765,10 @@ export function ChatSession({
   // history then holds that turn's reply, summary and gap marker (#977).
   useEffect(() => {
     const next = queuedSendsRef.current.shift();
-    if (next) void sendRef.current(next.text, next.display, true, undefined, next.source);
+    if (!next) return;
+    busyRef.current = false;
+    setBusy(false); // the send below takes the turn straight back (or leaves it free if it sends nothing)
+    void sendRef.current(next.text, next.display, true, undefined, next.source);
   }, [turnsSettled]);
 
   const addStatus = (text: string, tone: "info" | "done" | "error", details?: string[], id = newId()): void => {

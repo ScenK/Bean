@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ComponentChildren, RefObject } from "preact";
+import { Fragment, type ComponentChildren, type RefObject } from "preact";
 import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
@@ -274,9 +274,11 @@ export function ChatPanel({
     const at = dividers.get(id);
     return at ? <div key={`gap-${id}`} class="bean-chat-divider">{dividerLabel(at)}</div> : null;
   };
-  // An item that renders nothing (a batch's later post — drawn inside its fold) gets no divider here.
+  // Each row and its divider in one fragment keyed by the item, so a trim of older rows never remounts
+  // (and resets) the rows kept. An item that renders nothing (a batch's later post — drawn inside its
+  // fold) gets no divider here.
   const withDividers = (nodes: ComponentChildren[]): ComponentChildren[] =>
-    nodes.map((node, i) => (node == null ? node : [divider(items[i]!.id), node]));
+    nodes.map((node, i) => (node == null ? node : <Fragment key={items[i]!.id}>{divider(items[i]!.id)}{node}</Fragment>));
   // A remote core (#812): no terminal pane, and this machine's file paths mean nothing there.
   const pty = caps.has("pty");
   const localPaths = caps.has("pathOpen");
@@ -799,7 +801,7 @@ export function ChatPanel({
             // Drained together = one batch: its first post renders the whole fold, the rest nothing.
             const batch = it.batch === undefined ? [it] : items.filter((x): x is typeof it => x.kind === "post" && x.batch === it.batch);
             if (batch[0] !== it) return null;
-            const one = (p: typeof it) => [p === batch[0] ? null : divider(p.id), (
+            const one = (p: typeof it) => <Fragment key={p.id}>{p === batch[0] ? null : divider(p.id)}{(
               <div key={p.id} class="bean-chat-row">
                 <span class="bean-chat-row-avatar"><AgentAvatar agent="bean" /></span>
                 <div class="bean-bubble bean-bubble--bean bean-post">
@@ -807,7 +809,7 @@ export function ChatPanel({
                   <Markdown text={p.text} />
                 </div>
               </div>
-            )];
+            )}</Fragment>;
             if (batch.length < 2) return one(it);
             return (
               <details key={it.id} class="bean-post-batch" open>

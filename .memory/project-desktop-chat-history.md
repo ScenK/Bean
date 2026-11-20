@@ -92,7 +92,9 @@ item the core's gap `marker` it went out under. **Time dividers** (`timeDividers
 local time; no calendar-day rule, untimed (older) items never fire one; each post in a batch counts
 (later ones draw theirs inside the fold); `at` must be an ISO instant with a zone. A queued Bean turn
 (loopbacks) starts from an effect after the previous turn renders — `itemsRef` follows the render, so
-draining in `finally` sent history without that turn's reply/marker. `restoreItems` remaps every id with `newId()` (a restored `item-3` would
+draining in `finally` sent history without that turn's reply/marker; the chat stays busy until that hand-off,
+so a new send can't overtake it. ChatPanel wraps each row (+ divider) in a `Fragment` keyed by item id —
+unkeyed wrappers remount every kept row when a trim drops older ones. `restoreItems` remaps every id with `newId()` (a restored `item-3` would
 collide with the new load's counter) and drops `source` from user turns, so restored turns are context
 only for memory extraction. A restored done delegate has no `taskId`, so no event can loop it back.
 

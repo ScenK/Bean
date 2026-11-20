@@ -407,6 +407,22 @@ describe("ChatWindow switches chats in place", () => {
     expect(second!.history[marked + 1]).toMatchObject({ role: "assistant", content: "one" });
   });
 
+  it("trimming older rows keeps the kept rows mounted, so their state survives (#977)", async () => {
+    const facts = (tag: string) => Array.from({ length: 300 }, (_, i) => ({ text: `${tag} ${i}` }));
+    bean.chat!.mockResolvedValueOnce({ reply: "filler", model: "m", remembered: facts("early") });
+    bean.chat!.mockResolvedValueOnce({ reply: "keep me", model: "m" });
+    bean.chat!.mockResolvedValueOnce({ reply: "more", model: "m", remembered: facts("late") });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("one");
+    await send("two");
+    const kept = [...shownChat().querySelectorAll(".bean-bubble--bean")].find((b) => b.textContent?.includes("keep me"))!;
+    await send("three"); // past THREAD_ITEMS_MAX + slack: the oldest rows go
+    await flush();
+    expect(shownChat().textContent).not.toContain("early 0");
+    expect(kept.isConnected).toBe(true);
+  });
+
   it("a hidden chat that went idle is evicted at the next switch", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
