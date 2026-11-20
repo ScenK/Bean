@@ -12,7 +12,7 @@ import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { makeBackgroundWorkTool } from "../background-work.js";
 import type { Dispatch } from "../dispatch-store.js";
-import { chatRoutineProblem, isArchived, isExpired, todoRunHint, untilLabel, type Routine } from "../routine-store.js";
+import { chatRoutineProblem, draftNames, isArchived, isExpired, todoRunHint, untilLabel, type Routine } from "../routine-store.js";
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
@@ -1444,7 +1444,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (createOnly) await r.create(routine);
       else {
         // Replacing a sprout keeps its display-only "Listed under", and its Home sink is always the
-        // saved one: Home is set only in the desktop's sprout editor, whatever the draft carries.
+        // saved one: Home is set only on the desktop, whatever the draft carries.
         const saved = (await r.load()).find((x) => x.name === name);
         const next = saved?.projects && routine.projects === undefined ? { ...routine, projects: saved.projects } : routine;
         const { home: _draftHome, ...sinks } = next.sinks;
@@ -2066,11 +2066,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ]);
         // Owner only: who a routine may DM, and the existing names a draft would replace. A channel
         // sink targets the channel, never the session thread (threads archive).
+        const draftable = deps.routines && can(role, "routineDrafts") && isOwner ? draftNames(await deps.routines.load(), new Date()) : undefined;
         const routineAuthoring = deps.routines && can(role, "routineDrafts")
           ? {
               transport: deps.routines.transport,
               // Admins draft new routines only, so they never see (or target) the catalog.
-              existing: isOwner ? (await deps.routines.load()).map((r) => r.name) : [],
+              existing: draftable?.existing ?? [],
+              ...(draftable ? { listed: { live: draftable.live, archived: draftable.archived } } : {}),
               recipients: await deps.routines.recipients(),
               ...(msg.direct || !msg.scopeId ? {} : { channelId: msg.scopeId }),
               cliModels: deps.cliModels,
@@ -2382,6 +2384,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           if (!(await permitted("routineDrafts", "set up sprouts"))) return;
           if (!deps.routines || !deps.cards.routineProposalCard) return;
           let proposal = result.proposedRoutine;
+          // Home is the desktop's: a chat draft never carries a Home sink, whoever drafts it (the
+          // owner's replacement keeps the saved one at Save).
+          const draftSinks = proposal.routine.sinks as unknown;
+          if (typeof draftSinks === "object" && draftSinks !== null && "home" in draftSinks) {
+            const { home: _home, ...sinks } = draftSinks as Routine["sinks"];
+            proposal = { ...proposal, routine: { ...proposal.routine, sinks } };
+          }
           if (!isOwner && !proposal.problem) {
             // An admin's draft starts off, and a name clash is shown up front ("Can't save").
             const name = String(proposal.routine.name);

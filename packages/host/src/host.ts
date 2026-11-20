@@ -38,6 +38,7 @@ import { startBots, type HostBotsOptions } from "./bots.js";
 import { buildNotesHandlers } from "./notes.js";
 import { createRoutineBuilder } from "./routine-builder.js";
 import { buildRoutineHandlers } from "./routines.js";
+import { buildRoutineDraftHandlers } from "./routine-drafts.js";
 import type { ClientId, HostPush } from "./shell-ops.js";
 import { createRoutineBubbles, createTaskStatus, type TaskJob } from "./task-status.js";
 import { createHomeBubble } from "./home-bubble.js";
@@ -441,6 +442,14 @@ export async function createHost(deps: HostDeps) {
     dbFile: db, listDestinations: (file) => listDestinations(file), destinationLabel, matchDestination,
     enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID), newId: randomUUID,
   });
+  // propose_routine's desktop card (#982). Saves go through the Sprouts panel's own save (bound late:
+  // `handlers` is built below) so restore, rebase and the per-sprout lane apply the same way.
+  const routineDrafts = buildRoutineDraftHandlers({
+    loadRoutines: () => loadRoutines(routinesPath),
+    save: (r) => handlers.routines.save(r),
+    enableWatch: (name) => routineScheduler.enableWatch(name, false),
+    cliModels: () => cliModels, destinations: () => listDestinations(db), newId: randomUUID,
+  });
   // The running turn per chat (mount id), so image progress can find its bubble.
   const chatTurnIds = new Map<string, string>();
   const paths = {
@@ -468,6 +477,8 @@ export async function createHost(deps: HostDeps) {
     todoAhead: (r) => pendingTodoCount(db, r),
     backgroundWork: { stateFile: routineStateFile(dir), running: liveSprouts, threadsOf: (k) => threadsOfChat?.(k) ?? [] },
     proposeSend: sends.propose,
+    // Local chats only: a remote shell has no Sprouts panel to save or edit into.
+    routineDrafts: (clientId) => (attachments.isClient(clientId) ? undefined : routineDrafts),
     imageGen: {
       generate: (a) => makeOpenAIImageGen(runtime.getApiKey())(a),
       // ponytail: imageModel read at boot; move into runtime-config if a Settings field ever exists
@@ -569,6 +580,7 @@ export async function createHost(deps: HostDeps) {
     models: buildModelsHandler({ getAvailableClis: enabledClis, getCliModels: () => cliModels }),
     modelMemory: buildModelMemoryHandlers({ loadModelMemory, saveModelMemory, modelMemoryFile: modelMemoryFile(dir) }),
     sends,
+    routineDrafts,
     skillProposals: buildSkillProposalHandlers({ loadSkills: loadLayeredSkills, projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), dbFile: db }),
     routines: buildRoutineHandlers({
       loadRoutines: () => loadRoutines(routinesPath),

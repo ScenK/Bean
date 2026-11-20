@@ -8,8 +8,9 @@ import { categoriesBlock } from "./memory/extract.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 import { isLiveCli, type LiveCli } from "./live-session.js";
-import { chatRoutineProblem, type Routine } from "./routine-store.js";
+import { chatRoutineProblem, withDefaultUntil, COMMITMENT_DAYS, type Routine } from "./routine-store.js";
 import type { Destination, SendCard } from "./destinations.js";
+import type { RoutineDraftCard } from "./chatops/routine-proposals.js";
 import type { CliModels } from "./cli-models.js";
 import type { SproutRunPlan } from "./sprout-trigger.js";
 
@@ -111,11 +112,16 @@ export interface ProposedSkill { name: string; body: string; updating: boolean; 
  * validation: the card shows why and offers no Save. */
 export interface ProposedRoutine { routine: Routine; updating: boolean; problem?: string; }
 /** What propose_routine needs: who a routine may DM, the names it would replace, and the chat's
- * own channel id (absent in a DM). Offered only when set — chatops sets it for the owner. */
+ * own channel id (absent in a DM). Offered only when set — chatops sets it for the owner and
+ * admins, the desktop host for a local chat (#982). */
 export interface RoutineAuthoring {
-  /** The surface drafting it: the only transport its chatops sinks may use (#320). */
-  transport: "discord" | "teams";
+  /** The surface drafting it: the only transport its chatops sinks may use (#320); "desktop" = the
+   * owner's own machine (Home sink, the owner's DMs). */
+  transport: "discord" | "teams" | "desktop";
+  /** Every sprout name, archived ones too: a draft reusing one replaces it (`updating`). */
   existing: string[];
+  /** What the tool text lists (core `draftNames`, sorted); absent = `existing`, no archived line. */
+  listed?: { live: string[]; archived: string[] };
   recipients: { id: string; name: string }[];
   channelId?: string;
   cliModels?: CliModels[];
@@ -190,6 +196,9 @@ export interface ConverseResult {
   /** The confirm card for proposedSend — set by the desktop handler (matched destinations), never
    * by converse() itself. */
   sendCard?: SendCard;
+  /** The confirm card for proposedRoutine — set by the desktop handler (it keeps the draft for the
+   * Save), never by converse() itself. */
+  routineDraft?: RoutineDraftCard;
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
   /** A new rolling summary of the desktop chat (#975), covering the request's first `covers`
@@ -464,25 +473,43 @@ function proposeSproutRunTool(sprouts: SproutCatalogEntry[]): ToolSpec {
 }
 
 // One JSON-string argument: the routine shape is too deep for a reliable nested tool schema, and
-// converse() validates it with the store's own validator anyway. Stable per chat (prefix caching).
+// converse() validates it with the store's own validator anyway. Stable per chat (prefix caching):
+// only the sprout names (and the archived set) may change it, never the clock.
 function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
   const people = a.recipients.map((p) => `${p.name} (${p.id})`).join(", ");
+  const desktop = a.transport === "desktop";
   const discord = a.transport === "discord";
+  const live = a.listed?.live ?? a.existing;
+  const archived = a.listed?.archived ?? [];
+  const sinks = desktop
+    ? '"sinks": {"home"?: {} (posts each result to the owner\'s Home chat), "note"?: true, "notify"?: true (desktop ' +
+      'notification), "chatops"?: [{"transport": "discord" or "teams"}] (DMs the owner there)}}. Deliver to Home unless the ' +
+      "owner asks for somewhere else. "
+    : `"sinks": {"chatops"?: [{"transport": "${a.transport}", ` + (discord ? '"user"?: id, ' : "") + '"channel"?: id}], ' +
+      '"note"?: true}}. A chatops sink with ' + (discord ? "neither user nor channel" : "no channel") + " DMs the owner; " +
+      (discord ? `"user" DMs one of: ${people || "nobody else"}; ` : "") + '"channel" posts in a channel' +
+      (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". ";
   return {
     name: "propose_routine",
     description:
-      "Draft a scheduled sprout for the owner to confirm — a new one, or a replacement for an " +
-      "existing one (reuse its name). Write the complete sprout as one JSON object: " +
-      '{"name": kebab-case, "description"?: text, "enabled": true, "cron": 5-field cron in local time ' +
+      "Draft a sprout for the owner to confirm — a new one, or a replacement for an existing one " +
+      "(reuse its name). Write the complete sprout as one JSON object: " +
+      '{"name": kebab-case, "description"?: text, "enabled": true, and either "cron": 5-field cron in local time ' +
       '(e.g. "0 7 * * 1-5" = weekdays 7:00; for "every N days" pick weekdays, e.g. "0 9 * * 1,4", since a ' +
-      'day-of-month step like */3 restarts on the 1st), "todoDriven"?: true to run once per queued todo, ' +
-      '"steps": [{"kind": "chat", "instruction": ..., "skill"?: ...} or {"kind": "delegate", "skill": ..., ' +
-      `"project"?: path, "instruction": ...}], "sinks": {"chatops"?: [{"transport": "${a.transport}", ` +
-      (discord ? '"user"?: id, ' : "") + '"channel"?: id}], "note"?: true}}. A chatops sink with ' +
-      (discord ? "neither user nor channel" : "no channel") + " DMs the owner; " +
-      (discord ? `"user" DMs one of: ${people || "nobody else"}; ` : "") + '"channel" posts in a channel' +
-      (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". " +
-      (a.existing.length > 0 ? `Existing sprouts: ${a.existing.join(", ")}. ` : "") +
+      'day-of-month step like */3 restarts on the 1st) or "watch": {"kind": "feed", "url": RSS/Atom feed URL} ' +
+      '(each new feed item runs the steps once, so a feed watch needs "todoDriven": true), "until"?: "YYYY-MM-DD" ' +
+      '(the last day it runs), "webSearch"?: true (its chat steps may search the public web), "todoDriven"?: true ' +
+      'to run once per queued todo, "steps": [{"kind": "chat", "id"?: kebab-case, "instruction": ..., "skill"?: ..., ' +
+      '"route"?: {"paths": [{"when": label, "goto": target}, ...]}} or {"kind": "delegate", "skill": ..., ' +
+      '"project"?: path, "instruction": ...}], ' + sinks +
+      "A watch commitment (\"tell me when X is out\", \"let me know if Y happens\") is one chat step that checks and " +
+      'ends with a route: {"paths": [{"when": "found", "goto": "done"}, {"when": "nothing", "goto": "quiet"}]} — ' +
+      '"done" tells the owner and ends the sprout, "quiet" ends that check without a message. Watch a feed when the ' +
+      "thing has one (the step judges each new item); otherwise a daily cron with webSearch: true. Put the owner's " +
+      "own words and today's date in description. Set until only to an end the owner named — with none, it stops " +
+      `after ${COMMITMENT_DAYS} days. Command steps and command watches can't be set up from chat. ` +
+      (live.length > 0 ? `Existing sprouts: ${live.join(", ")}. ` : "") +
+      (archived.length > 0 ? `Archived sprouts (reusing a name replaces it): ${archived.join(", ")}. ` : "") +
       "Nothing is saved until the card is confirmed. " +
       "The user calls these sprouts; this tool's name is internal — always say sprout.",
     parameters: {
@@ -717,7 +744,7 @@ export interface ConverseInput {
   noteArchiveAvailable?: boolean;
   /** Per-turn guidance about the speaker's role (chatops); rides the trailing system message. */
   roleNote?: string;
-  /** Offer propose_routine (chatops, owner only). */
+  /** Offer propose_routine (chatops owner/admins; the desktop host for a local chat). */
   routineAuthoring?: RoutineAuthoring;
   /** Offer propose_send (default false — the desktop; the surface resolves the name). */
   sendAvailable?: boolean;
@@ -1066,6 +1093,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(routineCall, "the sprout must be one JSON object with a name.");
         continue;
       }
+      // A commitment the owner gave no end stops after COMMITMENT_DAYS — dated here, on the core's
+      // clock, so the card shows the real date.
+      parsed = withDefaultUntil(parsed, now());
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.
       const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId, routineAuthoring.destinations);
       return card({

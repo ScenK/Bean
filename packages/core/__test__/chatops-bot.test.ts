@@ -2975,6 +2975,16 @@ describe("owner routines from chat (#285)", () => {
     expect(h.notices[0]).toMatch(/Say `enable mia-summary` to turn it on\.$/);
   });
 
+  test("a forged Home sink on an admin's draft is neither shown nor saved (#982)", async () => {
+    const h = setup({ ...channelJson, sinks: { ...channelJson.sinks, home: { ttlMinutes: 5 } } });
+    const effects = fx();
+    await h.bot.onMessage(adminMsg(), effects);
+    const card = effects.cards[0] as { proposalId: string; sinks: string[] };
+    expect(card.sinks).not.toContain("Home");
+    await h.bot.onCardAction(tap("save-routine", card.proposalId, "ada"), effects);
+    expect(h.store).toEqual([{ ...channelJson, enabled: false }]);
+  });
+
   test("an admin never sees the catalog and can't replace a routine, in any case", async () => {
     const existing = { ...(channelJson as Routine), name: "Mia-Summary", enabled: true };
     const h = setup(channelJson, [existing]);

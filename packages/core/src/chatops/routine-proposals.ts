@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ProposedRoutine } from "../converse.js";
 import { parseCron } from "../cron.js";
-import { memberTodoEligible, watchEveryMinutes, type Routine, type RoutineStep } from "../routine-store.js";
+import { isArchived, memberTodoEligible, routesToDone, stopsLabel, watchEveryMinutes, type Routine, type RoutineStep } from "../routine-store.js";
 import type { Project } from "../types.js";
 import { sproutProblems, sproutProjects, type SproutProblem } from "../usage-sections.js";
 import type { RoutineProposalCardInput } from "./cards-api.js";
@@ -128,6 +128,7 @@ export function describeSinks(
       : s.channel === undefined ? `DM ${ownerName}`
         : s.channel === channelId ? (s.transport === "teams" ? "This chat" : "This channel")
           : s.transport === "teams" ? s.channel : `<#${s.channel}>`);
+  if (r.sinks.home) out.unshift("Home");
   if (r.sinks.note) out.push("Saved as a note");
   if (r.sinks.notify) out.push("Desktop notification");
   return out.length > 0 ? out : ["Nowhere — results are only kept in the run history"];
@@ -160,16 +161,64 @@ export function routineCardInput(
   if (problem) return { ...base, schedule: "", steps: [], sinks: [], problem };
   const shared = (r.sinks.chatops?.length ?? 0) > 0;
   const warnings = scheduleWarnings(r);
+  const stops = stopsLabel(r);
   return {
     ...base,
     ...(r.description ? { description: r.description } : {}),
-    schedule: describeSchedule(r),
+    schedule: `${describeSchedule(r)}${stops ? ` · stops ${stops}` : ""}`,
     steps: r.steps.map(describeStep),
     sinks: describeSinks(r, people, ownerName, p.channelId),
     ...(memberTodoEligible(r) && shared
       ? { todoNote: "Members can queue todos on this — one digest covers everyone's todos and goes to every destination above." }
       : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+/** How a desktop draft relates to the saved sprout of its name (#982): absent = a new sprout. */
+export type DraftReplaces = "live" | "paused" | "archived";
+
+/** The desktop's propose_routine card (#982), pre-rendered to plain lines. The host keeps the
+ * draft itself: Save hands back only `id`. */
+export interface RoutineDraftCard {
+  id: string;
+  name: string;
+  /** The owner's ask and its date, as the draft recorded it (`description`, clipped). */
+  ask?: string;
+  /** True when it stops on its own once it finds the answer (a `done` route). */
+  commitment: boolean;
+  /** When it checks, then one line per step. */
+  how: string[];
+  tellYou: string[];
+  /** "Dec 20, 2026, or sooner if found"; absent = it runs until turned off. */
+  stops?: string;
+  replaces?: DraftReplaces;
+  /** Validation failure: shown instead of Save. */
+  problem?: string;
+}
+
+/** What saving `name` would replace: the saved sprout of exactly that name, by state. */
+export function draftReplaces(name: string, routines: Routine[], now: Date): DraftReplaces | undefined {
+  const prior = routines.find((r) => r.name === name);
+  if (!prior) return undefined;
+  return isArchived(prior, now) ? "archived" : prior.enabled ? "live" : "paused";
+}
+
+export function routineDraftCard(
+  id: string, proposal: ProposedRoutine, replaces: DraftReplaces | undefined,
+): RoutineDraftCard {
+  const { routine: r, problem } = proposal;
+  const base = { id, name: String(r.name), ...(replaces ? { replaces } : {}) };
+  // An invalid draft can be any shape: show only its name and the reason.
+  if (problem) return { ...base, commitment: false, how: [], tellYou: [], problem };
+  const stops = stopsLabel(r);
+  return {
+    ...base,
+    ...(r.description ? { ask: clip(r.description, 300) } : {}),
+    commitment: routesToDone(r),
+    how: [describeSchedule(r), ...r.steps.map(describeStep), ...(r.webSearch ? ["Searches the public web"] : [])],
+    tellYou: describeSinks(r, [], "you"),
+    ...(stops ? { stops } : {}),
   };
 }
 

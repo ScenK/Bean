@@ -93,6 +93,7 @@ export {
   appendRunRecord, chatRoutineProblem, createRoutine, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, memberTodoEligible, resolveTodoRoutine, saveRoutine, todoRunHint, saveRoutineStates, usesGates,
   resolveSinkAlias, sinkAliasProblems, untilTime, untilLabel, hasEnded, isArchived, isExpired, endReason, ARCHIVE_GRACE_DAYS,
+  routesToDone, withDefaultUntil, stopsLabel, draftNames, COMMITMENT_DAYS,
 } from "./routine-store.js";
 export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate, StepKind, StepRoute,
