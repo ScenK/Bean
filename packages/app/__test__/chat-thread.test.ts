@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_LIVE_SLACK, TRIM_NOTICE, boundLive, applySproutEnd, newPostItems, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive, chatTurns, modelHistory, placeSummary } from "../src/renderer/components/chat/agent-mode.js";
@@ -183,6 +183,19 @@ describe("normalizeForSave", () => {
 
 describe("boundLive (#976)", () => {
   const rows = (n: number, from = 0): ChatItem[] => Array.from({ length: n }, (_, i): ChatItem => ({ kind: "status", id: `s${from + i}`, text: `${from + i}`, tone: "info" }));
+  it("returns the same array once nothing more can go, and never serializes (no byte limit)", () => {
+    const stuck = Array.from({ length: THREAD_ITEMS_MAX + THREAD_LIVE_SLACK + 5 }, (_, i): ChatItem => ({ kind: "working", id: `w${i}`, text: "x" }));
+    const spy = vi.spyOn(JSON, "stringify");
+    try {
+      expect(boundLive(stuck, new Set())).toBe(stuck);
+      const once = boundLive([...stuck, ...rows(10)], new Set());
+      expect(once[0]).toMatchObject({ text: TRIM_NOTICE });
+      expect(boundLive(once, new Set())).toBe(once);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
   it("leaves a transcript within the slack alone", () => {
     const items = rows(THREAD_ITEMS_MAX + THREAD_LIVE_SLACK);
     expect(boundLive(items, new Set())).toBe(items);

@@ -99,8 +99,9 @@ const isTrimNotice = (it: ChatItem): boolean => it.kind === "status" && it.text 
 
 /** Drops the oldest items to at most `max` (and `maxBytes` as JSON) — never one `keep` holds, nor the
  * latest summary (#975), which stands for what was dropped. Once anything is dropped (now, or by an
- * earlier trim: `items` holds the notice), TRIM_NOTICE leads, counted in both bounds. */
-function trimOldest(items: readonly ChatItem[], max: number, keep: (it: ChatItem) => boolean, maxBytes = Infinity): ChatItem[] {
+ * earlier trim: `items` holds the notice), TRIM_NOTICE leads, counted in both bounds. `items` itself
+ * when nothing can go, so a caller can tell "no change"; no byte limit = never serialized. */
+function trimOldest(items: ChatItem[], max: number, keep: (it: ChatItem) => boolean, maxBytes = Infinity): ChatItem[] {
   const had = items.some(isTrimNotice);
   const all = items.filter((it) => !isTrimNotice(it));
   const s = all.findLastIndex((it) => it.kind === "summary");
@@ -113,8 +114,10 @@ function trimOldest(items: readonly ChatItem[], max: number, keep: (it: ChatItem
   let drop = Math.min(droppable.length, all.length + (had ? 1 : 0) > max ? all.length + 1 - max : 0);
   const bytes = (xs: ChatItem[]): number => new TextEncoder().encode(JSON.stringify(xs)).length;
   // ponytail: re-encodes per drop of a tenth; fine at ≤500 items.
-  while (drop < droppable.length && bytes(view(drop)) > maxBytes) drop = Math.min(droppable.length, drop + Math.max(1, Math.floor((droppable.length - drop) / 10)));
-  return view(drop);
+  while (maxBytes < Infinity && drop < droppable.length && bytes(view(drop)) > maxBytes) drop = Math.min(droppable.length, drop + Math.max(1, Math.floor((droppable.length - drop) / 10)));
+  // Nothing dropped and the notice (if any) already one line on top: unchanged.
+  const same = drop === 0 && (!had || (isTrimNotice(items[0]!) && all.length === items.length - 1));
+  return same ? items : view(drop);
 }
 
 /** The transcript as it is saved: transient state dropped, actions made inert, each text capped, at
