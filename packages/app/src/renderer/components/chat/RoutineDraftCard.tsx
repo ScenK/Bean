@@ -11,18 +11,16 @@ export function draftReplaceLine(card: Pick<RoutineDraft, "name" | "replaces">):
 }
 
 /** propose_routine confirm card (#982): what Bean watches for, how, where it tells you and when it
- * stops. Main keeps the draft; Save / Open in editor hand back only the card id. */
+ * stops. Main keeps the draft; Save hands back only the card id. Edits happen in Sprouts after. */
 export function RoutineDraftCard({
   card,
   state,
   onSave,
-  onEdit,
   onDismiss,
 }: {
   card: RoutineDraft;
   state: RoutineDraftState;
   onSave: () => void;
-  onEdit: () => void;
   onDismiss: () => void;
 }) {
   const open = state === "pending";
@@ -55,15 +53,6 @@ export function RoutineDraftCard({
       <div class="bean-card-actions">
         <button type="button" class="bean-btn" disabled={!open || card.problem !== undefined} onClick={onSave}>
           {state === "sending" ? "Saving…" : state === "saved" ? "Saved" : "Save"}
-        </button>
-        <button
-          type="button"
-          class="bean-btn bean-btn--ghost"
-          disabled={!open || card.problem !== undefined}
-          title="Saves it switched off, then opens Sprouts"
-          onClick={onEdit}
-        >
-          Open in editor
         </button>
         <button type="button" class="bean-btn bean-btn--ghost" disabled={!open} onClick={onDismiss}>
           {state === "dismissed" ? "Cancelled" : state === "expired" ? "Expired" : "Cancel"}

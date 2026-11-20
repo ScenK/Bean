@@ -123,11 +123,13 @@ sorted live names + the 10 most recently archived (`draftNames`) so the spec sta
 never the clock. `updating` matches every name, archived too. A draft routing to `done` with no
 `until` gets `COMMITMENT_DAYS` (30) from converse's clock (`withDefaultUntil`); plain schedules get
 none. Chatops strips any draft `sinks.home` before the card (Home is desktop-only). Desktop card
-authority = the send-card pattern: the host keeps the draft, the renderer returns only id + `save`|
-`edit`; Save re-checks `chatRoutineProblem(…, "desktop")`, the replace target (`draftReplaces`:
-live/paused/archived — must match the card) and `until`, then goes through the panel's own
-`routines.save` (lane/restore/rebase); a watch saves off, then `enableWatch` seeds it from now.
-"Open in editor" = save switched off + open Sprouts (no unsaved-draft hand-off to the editor).
+authority = the send-card pattern: the host keeps the draft, the renderer returns only the id.
+Save re-checks `chatRoutineProblem(…, "desktop")`, the replace target (`draftReplaces` state AND the
+saved definition's JSON snapshot taken at card time — any edit in Sprouts meanwhile refuses) and
+`until`, then goes through the panel's own `routines.save` (lane/restore/rebase); a watch saves
+off, then `enableWatch` seeds it from now. No "Open in editor" button: selecting a sprout in an
+already-open Sprouts window needs a new open-target channel — cut, edit in Sprouts after saving.
+Chatops Save also refuses a draft whose `until` has passed.
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
 `stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
 never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.

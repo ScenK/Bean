@@ -33,15 +33,15 @@ describe("desktop sprout drafts (#982)", () => {
     const s = setup();
     const card = await s.propose(cron);
     expect(card).toMatchObject({ id: "d1", name: "album", stops: "Dec 20, 2026, or sooner if found", tellYou: ["Home"] });
-    expect(await s.h.save("d1", "save")).toEqual({ ok: true, name: "album", enabled: true });
+    expect(await s.h.save("d1")).toEqual({ ok: true, name: "album" });
     expect(s.store).toEqual([cron]);
-    expect(await s.h.save("d1", "save")).toEqual({ ok: false, error: expect.stringMatching(/expired/) });
+    expect(await s.h.save("d1")).toEqual({ ok: false, error: expect.stringMatching(/expired/) });
   });
 
   test("a feed watch saves off, then is seeded from now and turned on", async () => {
     const s = setup();
     await s.propose(feed);
-    expect(await s.h.save("d1", "save")).toMatchObject({ ok: true, enabled: true });
+    expect(await s.h.save("d1")).toEqual({ ok: true, name: "album" });
     expect(s.save).toHaveBeenCalledWith({ ...feed, enabled: false });
     expect(s.enableWatch).toHaveBeenCalledWith("album");
     expect(s.store[0]).toMatchObject({ enabled: true, until: "2026-12-20", sinks: { home: {} } });
@@ -51,23 +51,23 @@ describe("desktop sprout drafts (#982)", () => {
     const s = setup();
     s.enableWatch.mockRejectedValueOnce(new Error("feed down"));
     await s.propose(feed);
-    expect(await s.h.save("d1", "save")).toEqual({ ok: false, error: expect.stringMatching(/switched off — couldn't check its feed: feed down/) });
+    expect(await s.h.save("d1")).toEqual({ ok: false, error: expect.stringMatching(/switched off — couldn't check its feed: feed down/) });
     expect(s.store[0]?.enabled).toBe(false);
   });
 
-  test("Open in editor saves it off, never seeding", async () => {
-    const s = setup();
-    await s.propose(feed);
-    expect(await s.h.save("d1", "edit")).toEqual({ ok: true, name: "album", enabled: false });
-    expect(s.enableWatch).not.toHaveBeenCalled();
-    expect(s.store[0]?.enabled).toBe(false);
+  test("a replacement whose saved definition changed after the card refuses, even in the same state", async () => {
+    const s = setup([{ ...cron, enabled: true }]);
+    expect((await s.propose({ ...cron, cron: "0 8 * * *" })).replaces).toBe("live");
+    s.store[0] = { ...cron, enabled: true, sinks: { note: true } }; // edited in Sprouts meanwhile
+    expect(await s.h.save("d1")).toEqual({ ok: false, error: '"album" changed since this card — ask me again.' });
+    expect(s.save).not.toHaveBeenCalled();
   });
 
   test("reusing an archived name shows as a replacement and keeps the saved Listed under", async () => {
     const s = setup([{ ...cron, enabled: false, until: "2026-10-01", projects: ["/p/app"] }]);
     expect((await s.propose(cron)).replaces).toBe("archived");
     expect((await s.propose({ ...cron, name: "Album" })).problem).toMatch(/"album" already exists/);
-    expect(await s.h.save("d1", "save")).toMatchObject({ ok: true });
+    expect(await s.h.save("d1")).toMatchObject({ ok: true });
     expect(s.store).toEqual([{ ...cron, projects: ["/p/app"] }]);
   });
 
@@ -75,21 +75,20 @@ describe("desktop sprout drafts (#982)", () => {
     const s = setup();
     await s.propose(cron);
     s.store.push({ ...cron, enabled: true });
-    expect(await s.h.save("d1", "save")).toEqual({ ok: false, error: '"album" changed since this card — ask me again.' });
+    expect(await s.h.save("d1")).toEqual({ ok: false, error: '"album" changed since this card — ask me again.' });
     const late = setup();
     await late.propose({ ...cron, until: "2026-11-19" });
-    expect(await late.h.save("d1", "save")).toEqual({ ok: false, error: expect.stringMatching(/end date has passed/) });
+    expect(await late.h.save("d1")).toEqual({ ok: false, error: expect.stringMatching(/end date has passed/) });
     const bad = setup();
     await bad.propose({ ...cron, sinks: { chatops: [{ transport: "discord", user: "x" }] } });
-    expect(await bad.h.save("d1", "save")).toEqual({ ok: false, error: expect.stringMatching(/post to Home or DM you/) });
-    expect(await bad.h.save("d1", "bogus")).toEqual({ ok: false, error: "Unknown action." });
+    expect(await bad.h.save("d1")).toEqual({ ok: false, error: expect.stringMatching(/post to Home or DM you/) });
     expect(bad.save).not.toHaveBeenCalled();
   });
 
   test("a draft that failed validation never saves", async () => {
     const s = setup();
     expect((await s.propose(cron, "bad cron")).problem).toBe("bad cron");
-    expect(await s.h.save("d1", "save")).toEqual({ ok: false, error: "bad cron" });
+    expect(await s.h.save("d1")).toEqual({ ok: false, error: "bad cron" });
     expect(s.save).not.toHaveBeenCalled();
   });
 

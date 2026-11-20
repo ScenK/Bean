@@ -2985,6 +2985,15 @@ describe("owner routines from chat (#285)", () => {
     expect(h.store).toEqual([{ ...channelJson, enabled: false }]);
   });
 
+  test("a draft whose end date has already passed isn't saved (#982)", async () => {
+    const h = setup({ ...channelJson, until: "2020-01-01" });
+    const effects = fx();
+    await h.bot.onMessage(adminMsg(), effects);
+    await h.bot.onCardAction(tap("save-routine", (effects.cards[0] as { proposalId: string }).proposalId, "ada"), effects);
+    expect(h.store).toEqual([]);
+    expect(effects.posted.at(-1)).toMatch(/Couldn't save the sprout: its end date has passed/);
+  });
+
   test("an admin never sees the catalog and can't replace a routine, in any case", async () => {
     const existing = { ...(channelJson as Routine), name: "Mia-Summary", enabled: true };
     const h = setup(channelJson, [existing]);

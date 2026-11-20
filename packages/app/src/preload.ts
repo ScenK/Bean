@@ -228,8 +228,7 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.destinationsNameRaw, surface, conversationId, alias),
   sendToDestination: (proposalId: string, optionId: string): Promise<SendResult> =>
     ipcRenderer.invoke(IPC.sendToDestination, proposalId, optionId),
-  routineDraftSave: (id: string, mode: "save" | "edit"): Promise<RoutineDraftResult> =>
-    ipcRenderer.invoke(IPC.routineDraftSave, id, mode),
+  routineDraftSave: (id: string): Promise<RoutineDraftResult> => ipcRenderer.invoke(IPC.routineDraftSave, id),
   chatopsStart: (bot: ChatopsBot): void => ipcRenderer.send(IPC.chatopsStart, bot),
   chatopsStop: (bot: ChatopsBot): void => ipcRenderer.send(IPC.chatopsStop, bot),
   onChatopsEvent: (cb: (e: ChatopsEvent) => void) =>

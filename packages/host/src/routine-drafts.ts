@@ -4,10 +4,10 @@ import {
 } from "@bean/core";
 
 // propose_routine on the desktop (#982): the card is the owner's one-tap confirm of a sprout Bean
-// drafted. The host keeps each draft (as checked when the card was built); the renderer hands back
-// only the card id and Save or Open in editor, so it can't change what gets saved.
+// drafted. The host keeps each draft (as checked when the card was built) and the saved definition
+// it would replace; the renderer hands back only the card id, so it can't change what gets saved.
 
-export type RoutineDraftResult = { ok: true; name: string; enabled: boolean } | { ok: false; error: string };
+export type RoutineDraftResult = { ok: true; name: string } | { ok: false; error: string };
 
 export interface RoutineDraftDeps {
   loadRoutines: () => Promise<Routine[]>;
@@ -21,7 +21,13 @@ export interface RoutineDraftDeps {
   now?: () => Date;
 }
 
-interface PendingDraft { routine: Routine; replaces: DraftReplaces | undefined; problem?: string }
+/** `prior` = the replaced sprout's definition when the card was built: Save refuses once it changed. */
+interface PendingDraft { routine: Routine; replaces: DraftReplaces | undefined; prior: string | undefined; problem?: string }
+
+const snapshot = (name: string, routines: Routine[]): string | undefined => {
+  const r = routines.find((x) => x.name === name);
+  return r === undefined ? undefined : JSON.stringify(r);
+};
 
 /** Unconfirmed cards kept here; the oldest is dropped past this (its Save then says so). */
 const PENDING_DRAFTS_MAX = 20;
@@ -53,16 +59,15 @@ export function buildRoutineDraftHandlers(deps: RoutineDraftDeps) {
       const checked = other ? { ...proposal, problem: `a sprout named "${other}" already exists — pick another name` } : proposal;
       const replaces = draftReplaces(name, routines, now());
       const id = deps.newId();
-      pending.set(id, { routine: checked.routine, replaces, ...(checked.problem ? { problem: checked.problem } : {}) });
+      pending.set(id, { routine: checked.routine, replaces, prior: snapshot(name, routines), ...(checked.problem ? { problem: checked.problem } : {}) });
       while (pending.size > PENDING_DRAFTS_MAX) pending.delete(pending.keys().next().value!);
       return routineDraftCard(id, checked, replaces);
     },
-    /** Save = on (a watch seeded from now); "edit" = saved off for the Sprouts editor. Everything
-     * the card showed is checked again first: the draft, its end date and what it replaces. */
-    save: async (id: unknown, mode: unknown): Promise<RoutineDraftResult> => {
+    /** Saves it on (a watch seeded from now). Everything the card showed is checked again first:
+     * the draft, its end date, and the sprout it replaces (its state and its whole definition). */
+    save: async (id: unknown): Promise<RoutineDraftResult> => {
       const p = typeof id === "string" ? pending.get(id) : undefined;
       if (!p) return { ok: false, error: EXPIRED };
-      if (mode !== "save" && mode !== "edit") return { ok: false, error: "Unknown action." };
       if (p.problem) return { ok: false, error: p.problem };
       const name = p.routine.name;
       const routines = await deps.loadRoutines();
@@ -71,15 +76,14 @@ export function buildRoutineDraftHandlers(deps: RoutineDraftDeps) {
       if (problem) return { ok: false, error: problem };
       const other = clash(name, routines);
       if (other) return { ok: false, error: `a sprout named "${other}" already exists — pick another name` };
-      if (draftReplaces(name, routines, at) !== p.replaces) return { ok: false, error: `"${name}" changed since this card — ask me again.` };
+      if (draftReplaces(name, routines, at) !== p.replaces || snapshot(name, routines) !== p.prior) return { ok: false, error: `"${name}" changed since this card — ask me again.` };
       if (hasEnded(p.routine, at)) return { ok: false, error: "Its end date has passed — ask me again with a later one." };
       pending.delete(id as string);
-      const enabled = mode === "save";
       // A replacement keeps its display-only "Listed under" (as chatops does).
       const prior = routines.find((r) => r.name === name);
       const draft = prior?.projects && p.routine.projects === undefined ? { ...p.routine, projects: prior.projects } : p.routine;
       try {
-        if (draft.watch && enabled) {
+        if (draft.watch) {
           // Saved off, then seeded from now: items already in the feed aren't news.
           await deps.save({ ...draft, enabled: false });
           try {
@@ -88,13 +92,13 @@ export function buildRoutineDraftHandlers(deps: RoutineDraftDeps) {
             return { ok: false, error: `Saved "${name}" switched off — couldn't check its feed: ${err instanceof Error ? err.message : String(err)}` };
           }
         } else {
-          await deps.save({ ...draft, enabled });
+          await deps.save({ ...draft, enabled: true });
         }
       } catch (err) {
         pending.set(id as string, p); // nothing was saved: the card can try again
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
-      return { ok: true, name, enabled };
+      return { ok: true, name };
     },
   };
 }

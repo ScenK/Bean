@@ -252,8 +252,8 @@ declare global {
       destinationsNameRaw(surface: string, conversationId: string, alias: string): Promise<NameRawResult>;
       /** Confirms a propose_send card: queues its frozen body to the picked option. */
       sendToDestination(proposalId: string, optionId: string): Promise<SendResult>;
-      /** Saves a propose_routine card's draft (#982): "save" = on, "edit" = off, for the Sprouts editor. */
-      routineDraftSave(id: string, mode: "save" | "edit"): Promise<RoutineDraftResult>;
+      /** Saves a propose_routine card's draft, switched on (#982). */
+      routineDraftSave(id: string): Promise<RoutineDraftResult>;
       chatopsStart(bot: ChatopsBot): void;
       chatopsStop(bot: ChatopsBot): void;
       onChatopsEvent(cb: (e: ChatopsEvent) => void): void;

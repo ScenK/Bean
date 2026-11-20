@@ -229,7 +229,7 @@ export function ChatPanel({
   onSproutDismiss: (id: string) => void;
   onSendConfirm: (id: string, optionId: string) => void;
   onSendDismiss: (id: string) => void;
-  onRoutineDraftSave: (id: string, mode: "save" | "edit") => void;
+  onRoutineDraftSave: (id: string) => void;
   onRoutineDraftDismiss: (id: string) => void;
   onOfferStart: (id: string) => void;
   onOfferDismiss: (id: string) => void;
@@ -909,8 +909,7 @@ export function ChatPanel({
                 key={it.id}
                 card={it.card}
                 state={it.state}
-                onSave={() => onRoutineDraftSave(it.id, "save")}
-                onEdit={() => onRoutineDraftSave(it.id, "edit")}
+                onSave={() => onRoutineDraftSave(it.id)}
                 onDismiss={() => onRoutineDraftDismiss(it.id)}
               />
             );

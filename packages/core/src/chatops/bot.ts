@@ -12,7 +12,7 @@ import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { makeBackgroundWorkTool } from "../background-work.js";
 import type { Dispatch } from "../dispatch-store.js";
-import { chatRoutineProblem, draftNames, isArchived, isExpired, todoRunHint, untilLabel, type Routine } from "../routine-store.js";
+import { chatRoutineProblem, draftNames, hasEnded, isArchived, isExpired, todoRunHint, untilLabel, type Routine } from "../routine-store.js";
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
@@ -1431,6 +1431,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const problem = pending.proposal.problem ?? chatRoutineProblem(routine, r.transport, recipients, deps.cliModels, pending.channelId, r.destinations?.());
     if (problem) {
       await fail(problem);
+      return;
+    }
+    if (hasEnded(routine, new Date())) {
+      await fail("its end date has passed — ask me again with a later one");
       return;
     }
     // An admin's draft never replaces a routine: case-insensitive check here (the filesystem may
