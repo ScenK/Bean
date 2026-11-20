@@ -6,18 +6,31 @@ import { sproutTriggerAction } from "@bean/core/sprout-trigger";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
+import { useCapabilities } from "../../shared/capabilities.js";
 import type { RoutineStateView, RoutineBuildView, DestinationView } from "@bean/host";
 import { StepsEditor } from "./StepsEditor.js";
 import { chatTargets, cleanChatSinks, isDmSink } from "./chat-sinks.js";
 import { DestinationPicker } from "./DestinationPicker.js";
 import { stepProblemsText } from "./step-ids.js";
 import { BuildPane, DescribePane, ExampleChips, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
-import { NEEDS_FIXING, derivedSectionLabel, folderName, isListedUnder, sproutSections, toggleListedUnder, type SproutRow } from "./sprout-sections.js";
+import { ARCHIVED, NEEDS_FIXING, derivedSectionLabel, folderName, isListedUnder, sproutSections, toggleListedUnder, type SproutRow } from "./sprout-sections.js";
 import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
+
+// The Ends picker's value: a bare date as is, a date-time (a done ending) as its local day.
+const untilDateValue = (until: string | undefined): string => {
+  if (!until) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(until)) return until;
+  const d = new Date(until);
+  return Number.isNaN(d.getTime()) ? "" : `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+
+// Which sprouts have ended, and which of those are archived — a change means the definitions moved.
+const endedKeyOf = (st: Record<string, RoutineStateView>): string =>
+  Object.keys(st).filter((n) => st[n]?.ended).sort().map((n) => `${n}:${st[n]!.ended!.archived}`).join("\n");
 
 const emptyRoutine = (): Routine => ({
   name: "",
@@ -183,7 +196,8 @@ function AutoTextarea(props: { value: string; onValue: (v: string) => void; clas
 }
 
 // Folded list sections by key (project path, "" = Scratch, NEEDS_FIXING) — a renderer view pref
-// (pattern: NotesPanel). Absent or unreadable = everything open.
+// (pattern: NotesPanel). Absent or unreadable = everything open, except ARCHIVED, which is folded
+// by default: its key in the list means *open*.
 const FOLDED_SECTIONS_KEY = "bean.routines.foldedSections";
 function loadFoldedSections(): string[] {
   try {
@@ -229,6 +243,8 @@ export function RoutinesPanel() {
     setChatDestinations(await window.bean.destinationsList().catch(() => []));
   };
   const { clis, models } = useCliAvailability();
+  // A remote core lends this list read-only (its writes stay local), so no Restore there.
+  const remoteCore = useCapabilities().host !== undefined;
   const [triggering, setTriggering] = useState(false);
   // The sprout whose Stop was clicked; "Stopping…" until its runs are gone.
   const [stopping, setStopping] = useState<string | undefined>(undefined);
@@ -247,10 +263,14 @@ export function RoutinesPanel() {
   const [foldedSections, setFoldedSections] = useState<string[]>(loadFoldedSections);
   // "Pick projects…" on a Needs fixing row: once that sprout's editor is up, scroll to Listed under.
   const [pickFor, setPickFor] = useState<string | undefined>(undefined);
+  // Restore on an ended sprout: once its editor is up, the draft turns back on with no end date.
+  const [restoreFor, setRestoreFor] = useState<string | undefined>(undefined);
 
+  const endedKey = useRef("");
   const refresh = async (): Promise<void> => {
     const [list, st, bs] = await Promise.all([window.bean.routinesList(), window.bean.routinesState(), window.bean.routinesBuilds()]);
     setRoutines(list);
+    endedKey.current = endedKeyOf(st);
     setStates(st);
     setBuilds(bs);
   };
@@ -268,7 +288,13 @@ export function RoutinesPanel() {
     // Piggyback on the same 5s poll so "running now" chips update live while a todo-driven
     // routine is open.
     const t = setInterval(() => {
-      void window.bean.routinesState().then(setStates);
+      void window.bean.routinesState().then((st) => {
+        setStates(st);
+        // A sprout that ended (or came back) since the last read: re-read the definitions too, so an
+        // open editor isn't holding the pre-ending copy (Save would send its old `enabled`/`until`).
+        const key = endedKeyOf(st);
+        if (key !== endedKey.current) { endedKey.current = key; void refresh(); }
+      });
       void refreshTodos();
     }, 5000);
     return () => clearInterval(t);
@@ -299,13 +325,38 @@ export function RoutinesPanel() {
   // Keyed on the selected routine's saved content, not the list's identity: a refresh for some
   // other routine (a build finishing) must not wipe unsaved edits here.
   const savedJson = JSON.stringify(routines.find((r) => r.name === selected) ?? null);
+  // The draft's baseline: the copy it was loaded from, or what this panel itself just saved — so the
+  // refresh after an own save takes the saved copy whole, while edits made since still count.
+  const loaded = useRef<{ name?: string; json: string }>({ json: "" });
+  const markSaved = (d: Routine): void => { loaded.current = { name: d.name, json: JSON.stringify(d) }; };
   useEffect(() => {
     if (!selected) return;
-    setDraft(routines.find((r) => r.name === selected) ?? emptyRoutine());
+    const saved = routines.find((r) => r.name === selected);
+    const prev = loaded.current;
+    loaded.current = { name: selected, json: savedJson };
+    // Unsaved edits when the core moves this sprout (an ending, a flip elsewhere): keep them and
+    // take only its switch and end, so Save can't send the pre-ending ones.
+    if (saved && prev.name === selected && JSON.stringify(draft) !== prev.json) {
+      const { until: _until, ...rest } = draft;
+      setDraft({ ...rest, ...(saved.until !== undefined ? { until: saved.until } : {}), enabled: saved.enabled });
+      return;
+    }
+    setDraft(saved ?? emptyRoutine());
     setError("");
     setNotice("");
     setCustomCron(false);
   }, [selected, savedJson]);
+  // After the reset just above, so the restored draft wins. Saving it re-enables through the host's
+  // restore path (a watch re-seeds from now, a schedule restarts from now).
+  useEffect(() => {
+    if (!restoreFor || restoreFor !== selected) return;
+    setRestoreFor(undefined);
+    const saved = routines.find((r) => r.name === selected);
+    if (!saved) return;
+    // From this sprout's own editor: keep its unsaved edits. From another row: its saved copy.
+    const { until: _until, ...rest } = draft.name === selected ? draft : saved;
+    setDraft({ ...rest, enabled: true });
+  }, [restoreFor, selected, savedJson]);
   useEffect(() => { void refreshTodos(); }, [selected, draft.todoDriven]);
 
   const filtered = useMemo(() => {
@@ -317,7 +368,12 @@ export function RoutinesPanel() {
     return [...list].sort((a, b) => Number(b.enabled) - Number(a.enabled));
   }, [routines, query]);
   // `listSkills` omits hidden skills, so a step naming one reads as missing here (as in the steps editor).
-  const sections = useMemo(() => sproutSections(filtered, projects, new Set(skills.map((s) => s.name))), [filtered, projects, skills]);
+  // Archived is the core's call (core time), so a remote shell lists exactly what the core does.
+  const archivedKey = Object.keys(states).filter((n) => states[n]?.ended?.archived).sort().join("\n");
+  const sections = useMemo(
+    () => sproutSections(filtered, projects, new Set(skills.map((s) => s.name)), new Set(archivedKey ? archivedKey.split("\n") : [])),
+    [filtered, projects, skills, archivedKey],
+  );
   const setSectionFolded = (key: string, folded: boolean): void => {
     setFoldedSections((prev) => {
       if (prev.includes(key) === folded) return prev;
@@ -337,6 +393,7 @@ export function RoutinesPanel() {
   };
   // Listed under lives in the editor, so a needs-review sprout skips its review card here.
   const pickProjects = (name: string): void => { select(name); setEditorFor(name); setPickFor(name); };
+  const restore = (name: string): void => { select(name); setEditorFor(name); setRestoreFor(name); };
   // Re-read the registry right before appending, so a project added elsewhere since this window
   // loaded isn't overwritten.
   const registerFolder = async (folder: string): Promise<void> => {
@@ -415,8 +472,17 @@ export function RoutinesPanel() {
       ? { ...dropParallel(draft), steps: [], todoDriven: undefined }
       : { ...draft, steps: draft.steps.length > 0 ? draft.steps : [{ kind: "chat", instruction: "" }], todoDriven: true });
 
+  // The editor holds a Restore (an ended sprout's draft switched back on) until Save sprout.
+  const restoring = Boolean(selected && states[selected]?.ended && draft.enabled);
+
   const toggleEnabled = async (r: Routine): Promise<void> => {
-    await window.bean.routinesSave({ ...r, enabled: !r.enabled });
+    try {
+      await window.bean.routinesSave({ ...r, enabled: !r.enabled });
+    } catch (e) {
+      // An ended sprout refuses a bare flip — it needs a later end date (Restore).
+      select(r.name);
+      setError(ipcErrorMessage(e) ?? "couldn't change it");
+    }
     await refresh();
   };
 
@@ -424,10 +490,19 @@ export function RoutinesPanel() {
   // persist right away too — otherwise the next poll's refresh() overwrites the local draft
   // with the still-disabled saved copy and the flip silently reverts.
   const toggleDraftEnabled = async (): Promise<void> => {
+    // Switching off a Restore in progress just drops it: the saved sprout is still ended.
+    const saved = routines.find((r) => r.name === selected);
+    if (saved && restoring) { setDraft(saved); return; }
     const next = { ...draft, enabled: !draft.enabled };
     setDraft(next);
     if (selected) {
-      await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
+      try {
+        await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
+        markSaved(next);
+      } catch (e) {
+        setDraft(draft);
+        setError(ipcErrorMessage(e) ?? "couldn't change it");
+      }
       await refresh();
     }
   };
@@ -440,9 +515,11 @@ export function RoutinesPanel() {
   const setTodoDriven = async (on: boolean): Promise<void> => {
     const next = on ? { ...draft, todoDriven: true } : { ...dropParallel(draft), todoDriven: undefined };
     setDraft(next);
-    if (selected) {
+    // A Restore in progress saves with Save sprout, not here (that would turn it back on early).
+    if (selected && !restoring) {
       try {
         await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
+        markSaved(next);
         await refresh();
       } catch (e) {
         setError(ipcErrorMessage(e) ?? "couldn't save the type change");
@@ -455,6 +532,7 @@ export function RoutinesPanel() {
     setSavedName(undefined);
     try {
       await window.bean.routinesSave({ ...draft, sinks: cleanChatSinks(draft.sinks) });
+      markSaved(draft);
       setError("");
       await refresh();
       setSelected(draft.name);
@@ -539,7 +617,24 @@ export function RoutinesPanel() {
   const briefTargets = brief ? [...chatTargetList] : [];
   if (draft.sinks.home) (stepless ? sinkTargets : briefTargets).push("your Home chat");
 
-  const routineRow = (sectionKey: string, { routine: r, also, problems }: SproutRow) => (
+  const routineRow = (sectionKey: string, { routine: r, also, problems }: SproutRow) => sectionKey === ARCHIVED ? (
+    <div
+      key={`${sectionKey}:${r.name}`}
+      class={`bean-skills-row bean-routines-row bean-routines-row--off${selected === r.name ? " bean-skills-row--selected" : ""}`}
+      onClick={() => select(r.name)}
+    >
+      <div class="bean-skills-row-main">
+        <div class="bean-skills-row-name">{r.name}</div>
+        {r.description ? <div class="bean-routines-row-sub" title={r.description}>{r.description}</div> : null}
+        <div class="bean-routines-row-sub">{states[r.name]?.ended?.text}</div>
+        {remoteCore ? null : (
+          <div class="bean-routines-fix">
+            <button type="button" class="bean-routines-todo-link bean-routines-fix-btn" onClick={(e) => { e.stopPropagation(); restore(r.name); }}>Restore</button>
+          </div>
+        )}
+      </div>
+    </div>
+  ) : (
     <div
       key={`${sectionKey}:${r.name}`}
       class={`bean-skills-row bean-routines-row${r.enabled ? "" : " bean-routines-row--off"}${needsReview(r, states[r.name]) ? " bean-routines-row--review" : ""}${selected === r.name ? " bean-skills-row--selected" : ""}`}
@@ -557,7 +652,9 @@ export function RoutinesPanel() {
       <div class="bean-skills-row-main">
         <div class="bean-skills-row-name">{r.name}</div>
         <div class="bean-routines-row-sub">
-          {r.watch ? (
+          {states[r.name]?.ended ? (
+            <span>{states[r.name]!.ended!.text}</span>
+          ) : r.watch ? (
             <span class={watchRowSub(r, states[r.name]).bad ? "bean-routines-row-sub--bad" : undefined}>{watchRowSub(r, states[r.name]).text}</span>
           ) : (
             <>
@@ -606,6 +703,7 @@ export function RoutinesPanel() {
   );
 
   const selectedState = selected ? states[selected] : undefined;
+  const ended = selectedState?.ended;
   const savedRoutine = selected ? routines.find((r) => r.name === selected) : undefined;
   // Any edit after the save makes the draft differ from disk, so the button reverts by itself.
   const justSaved = savedName !== undefined && savedName === selected && JSON.stringify(draft) === savedJson;
@@ -672,7 +770,7 @@ export function RoutinesPanel() {
             // A live query opens every section with a hit (empty ones are already gone) and locks
             // folding meanwhile; the stored state returns when the query clears.
             const searching = query.trim() !== "";
-            const open = searching || !foldedSections.includes(sec.key);
+            const open = searching || (sec.key === ARCHIVED) === foldedSections.includes(sec.key);
             return (
               <div key={sec.key} class="bean-routines-section" data-section={sec.key}>
                 <button
@@ -681,7 +779,7 @@ export function RoutinesPanel() {
                   aria-expanded={open}
                   disabled={searching}
                   title={searching ? "Clear the search to fold sections" : undefined}
-                  onClick={() => setSectionFolded(sec.key, open)}
+                  onClick={() => setSectionFolded(sec.key, sec.key === ARCHIVED ? !open : open)}
                 >
                   <span class="bean-notes-group-caret">{open ? "\u25be" : "\u25b8"}</span>
                   {sec.label}
@@ -792,6 +890,34 @@ export function RoutinesPanel() {
                 <span class="bean-routines-section-note">Only where this sprout appears in lists. Each step still starts in the folder set on that step.</span>
               </div>
             ) : null}
+            <div class="bean-routines-listed bean-routines-ends">
+              <div class="bean-field-label">ENDS</div>
+              <div class="bean-routines-listed-chips">
+                <input
+                  class="bean-input bean-input--boxed"
+                  type="date"
+                  aria-label="End date"
+                  disabled={Boolean(ended) && !draft.enabled}
+                  title={ended && !draft.enabled ? "Restore it to give it a later end date" : undefined}
+                  value={untilDateValue(draft.until)}
+                  onChange={(e) => {
+                    const v = (e.target as HTMLInputElement).value;
+                    const { until: _until, ...rest } = draft;
+                    setDraft(v ? { ...rest, until: v } : rest);
+                  }}
+                />
+                {ended && savedRoutine && !draft.enabled ? (
+                  <>
+                    <span class="bean-routines-section-note">{ended.text}</span>
+                    {remoteCore ? null : <button type="button" class="bean-routines-todo-link bean-routines-fix-btn" onClick={() => restore(savedRoutine.name)}>Restore</button>}
+                  </>
+                ) : (
+                  <span class="bean-routines-section-note">
+                    {ended && draft.enabled ? "Save to turn it back on — it starts again from now." : draft.until ? "Stops after this day." : "Blank = runs until you turn it off."}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
           <div class="bean-skills-toggle-col">
             <button

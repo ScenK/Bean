@@ -1,8 +1,9 @@
 import {
-  converse, checkPdfAttachment, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
+  converse, checkPdfAttachment, isArchived, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
   checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
+  type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
   DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, HOME_THREAD_TITLE, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
 } from "@bean/core";
 import { readFile } from "node:fs/promises";
@@ -49,6 +50,12 @@ export interface ChatHandlerDeps {
   todoAhead?: (routine: string) => number;
   /** Enables propose_send: matches the spoken destination and keeps the proposal for the Send tap. */
   proposeSend?: (destination: string, body: string) => SendCard;
+  /** Enables propose_routine (#982) for a chat whose client can save it (else undefined): the
+   * tool's names (`authoring`, from every sprout) and the card that keeps the draft for its Save. */
+  routineDrafts?: (clientId: ClientId) => {
+    authoring: (routines: Routine[]) => RoutineAuthoring;
+    propose: (proposal: ProposedRoutine) => Promise<RoutineDraftCard>;
+  } | undefined;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
    * behind runtime config someday; onStart drives the 🎨 working indicator of the chat (mount) that asked. */
   imageGen?: {
@@ -65,7 +72,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     if (req.images !== undefined) checkImageAttachments(req.images);
     // Renderer input is untrusted: a spoofed (non-%PDF-) or oversize document fails the turn here.
     const documents = checkPdfAttachment(req.documents);
-    const [skills, projects, persona, memories, routines, ownerIds] = await Promise.all([
+    const [skills, projects, persona, memories, allRoutines, ownerIds] = await Promise.all([
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
       deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
@@ -73,6 +80,9 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       deps.loadRoutines?.() ?? Promise.resolve([] as Routine[]),
       deps.ownerSubjectIds?.() ?? Promise.resolve([]),
     ]);
+    // Archived sprouts (#980) are out of the run catalog and the todo picker (a draft may still reuse a name).
+    const routines = allRoutines.filter((r) => !isArchived(r, new Date()));
+    const drafts = clientId === undefined ? undefined : deps.routineDrafts?.(clientId);
     const enabled = skills.filter((s) => s.enabled !== false);
     const todoRoutines = routines.filter((r) => r.todoDriven).map((r) => r.name);
     // Per-request (not shared) so `paths` collects only this turn's generated files.
@@ -137,6 +147,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       webSearch: deps.webSearch?.() ?? false,
       runAvailable: clientId === undefined || (deps.runAvailable?.(clientId) ?? true),
       sendAvailable: deps.proposeSend !== undefined,
+      ...(drafts ? { routineAuthoring: drafts.authoring(allRoutines) } : {}),
       signal,
     });
     if (compacted.summary) result.summary = compacted.summary;
@@ -144,6 +155,10 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     if (result.proposedSend && deps.proposeSend) {
       result.sendCard = deps.proposeSend(result.proposedSend.destination, result.proposedSend.text);
       delete result.proposedSend;
+    }
+    if (result.proposedRoutine && drafts) {
+      result.routineDraft = await drafts.propose(result.proposedRoutine);
+      delete result.proposedRoutine;
     }
     if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts);
     if (result.proposedTodo && deps.todoAhead) {

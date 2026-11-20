@@ -88,6 +88,9 @@ describe("alias chat sinks", () => {
     expect(flagged.record.digest).toBe(flagged.digest);
     expect(withSinkProblems(result("failed"), ["x"]).record.status).toBe("failed");
     expect(withSinkProblems(result("ok"), [])).toEqual(result("ok"));
+    // A quiet run delivers nothing: it stays ok and keeps its "nothing new" line.
+    const quiet = { ...result("ok"), record: { ...result("ok").record, quiet: "nothing new" } };
+    expect(withSinkProblems(quiet, ["x"])).toEqual(quiet);
   });
 
   it("the scheduler records an unresolvable alias run as needs-attention before delivering it", async () => {

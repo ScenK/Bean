@@ -1,6 +1,6 @@
 // packages/core/__test__/routine-gates.test.ts
 import { describe, expect, it } from "vitest";
-import { runRoutine, type DelegateStepRequest, type RoutineRunnerDeps, type StepInfo } from "../src/routine-runner.js";
+import { DONE_FOOTER, runRoutine, type DelegateStepRequest, type RoutineRunnerDeps, type StepInfo } from "../src/routine-runner.js";
 import { describeRoutineError, usesGates, type Routine, type RoutineStep } from "../src/routine-store.js";
 import { gateVerdict, routeLabel } from "../src/step-attempts.js";
 import { stepEdgeProblems } from "../src/routine-graph.js";
@@ -280,6 +280,15 @@ describe("route validation", () => {
     expect(err([s("d", { route: two() }), s("x")])).toBeNull();
   });
 
+  it('accepts "quiet" as a path or otherwise target, keeps it off next, and still loads a step with that id', () => {
+    expect(err([s("d", { route: two({ otherwise: "quiet" }) }), s("x")])).toBeNull();
+    expect(err([s("d", { route: { paths: [{ when: "a", goto: "quiet" }, { when: "b", goto: "x" }] } }), s("x")])).toBeNull();
+    expect(err([s("quiet")])).toBeNull();
+    // A step named "quiet" is a step: a backward route to it is still rejected as one.
+    expect(err([s("quiet"), s("d", { route: { paths: [{ when: "a", goto: "quiet" }, { when: "b", goto: "end" }] } })])).toMatch(/route "a" must point to a later step/);
+    expect(err([s("a", { next: "quiet" })])).toMatch(/next step "quiet" doesn't exist/);
+  });
+
   it("rejects each invalid shape", () => {
     expect(err([s("d", { route: { paths: [{ when: "a", goto: "x" }] } }), s("x")])).toMatch(/step 1: a route needs at least 2 paths/);
     expect(err([s("d", { route: "x" }), s("x")])).toMatch(/at least 2 paths/);
@@ -290,7 +299,7 @@ describe("route validation", () => {
     expect(err([s("d", { route: two() }), s("y")])).toMatch(/route "a" step "x" doesn't exist/);
     expect(err([s("x"), s("d", { route: two() })])).toMatch(/step 2: route "a" must point to a later step/);
     expect(err([s("d", { route: { paths: [{ when: "a", goto: "d" }, { when: "b", goto: "end" }] } })])).toMatch(/must point to a later step/);
-    expect(err([s("d", { route: { paths: [{ when: "a" }, { when: "b", goto: "end" }] } })])).toMatch(/route "a" needs a step id or "end"/);
+    expect(err([s("d", { route: { paths: [{ when: "a" }, { when: "b", goto: "end" }] } })])).toMatch(/route "a" needs a step id, "end", "quiet" or "done"/);
     expect(err([s("x"), s("d", { route: { paths: [{ when: "a", goto: "end" }, { when: "b", goto: "end" }], otherwise: "x" } })])).toMatch(/route otherwise must point to a later step/);
     expect(err([s("d", { route: two(), gate: { onFail: "stop" } }), s("x")])).toMatch(/can't be combined with a gate or next/);
     expect(err([s("d", { route: two(), next: "end" }), s("x")])).toMatch(/can't be combined with a gate or next/);
@@ -401,6 +410,135 @@ describe("routed runs", () => {
     ]), deps(f.delegate, { recordAttempt: (a) => attempts.push(a) }));
     expect(res.digest).toBe("All quiet today.");
     expect(attempts[0]!.output).toBe("All quiet today.\nROUTE: done");
+  });
+
+  describe('route to "quiet"', () => {
+    const quietSteps = (): RoutineStep[] => [
+      step("d", { route: { paths: [{ when: "news", goto: "post" }, { when: "nothing", goto: "quiet" }] } }), step("post"),
+    ];
+
+    it("ends ok and flagged quiet with the step's one-line reason, no digest model call, no results to deliver", async () => {
+      let chats = 0;
+      const f = fakeDelegate({ d: ["Only a typo fix landed.\nNot worth a post.\nROUTE: nothing"] });
+      const res = await runRoutine(routine(quietSteps()), deps(f.delegate, { chat: async () => { chats++; return { content: "x", toolCalls: [] }; } }));
+      expect(f.ids).toEqual(["d"]);
+      expect(chats).toBe(0);
+      expect(res.record).toMatchObject({ status: "ok", quiet: "Only a typo fix landed." });
+      expect(res.digest).toBe("Checked · nothing new — Only a typo fix landed.");
+      expect(res.record.steps).toHaveLength(1);
+      expect(res.results).toEqual([]);
+    });
+
+    it('a saved sprout with a step named "quiet" still routes to that step and delivers', async () => {
+      const f = fakeDelegate({ d: ["ROUTE: b"], quiet: ["the quiet step ran"] });
+      const r = routine([
+        step("d", { route: { paths: [{ when: "a", goto: "end" }, { when: "b", goto: "quiet" }], otherwise: "quiet" } }), step("quiet"),
+      ]);
+      expect(describeRoutineError(r)).toBeNull();
+      const res = await runRoutine(r, deps(f.delegate));
+      expect(f.ids).toEqual(["d", "quiet"]);
+      expect(res.record.quiet).toBeUndefined();
+      const other = fakeDelegate({ d: ["ROUTE: nope"] });
+      await runRoutine(r, deps(other.delegate));
+      expect(other.ids).toEqual(["d", "quiet"]);
+    });
+
+    it("a gate FAIL earlier in the pass outranks quiet: needs attention, not flagged", async () => {
+      const f = fakeDelegate({ check: [FAIL], d: ["ROUTE: nothing"] });
+      const res = await runRoutine(routine([step("check", { gate: { onFail: { goto: "d" } } }), ...quietSteps()]), deps(f.delegate));
+      expect(res.record.status).toBe("needs-attention");
+      expect(res.record.quiet).toBeUndefined();
+    });
+
+    it("a malformed route with no otherwise still stops needs-attention", async () => {
+      const f = fakeDelegate({ d: ["ROUTE: nothin"] });
+      const res = await runRoutine(routine(quietSteps()), deps(f.delegate));
+      expect(res.record.status).toBe("needs-attention");
+      expect(res.record.quiet).toBeUndefined();
+    });
+
+    it("a mixed drain delivers only the non-quiet todos; every todo ends done and stays in the record", async () => {
+      const statuses: [string, TodoStatus, string | undefined][] = [];
+      const items = ["a", "b"].map((id) => ({ id, routine: "r", text: `item ${id}`, status: "running", createdAt: "x" }) as TodoItem);
+      const f = fakeDelegate({ d: ["Boring.\nROUTE: nothing", "Big news.\nROUTE: news"], post: ["Posted: big news"] });
+      const res = await runRoutine(routine(quietSteps(), { todoDriven: true }), deps(f.delegate, {
+        todos: { claim: claimFrom(items), setStatus: async (id, st, sum) => { statuses.push([id, st, sum]); } },
+      }));
+      expect(statuses).toEqual([["a", "done", "nothing new: Boring."], ["b", "done", "Posted: big news"]]);
+      expect(res.record.quiet).toBeUndefined();
+      expect(res.record.steps).toHaveLength(3);
+      // Two delivered results → the digest model sees only todo b's.
+      expect(res.results.map((r) => r.todo)).toEqual(["item b", "item b"]);
+      // Only the delivered todo decides which origin chat already has the result.
+      expect(res.todoIds).toEqual(["b"]);
+
+      const allQuiet = fakeDelegate({ d: ["Boring.\nROUTE: nothing", "Still boring.\nROUTE: nothing"] });
+      const quiet = await runRoutine(routine(quietSteps(), { todoDriven: true }), deps(allQuiet.delegate, {
+        todos: { claim: claimFrom(items), setStatus: async () => {} },
+      }));
+      expect(quiet.record).toMatchObject({ status: "ok", quiet: "2 todos, each nothing new" });
+      expect(quiet.digest).toBe("[todo: item a] Checked · nothing new — Boring.\n[todo: item b] Checked · nothing new — Still boring.");
+    });
+
+    it("a drain with one delivered todo posts that todo's output verbatim, label stripped", async () => {
+      const items = ["a", "b"].map((id) => ({ id, routine: "r", text: `item ${id}`, status: "running", createdAt: "x" }) as TodoItem);
+      const f = fakeDelegate({ d: ["Big news.\nROUTE: news", "Boring.\nROUTE: nothing"] });
+      const r = routine([step("d", { route: { paths: [{ when: "news", goto: "end" }, { when: "nothing", goto: "quiet" }] } })], { todoDriven: true });
+      const res = await runRoutine(r, deps(f.delegate, { todos: { claim: claimFrom(items), setStatus: async () => {} } }));
+      expect(res.digest).toBe("Big news.");
+    });
+  });
+
+  describe('route to "done" (#980)', () => {
+    const doneSteps = (): RoutineStep[] => [
+      step("d", { route: { paths: [{ when: "found", goto: "post" }, { when: "nothing", goto: "quiet" }] } }),
+      step("post", { next: "done" } as never), // replaced below: next can't reach done
+    ];
+    const found = (): RoutineStep[] => [step("d", { route: { paths: [{ when: "found", goto: "done" }, { when: "nothing", goto: "quiet" }] } })];
+
+    it('is a route target but not a next target; a step named "done" stays a step', () => {
+      const err = (steps: RoutineStep[]) => describeRoutineError(routine(steps));
+      expect(err(found())).toBeNull();
+      expect(err([step("d", { route: { paths: [{ when: "a", goto: "x" }, { when: "b", goto: "end" }], otherwise: "done" } }), step("x")])).toBeNull();
+      expect(err(doneSteps())).toMatch(/next step "done" doesn't exist/);
+      expect(err([step("done")])).toBeNull();
+    });
+
+    it("delivers the run with the recommended next step and flags the record done", async () => {
+      const f = fakeDelegate({ d: ["The PS6 is up for preorder at $499.\nROUTE: found"] });
+      const res = await runRoutine(routine(found()), deps(f.delegate));
+      expect(res.record).toMatchObject({ status: "ok", done: true });
+      expect(res.ending).toBe("done");
+      expect(res.digest).toBe(`The PS6 is up for preorder at $499.\n\n${DONE_FOOTER}`);
+      expect(DONE_FOOTER).toMatch(/file this away in a week/);
+      expect(res.footer).toBe(`\n\n${DONE_FOOTER}`);
+      expect(res.results).toHaveLength(1);
+    });
+
+    it("a drain claims nothing after a todo reaches done", async () => {
+      const items = ["a", "b", "c"].map((id) => ({ id, routine: "r", text: `item ${id}`, status: "running", createdAt: "x" }) as TodoItem);
+      const claim = claimFrom(items);
+      let claims = 0;
+      const f = fakeDelegate({ d: ["Boring.\nROUTE: nothing", `${"It's out. ".repeat(40)}\nROUTE: found`, "never"] });
+      const summaries: (string | undefined)[] = [];
+      const res = await runRoutine(routine(found(), { todoDriven: true }), deps(f.delegate, {
+        todos: { claim: async (r) => { claims++; return claim(r); }, setStatus: async (_id, _st, sum) => { summaries.push(sum); } },
+      }));
+      // The question rides the elected owner's sink delivery, never a todo's dispatch summary.
+      expect(summaries[1]).not.toContain(DONE_FOOTER);
+      expect(claims).toBe(2);
+      expect(f.ids).toEqual(["d", "d"]);
+      expect(res.record.done).toBe(true);
+      expect(res.digest).toBe(`${"It's out. ".repeat(40).trim()}\n\n${DONE_FOOTER}`);
+    });
+
+    it("a pass that didn't end clean isn't done", async () => {
+      const f = fakeDelegate({ check: [FAIL], d: ["ROUTE: found"] });
+      const res = await runRoutine(routine([step("check", { gate: { onFail: { goto: "d" } } }), ...found()]), deps(f.delegate));
+      expect(res.record.status).toBe("needs-attention");
+      expect(res.record.done).toBeUndefined();
+      expect(res.ending).toBeUndefined();
+    });
   });
 
   it("a member todo is refused when a delegate step sits only on an untaken path", async () => {

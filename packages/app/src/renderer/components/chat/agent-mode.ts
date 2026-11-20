@@ -176,6 +176,8 @@ export function cardItemRecord(it: ChatItem): string | undefined {
       return cardRecord("live session", it.state);
     case "send":
       return cardRecord("send", it.state);
+    case "routine":
+      return cardRecord("sprout draft", it.state, it.card.name);
     case "todo":
       return cardRecord("todo", it.state === "done" ? doneState(it.result, true) : it.state, it.todo.routine);
     case "sprout":

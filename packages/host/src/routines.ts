@@ -1,3 +1,4 @@
+import { endedView, hasEnded } from "@bean/core";
 import type {
   BuildStage, Routine, RoutineBrief, RoutineState, RoutineWatch, RunRecord, RunStatus, StepKind, WatchCheckResult, WatchItem,
 } from "@bean/core";
@@ -25,6 +26,8 @@ export interface RoutineStateView {
   lastPoll?: string; pollError?: string; pollFailures?: number;
   /** false = never enabled since its source was set — the list shows "needs review". */
   seeded?: boolean;
+  /** Ended (off, past its `until`), in core time (#983): `archived` = the panel's Archived section. */
+  ended?: { archived: boolean; text: string };
 }
 
 /** One executed step of a run, for the Dashboard's full-output view. `resume` is Bean's own
@@ -44,7 +47,7 @@ export interface RoutineWatchDeps {
   pollFailures: (name: string) => number;
   checkNow: (name: string) => Promise<WatchCheckResult>;
   previewWatch: (watch: RoutineWatch) => Promise<WatchItem[]>;
-  enableWatch: (name: string, queueExisting: boolean) => Promise<{ count: number }>;
+  enableWatch: (name: string, queueExisting: boolean, until?: string | null) => Promise<{ count: number }>;
   sinkRecipients: () => Promise<SinkRecipients>;
   draftBrief: (sentence: string, previous?: RoutineBrief) => Promise<BriefDraft>;
   builds: {
@@ -70,6 +73,11 @@ export interface RoutineHandlerDeps {
   /** A run's step attempts (bean.db), oldest first. */
   attempts?: (runId: string) => StepAttemptView[];
   watch?: RoutineWatchDeps;
+  /** The scheduler's per-sprout lane (#980): saves serialize with its admissions and endings.
+   * Absent = no lane (tests). */
+  withSprout?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+  /** Restarts a restored cron sprout's schedule from now (the scheduler's `rebase`). */
+  rebase?: (name: string) => Promise<void>;
 }
 
 export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
@@ -80,7 +88,39 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   return {
     list: (): Promise<Routine[]> => deps.loadRoutines(),
     save: async (routine: Routine): Promise<void> => {
-      await deps.saveRoutine(routine);
+      const lane = deps.withSprout ?? ((_: string, fn: () => Promise<boolean>) => fn());
+      // Turning an ended sprout (off, past its `until`) back on (#980): its end must be later (or
+      // cleared), or it would only expire again on the next tick. An ended watch restores through
+      // enableWatch, which re-seeds from now (items published while it was off aren't judged) and
+      // commits the new end with `enabled` only once that check succeeded — until then it stays ended.
+      const restoreWatch = await lane(routine.name, async () => {
+        const now = new Date();
+        const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
+        const priorEnded = prior !== undefined && !prior.enabled && hasEnded(prior, now);
+        // A later end only comes back with the switch (#983): saved while still off, the next Enable
+        // would skip the restore below and a watch would keep its old seen-set.
+        if (priorEnded && !routine.enabled && !hasEnded(routine, now)) {
+          throw new Error(`"${routine.name}" ended — Restore it to give it a later end date`);
+        }
+        if (routine.enabled) {
+          if (prior && priorEnded) {
+            if (hasEnded(routine, now)) throw new Error(`"${routine.name}" ended — give it a later end date to turn it back on`);
+            if (routine.watch && deps.watch) {
+              const { until: _, ...rest } = routine;
+              await deps.saveRoutine({ ...rest, ...(prior.until !== undefined ? { until: prior.until } : {}), enabled: false });
+              return true;
+            }
+            // A cron sprout: its schedule restarts from now — no catch-up of a slot passed while ended.
+            await deps.saveRoutine(routine);
+            await deps.rebase?.(routine.name);
+            return false;
+          }
+        }
+        await deps.saveRoutine(routine);
+        return false;
+      });
+      // Outside the lane: enableWatch takes it for its own commit.
+      if (restoreWatch) await watch().enableWatch(routine.name, false, routine.until ?? null);
     },
     remove: async (name: string): Promise<void> => {
       await deps.deleteRoutine(name);
@@ -89,9 +129,12 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
     state: async (): Promise<Record<string, RoutineStateView>> => {
       const [routines, states] = await Promise.all([deps.loadRoutines(), deps.loadStates()]);
       const out: Record<string, RoutineStateView> = {};
+      const now = new Date();
       for (const r of routines) {
         const s = states[r.name];
+        const ended = endedView(r, s, now);
         out[r.name] = {
+          ...(ended ? { ended } : {}),
           lastRun: s?.lastRun, missed: s?.missed, history: s?.history ?? [],
           running: deps.isRunning(r.name), runningCount: deps.runningCount(r.name),
           ...(r.todoDriven && deps.queueCounts ? { queue: await deps.queueCounts(r.name) } : {}),

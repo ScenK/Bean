@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate, StepRoute } from "@bean/core";
 import { stepAvailabilityProblem } from "@bean/core/models";
-import { continueTargets, DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepContinueCaptions, stepEdgeProblems, stepEdgeWarnings, stepGroupCaptions, stepGroups, stepLanes, stepPathCaptions, type StepGroup } from "@bean/core/routine-graph";
+import { continueTargets, DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, DONE, QUIET, isDoneEnd, isQuietEnd, stepContinueCaptions, stepEdgeProblems, stepEdgeWarnings, stepGroupCaptions, stepGroups, stepLanes, stepPathCaptions, type StepGroup } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { StepFlow } from "../../shared/StepFlow.js";
 import { duplicateStep, moveStep, removeStep, setStepAlongside, setStepContinues, setStepNext, setStepRoute, switchStepKind, withStepIds } from "./step-ids.js";
@@ -61,10 +61,14 @@ export function StepsEditor(props: {
   const midGroup = (j: number): StepGroup | undefined => { const g = groupOf.get(j); return g && j !== g.first ? g : undefined; };
   const midGroupCaption = (g: StepGroup): string => `runs alongside step ${g.first + 1} — go to step ${g.first + 1} to run the group`;
   const hasRoute = steps.some((s) => s.route);
+  // A step already named "quiet" wins over the quiet ending (and hides it from the menu).
+  const stepIdSet = new Set(steps.flatMap((s) => (s.id ? [s.id] : [])));
+  const quietEnd = (goto: string | undefined): boolean => isQuietEnd(goto, stepIdSet);
+  const doneEnd = (goto: string | undefined): boolean => isDoneEnd(goto, stepIdSet);
   const targetName = (goto: string | undefined, none: string): string =>
-    goto === undefined ? none : goto === "end" ? "end run" : indexOf(goto) >= 0 ? `step ${indexOf(goto) + 1}` : goto ? "step ?" : "choose…";
+    goto === undefined ? none : goto === "end" ? "end run" : quietEnd(goto) ? "end quietly" : doneEnd(goto) ? "done — goal met" : indexOf(goto) >= 0 ? `step ${indexOf(goto) + 1}` : goto ? "step ?" : "choose…";
 
-  // A route target picker: later steps only, "end run", and (for `otherwise`) "stop".
+  // A route target picker: later steps only, "end run", "end quietly", and (for `otherwise`) "stop".
   const targetMenu = (i: number, goto: string | undefined, pick: (goto: string | undefined) => void, stop?: boolean) => (
     <ChipMenu
       chipClass={goto ? undefined : "bean-chip-menu-trigger--dashed"}
@@ -83,6 +87,18 @@ export function StepsEditor(props: {
             <span class="bean-chip-menu-row-title">{goto === "end" ? "✓ " : ""}end run</span>
             <span class="bean-chip-menu-caption">the run ends ok after this step</span>
           </button>
+          {stepIdSet.has(QUIET) ? null : (
+            <button type="button" class={`bean-chip-menu-row${quietEnd(goto) ? " bean-chip-menu-row--on" : ""}`} onClick={() => { pick(QUIET); close(); }}>
+              <span class="bean-chip-menu-row-title">{quietEnd(goto) ? "✓ " : ""}end quietly</span>
+              <span class="bean-chip-menu-caption">nothing worth saying — recorded, nothing delivered</span>
+            </button>
+          )}
+          {stepIdSet.has(DONE) ? null : (
+            <button type="button" class={`bean-chip-menu-row${doneEnd(goto) ? " bean-chip-menu-row--on" : ""}`} onClick={() => { pick(DONE); close(); }}>
+              <span class="bean-chip-menu-row-title">{doneEnd(goto) ? "✓ " : ""}done — goal met</span>
+              <span class="bean-chip-menu-caption">delivers this run, then the sprout turns itself off</span>
+            </button>
+          )}
           {i < steps.length - 1 ? <div class="bean-chip-menu-divider" /> : null}
           {steps.map((t, j) => {
             if (j <= i) return null;
@@ -135,8 +151,8 @@ export function StepsEditor(props: {
         const route = step.route;
         const last = i === steps.length - 1;
         const routeTitle = route ? [
-          ...route.paths.map((p) => `${p.when || "?"} → ${p.goto === "end" ? "end" : indexOf(p.goto) >= 0 ? indexOf(p.goto) + 1 : "?"}`),
-          `otherwise → ${route.otherwise === undefined ? "stop" : route.otherwise === "end" ? "end" : indexOf(route.otherwise) >= 0 ? indexOf(route.otherwise) + 1 : "?"}`,
+          ...route.paths.map((p) => `${p.when || "?"} → ${p.goto === "end" || quietEnd(p.goto) || doneEnd(p.goto) ? p.goto : indexOf(p.goto) >= 0 ? indexOf(p.goto) + 1 : "?"}`),
+          `otherwise → ${route.otherwise === undefined ? "stop" : route.otherwise === "end" || quietEnd(route.otherwise) || doneEnd(route.otherwise) ? route.otherwise : indexOf(route.otherwise) >= 0 ? indexOf(route.otherwise) + 1 : "?"}`,
         ].join(", ") : "";
         const setPaths = (paths: StepRoute["paths"]): void => { if (route) setRoute(i, { ...route, paths }); };
         const gateLabel = route ? `decides · ${route.paths.length} paths`
