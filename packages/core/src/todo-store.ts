@@ -231,6 +231,23 @@ export async function renameTodosRoutine(file: string, from: string, to: string)
   openDb(file).prepare("UPDATE todos SET routine = ? WHERE routine = ?").run(to, from);
 }
 
+/** A sprout that ended (`done` or expiry, #980): its pending todos go, with their open dispatch
+ * rows (a restart mustn't report them as interrupted). Running todos finish on their own. Returns
+ * how many were dropped. */
+export async function dropPendingTodos(file: string, routine: string): Promise<number> {
+  const db = openDb(file);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM sprout_dispatches WHERE status IS NULL AND todo_id IN (SELECT id FROM todos WHERE routine = ? AND status = 'pending')").run(routine);
+    const changed = db.prepare("DELETE FROM todos WHERE routine = ? AND status = 'pending'").run(routine);
+    db.exec("COMMIT");
+    return Number(changed.changes);
+  } catch (err) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
 export async function deleteTodosForRoutine(file: string, routine: string): Promise<void> {
   openDb(file).prepare("DELETE FROM sprout_dispatches WHERE status IS NULL AND todo_id IN (SELECT id FROM todos WHERE routine = ?)").run(routine);
   openDb(file).prepare("DELETE FROM todos WHERE routine = ?").run(routine);

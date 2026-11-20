@@ -3040,6 +3040,22 @@ describe("owner routines from chat (#285)", () => {
     expect(h.offered).toEqual([]); // commands never reach the model
   });
 
+  test("archived sprouts are gone from the list and enable; an ended one past its until isn't turned back on (#980)", async () => {
+    const h = setup(routineJson, [
+      { ...(routineJson as Routine), enabled: false, until: "2020-01-01" },
+      { ...(routineJson as Routine), name: "ended", enabled: false, until: new Date(Date.now() - 60_000).toISOString() },
+    ]);
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, text: "sprouts" }, effects);
+    expect(effects.posted.at(-1)).toContain("**ended**");
+    expect(effects.posted.at(-1)).not.toContain("mia-summary");
+    await h.bot.onMessage({ ...msg, text: "enable mia-summary" }, effects);
+    expect(effects.posted.at(-1)).toMatch(/No sprout named "mia-summary"/);
+    await h.bot.onMessage({ ...msg, text: "enable ended" }, effects);
+    expect(effects.posted.at(-1)).toMatch(/"ended" ended .* later end date on the desktop/);
+    expect(h.store.map((r) => r.enabled)).toEqual([false, false]);
+  });
+
   test("the sprouts list groups by the registry's projects, Scratch last (#885)", async () => {
     const h = setup(routineJson, [{ ...(routineJson as Routine), projects: ["/p/bean"] }, { ...(routineJson as Routine), name: "loose" }]);
     const effects = fx();

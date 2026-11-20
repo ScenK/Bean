@@ -92,14 +92,14 @@ export * from "./spawn-env.js";
 export {
   appendRunRecord, chatRoutineProblem, createRoutine, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, memberTodoEligible, resolveTodoRoutine, saveRoutine, todoRunHint, saveRoutineStates, usesGates,
-  resolveSinkAlias, sinkAliasProblems,
+  resolveSinkAlias, sinkAliasProblems, untilTime, untilLabel, isArchived, isExpired, endReason, ARCHIVE_GRACE_DAYS,
 } from "./routine-store.js";
 export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate, StepKind, StepRoute,
 } from "./routine-store.js";
 export * from "./command-step.js";
 export * from "./routine-graph.js";
-export { runRoutine, unfence, ROUTINE_STEP_TIMEOUT_MS } from "./routine-runner.js";
+export { runRoutine, unfence, ROUTINE_STEP_TIMEOUT_MS, DONE_FOOTER } from "./routine-runner.js";
 export type { CommandStepRequest, DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox, ackOutbox, recoverOutbox, drainOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";

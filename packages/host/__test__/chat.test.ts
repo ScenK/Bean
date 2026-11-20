@@ -448,6 +448,26 @@ describe("chat handler sprout runs", () => {
     expect(review.reply).toBe("feed-watch needs its first review in Bean's Sprouts panel.");
   });
 
+  it("leaves archived sprouts out of the catalog; a paused one within the grace stays (#980)", async () => {
+    let spec = "";
+    const handler = buildChatHandler({
+      loadSkills: async () => [] as Skill[], loadProjects: async () => [] as Project[],
+      loadPersona: async () => ({ name: "Bean", tags: [] }) as unknown as Persona,
+      converse: async ({ tools }) => { spec = JSON.stringify(tools.find((t) => t.name === "propose_sprout_run")); return { content: "ok", toolCalls: [] }; },
+      getModel: () => "m",
+      projectSkillsDir: "/b/ps", skillsDir: "/b/s", projectsFile: "/b/p.json", personaFile: "/b/pe.json", projectPersonaFile: "/b/pp.json",
+      loadMemories: async () => [], dbFile: "/b/bean.db",
+      loadRoutines: async () => [
+        { ...daily, name: "old-watch", until: "2020-01-01" },
+        { ...daily, name: "just-ended", until: new Date(Date.now() - 24 * 60 * 60_000).toISOString() },
+      ],
+      sproutFacts: async () => ({ pending: 0, seeded: true }),
+    });
+    await handler({ history: [], message: "run it" });
+    expect(spec).toContain("just-ended");
+    expect(spec).not.toContain("old-watch");
+  });
+
   it("isn't offered without sproutFacts", async () => {
     let seen: string[] = [];
     const handler = buildChatHandler({

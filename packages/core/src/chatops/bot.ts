@@ -12,7 +12,7 @@ import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { makeBackgroundWorkTool } from "../background-work.js";
 import type { Dispatch } from "../dispatch-store.js";
-import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
+import { chatRoutineProblem, isArchived, isExpired, todoRunHint, untilLabel, type Routine } from "../routine-store.js";
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
@@ -1348,7 +1348,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
   async function runRoutineCommand(c: RoutineCommand): Promise<string> {
     const r = deps.routines!;
-    const all = await r.load();
+    const nowT = new Date();
+    // Archived sprouts read as gone here (#980); restoring one is a desktop job.
+    const all = (await r.load()).filter((x) => !isArchived(x, nowT));
     if (c.kind === "list") {
       const [projects, skills] = await Promise.all([deps.loadProjects(), deps.loadSkills()]);
       return routineListText(all, projects, new Set(skills.map((s) => s.name)), undefined, r.sprouts !== undefined);
@@ -1360,8 +1362,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const on = c.kind === "enable";
     if (target.enabled === on) return `"${target.name}" is already ${on ? "on" : "off"}.`;
     const next = { ...target, enabled: on };
+    // Past its end it would only expire again on the next tick: a later end is set on the desktop.
+    if (on && isExpired(next, nowT)) return `"${target.name}" ended ${untilLabel(target.until)} — give it a later end date on the desktop to turn it back on.`;
     await r.save(next);
-    return on ? `Turned "${target.name}" on. ${todoRunHint(next, new Date())}`.trim() : `Turned "${target.name}" off.`;
+    return on ? `Turned "${target.name}" on. ${todoRunHint(next, nowT)}`.trim() : `Turned "${target.name}" off.`;
   }
 
   async function handleRoutineAction(
@@ -2075,7 +2079,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           : undefined;
         // Owner only, and only where this process runs the scheduler (headless).
         const sprouts = can(role, "runRoutines") ? deps.routines?.sprouts : undefined;
-        const sproutRoutines = sprouts && deps.routines ? await deps.routines.load() : [];
+        const sproutRoutines = sprouts && deps.routines ? (await deps.routines.load()).filter((r) => !isArchived(r, new Date())) : [];
         const detected = deps.detectClis();
         let history = deps.conversations.history(msg.conversationId);
         if (fx.fetchRecent) {

@@ -17,7 +17,7 @@ import { makeRoutineSteps } from "./routine-steps.js";
 import { loadRoutines, loadRoutineStates, saveRoutine, saveRoutineStates, type RoutineWatch } from "./routine-store.js";
 import { loadLayeredSkills } from "./skill-library.js";
 import { pruneStepAttempts } from "./step-attempts.js";
-import { addTodo, claimTodo, claimTodoById, listTodos, recoverInterruptedTodos } from "./todo-store.js";
+import { addTodo, claimTodo, claimTodoById, dropPendingTodos, listTodos, recoverInterruptedTodos } from "./todo-store.js";
 import { pollWatch, type WatchItem } from "./watch.js";
 import { execWatchCommand, fetchText } from "./watch-io.js";
 import { isWatchSeeded, markNewItems, seedWatch, unseenIds } from "./watch-store.js";
@@ -130,6 +130,7 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     },
     addTodo: async (r, text) => { await addTodo(db, r, text); },
     saveRoutine: (r) => saveRoutine(routinesDir(dir), r),
+    dropPendingTodos: async (r) => { await dropPendingTodos(db, r); },
     alarm: deps.alarm,
     ...(deps.onMissed ? { onMissed: deps.onMissed } : {}),
   });

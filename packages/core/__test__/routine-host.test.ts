@@ -170,6 +170,31 @@ describe("createRoutineHost", () => {
     expect(onHomePost).not.toHaveBeenCalled();
   });
 
+  it("an ending (done / expiry) is chat context and isn't muted by only-on-problems; a done brief keeps the next-step line", async () => {
+    let n = 0;
+    const h = host({
+      newId: () => `id-${++n}`,
+      getRoutineDigestContext: () => false,
+      delegateStep: async () => ({ output: "It's out at $499.\nROUTE: found" }),
+      converse: async () => ({ content: "Heads up: it's out at $499.", toolCalls: [] }),
+    });
+    const r = routine([
+      { kind: "delegate", id: "d", instruction: "look", route: { paths: [{ when: "found", goto: "done" }, { when: "nothing", goto: "quiet" }] } },
+    ], { sinks: { chatopsOnlyOnProblems: true, chatops: [{ transport: "discord", channel: "c1" }] } });
+    const res = await h.runOneRoutine(r);
+    await h.deliverDigest(r, res);
+    const expired = { digest: "Nothing by Dec 20, 2026 — extend?", results: [], ending: "expired" as const, record: { startedAt: "x", finishedAt: "x", status: "ok" as const, digest: "", steps: [] } };
+    await h.deliverDigest(r, expired);
+    const out = await claimOutbox(outboxDir(dir), "discord");
+    expect(out.map((m) => [m.body, m.context])).toEqual([
+      [expect.stringMatching(/^Heads up: it's out at \$499\.\n\nWant me to keep watching\?/), true],
+      ["Nothing by Dec 20, 2026 — extend?", true],
+    ]);
+    // An ordinary ok run stays muted and keeps the configured context.
+    await h.deliverDigest(r, { ...res, ending: undefined, record: { ...res.record, done: undefined } });
+    expect(await claimOutbox(outboxDir(dir), "discord")).toEqual([]);
+  });
+
   it("maps a user sink to outbox userId with a whose-routine footer", async () => {
     const h = host();
     const r = routine([], { sinks: { chatops: [{ transport: "discord", user: "u1" }] } });

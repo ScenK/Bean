@@ -264,8 +264,9 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         slug: `routine-${routine.name}`, // update-in-place: one living note per routine
       }, undefined, { upsert: true }); // the only upsert caller: the sink (re)creates its note
     }
-    // A notify-only watch fire is always "ok", so the rule would mute it entirely — it doesn't apply there.
-    const quiet = routine.sinks.chatopsOnlyOnProblems === true && result.record.status === "ok" && routine.steps.length > 0;
+    // A notify-only watch fire is always "ok", so the rule would mute it entirely — it doesn't apply
+    // there; nor to a sprout's ending (done / expiry), which asks the owner whether to go on.
+    const quiet = routine.sinks.chatopsOnlyOnProblems === true && result.record.status === "ok" && routine.steps.length > 0 && result.ending === undefined;
     const sinks = quiet ? [] : routine.sinks.chatops ?? [];
     // Read at enqueue, so a retarget in Settings applies to the next digest.
     const named = sinks.some((s) => s.alias !== undefined) ? listDestinations(dbFile(dir)) : [];
@@ -299,7 +300,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         title: `Sprout: ${routine.name}`,
         // A member DM says whose routine it is — they didn't set it up.
         body: sink.user ? `${chatBody}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : chatBody,
-        context: deps.getRoutineDigestContext(),
+        // An ending asks "keep watching?" / "extend?": a reply there must have the question in history.
+        context: result.ending !== undefined || deps.getRoutineDigestContext(),
       }, newId);
     }
     if (routine.sinks.notify && deps.notify) {

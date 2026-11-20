@@ -1,5 +1,5 @@
 import {
-  converse, checkPdfAttachment, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
+  converse, checkPdfAttachment, isArchived, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
   checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
@@ -70,7 +70,8 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       deps.loadProjects(deps.projectsFile),
       deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
       deps.loadMemories(deps.dbFile),
-      deps.loadRoutines?.() ?? Promise.resolve([] as Routine[]),
+      // Archived sprouts (#980) are out of the run catalog and the todo picker.
+      (deps.loadRoutines?.() ?? Promise.resolve([] as Routine[])).then((rs) => rs.filter((r) => !isArchived(r, new Date()))),
       deps.ownerSubjectIds?.() ?? Promise.resolve([]),
     ]);
     const enabled = skills.filter((s) => s.enabled !== false);

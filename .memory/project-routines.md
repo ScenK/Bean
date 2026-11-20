@@ -79,6 +79,22 @@ todos; `record.steps` keeps all); the record is quiet only when every todo was. 
 `withSinkProblems` (nothing is delivered). "quiet" is NOT a reserved id (rejecting an id drops the
 whole saved sprout on load): a step already named `quiet` wins, so old routes keep reaching it —
 always test the target with `isQuietEnd(goto, ids)`, never `goto === "quiet"`.
+**Ending: `until`, `done`, expiry, Archived (#980).** `Routine.until` = `YYYY-MM-DD` (end of that
+core-local day) or an ISO date-time (`untilTime`). Route target `"done"` (route-only, not reserved —
+`isDoneEnd`, same rule as quiet) on a clean ok pass sets `RunRecord.done`, appends `DONE_FOOTER`
+(recommended next step; its "a week" is `ARCHIVE_GRACE_DAYS`) and stops the drain claiming. The
+scheduler marks the sprout `ended` in memory before delivery (siblings claim nothing more, Run now
+refuses), delivers, then saves `enabled: false, until: now` and `dropPendingTodos` — once, even if
+two parallel runs hit done. Expiry: a tick (lease holder only) finds `isExpired` (on and past
+`until`), waits for live runs, posts `Nothing by <date> — extend?` via `deliverDigest`
+(`ending: "expired"`, never recorded), then pauses + drops the queue — post first (a crash may
+re-post), and a failed post leaves it on to retry. Either ending is chatops `context: true` and
+ignores `chatopsOnlyOnProblems`. `isArchived` = off and `ARCHIVE_GRACE_DAYS` past `until` —
+derived; refused by Run now / trigger / Check now / exact-todo runs / `resolveTodoRoutine` and
+filtered from the desktop + chatops run/todo catalogs and the `sprouts` / `enable` commands. A
+paused sprout within the grace stays visible. `enable` (chatops) refuses an ended one past its
+`until`; restore = `scheduler.enableWatch(name, false, later until)`, which refuses a passed end.
+"Why it ended" = `endReason()` from the newest record (`done` = found, else expired).
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
 `stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
 never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.
