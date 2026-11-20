@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "vitest";
-import { checkPdfAttachment, converse, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
+import { checkPdfAttachment, converse, gapMarkerLine, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
 import { cardRecord } from "../src/card-record.js";
 import { composePersonaPrompt, DEFAULT_PERSONA, type Persona } from "../src/persona.js";
 import { availableModels } from "../src/models.js";
@@ -46,6 +46,23 @@ test("latest-turn images are sent as content parts on the final user message", a
       { type: "image", image: { data: "AAAA", mimeType: "image/jpeg" } },
     ],
   });
+});
+
+test("a gap marker leads the latest user message, never what recall ranks on (#977)", async () => {
+  let sent: ConvoMsg[] = [];
+  const deps: ConverseDeps = { model: "m", chat: async ({ messages }) => { sent = messages; return { content: "ok", toolCalls: [] }; } };
+  const marker = gapMarkerLine(new Date());
+  await conv({ latestUserText: "back again", gapMarker: marker, deps });
+  expect(sent.at(-1)!.content).toBe(`${marker}\nback again`);
+  await conv({ latestUserText: "back again", deps });
+  expect(sent.at(-1)!.content).toBe("back again");
+});
+
+test("gapMarkerLine is the local time with its offset, locale-free (#977)", () => {
+  const at = new Date(2026, 10, 20, 9, 5);
+  const off = -at.getTimezoneOffset();
+  const zone = `${off < 0 ? "-" : "+"}${String(Math.floor(Math.abs(off) / 60)).padStart(2, "0")}:${String(Math.abs(off) % 60).padStart(2, "0")}`;
+  expect(gapMarkerLine(at)).toBe(`[— 2026-11-20 09:05 ${zone} —]`);
 });
 
 test("no images keeps the final user message a plain string", async () => {

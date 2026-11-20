@@ -9,7 +9,7 @@ import {
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
-import { applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
+import { applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, resumesAfterGap, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, linkedNoteData } from "@bean/core/prompt";
@@ -661,8 +661,11 @@ export function ChatSession({
     const doc = pdfRef.current;
     const attaching = doc !== undefined && !doc.sent;
     if (attaching) setPdf({ ...doc, sent: true });
+    // The divider rule (#977) over what's already here: a gap means Bean gets the core's marker line.
+    const at = new Date().toISOString();
+    const gap = resumesAfterGap(itemsRef.current, at);
     setItems((prev) => [...prev, {
-      kind: "user", id: turnId, text: message, display, source,
+      kind: "user", id: turnId, text: message, display, source, at,
       images: images?.map((i) => `data:${i.mimeType};base64,${i.data}`),
       ...(attaching ? { pdf: { name: doc.filename, size: doc.size } } : {}),
     }, { kind: "working", id: workingId, text: attaching ? `Reading ${doc.filename}…` : "Spinning up" }]);
@@ -676,7 +679,7 @@ export function ChatSession({
 
     try {
       const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
-      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
+      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
       if (res.model) setModel(res.model);
       // Stopped while attaching: the file may be what hung, so it's unpinned like a failure. A PDF an
       // earlier turn already read stays pinned.
@@ -690,12 +693,13 @@ export function ChatSession({
       rejectedMemoriesRef.current.push(...(res.forgotten ?? []).map((m) => m.text));
 
       setItems((prev) => {
-        const next = placeSummary(prev.filter((it) => it.id !== workingId), owners, res.summary);
+        const next = placeSummary(prev.flatMap((it) => (it.id === workingId ? []
+          : it.id === turnId && it.kind === "user" && res.gapMarker ? [{ ...it, marker: res.gapMarker }] : [it])), owners, res.summary);
         const generated = res.generatedImages?.filter(
           (g): g is { path: string; dataUrl: string } => typeof g.dataUrl === "string",
         );
         if (res.reply.trim() || generated?.length) {
-          next.push({ kind: "reply", id: newId(), text: res.reply, images: generated?.length ? generated : undefined });
+          next.push({ kind: "reply", id: newId(), text: res.reply, images: generated?.length ? generated : undefined, at: new Date().toISOString() });
         }
         if (res.proposedRun) {
           next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
@@ -852,7 +856,7 @@ export function ChatSession({
     setLive(l);
     const history = handoffItems(itemsRef.current);
     const userId = newId();
-    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: typed ? "live" : "skill", pending: l.key }]);
+    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: typed ? "live" : "skill", pending: l.key, at: new Date().toISOString() }]);
     const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask, history, ...(label ? { label } : {}), ...(model ? { model } : {}) }, mountId)
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
@@ -888,7 +892,7 @@ export function ChatSession({
     const l = liveRef.current;
     if (!l || l.agent !== agent) { void startSession(agent, text, display, true, true); return; }
     const rowId = newId();
-    setItems((prev) => [...prev, { kind: "user", id: rowId, text, ...(display ? { display } : {}), source: "live", pending: l.key }]);
+    setItems((prev) => [...prev, { kind: "user", id: rowId, text, ...(display ? { display } : {}), source: "live", pending: l.key, at: new Date().toISOString() }]);
     if (!l.receipt) l.unopened?.push(typed);
     const toAgent = withImagePaths(text, imageLabelsRef.current);
     if (l.sessionId) void deliver(l.sessionId, agent, toAgent, rowId);
@@ -1623,7 +1627,7 @@ export function ChatSession({
     // the full instruction (notice.text) in context, not just the short bubble text (notice.display).
     notices: (notices) => setItems((prev) => [
       ...prev,
-      ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display })),
+      ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display, at: new Date().toISOString() })),
     ]),
     open,
     switching: () => evictingRef.current || leavingRef.current,

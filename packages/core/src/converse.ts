@@ -194,6 +194,9 @@ export interface ConverseResult {
   /** A new rolling summary of the desktop chat (#975), covering the request's first `covers`
    * history turns — set by the desktop handler (compactHistory), never by converse() itself. */
   summary?: { text: string; covers: number };
+  /** The gap marker this turn's message went out with (#977) — set by the desktop handler; the shell
+   * keeps it on the user item so the turn reads the same, byte for byte, once it is history. */
+  gapMarker?: string;
   /** The caller aborted the turn (`ConverseInput.signal`); `reply` is "" and nothing else is set. */
   stopped?: true;
 }
@@ -202,8 +205,19 @@ export interface ConverseResult {
 /** `turnId` = the desktop renderer's id for this user turn, so close-time catch-up can skip
  * turns whose per-turn memory capture already ran (app ipc.ts buildMemoryHandlers). */
 /** `summary` = the desktop chat's latest rolling summary (#975); `history` is then only the turns
- * after it. The host bounds the two with compactHistory. */
-export interface ChatRequest { history: ChatTurn[]; summary?: string; message: string; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string; }
+ * after it. The host bounds the two with compactHistory. `gap` = the shell's time-divider rule fired
+ * for this message (#977): the host prefixes it with gapMarkerLine. */
+export interface ChatRequest { history: ChatTurn[]; summary?: string; message: string; gap?: boolean; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string; }
+
+const pad = (n: number): string => String(n).padStart(2, "0");
+/** The line a desktop message goes out under after a long gap (#977): the time in this process's
+ * zone, fixed and locale-free, e.g. `[— 2026-11-20 09:12 -06:00 —]`. Built once per turn and kept
+ * by the shell, so it never changes once the turn is history. */
+export function gapMarkerLine(at: Date): string {
+  const off = -at.getTimezoneOffset();
+  const zone = `${off < 0 ? "-" : "+"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+  return `[— ${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())} ${zone} —]`;
+}
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent
@@ -641,6 +655,9 @@ export function speakerLine(speaker: string, text: string): string {
 export interface ConverseInput {
   history: ChatTurn[];
   latestUserText: string;
+  /** A code-built line the latest message goes out under (#977, gapMarkerLine). Not part of
+   * `latestUserText`, so memory recall never ranks on it. */
+  gapMarker?: string;
   skills: Skill[];
   projects: Project[];
   persona: Persona;
@@ -788,7 +805,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "everyone here", speaker } : { ownerIds }),
     memoryCategories ? categoriesBlock(memoryCategories) : "",
   ].filter(Boolean).join("\n\n");
-  const spokenText = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
+  const said = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
+  const spokenText = input.gapMarker ? `${input.gapMarker}\n${said}` : said;
   if (roleNote) contextParts.push(roleNote);
 
   // Saved text (the linked note, recalled memories) is data, never system authority: each rides

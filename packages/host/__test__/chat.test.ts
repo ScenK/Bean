@@ -564,6 +564,28 @@ test("the chat handler bounds a long history with a rolling summary on the core,
   expect(tail).not.toContain("turn 40");
 });
 
+test("a gap-flagged message goes to Bean under the core's marker once, and it reads the same as history (#977)", async () => {
+  const sent: Array<Array<{ role: string; content: unknown }>> = [];
+  const handler = buildChatHandler({
+    loadSkills: async () => [], loadProjects: async () => [], loadPersona: async () => ({ name: "Ponyta", tags: [] }),
+    converse: async ({ messages }) => { sent.push(messages); return { content: "ok", toolCalls: [] }; },
+    getModel: () => "m", projectSkillsDir: "/b/p", skillsDir: "/b/s", projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json", projectPersonaFile: "/b/pp.json", loadMemories: async () => [], dbFile: "/b/memory.json",
+  });
+  expect((await handler({ history: [], message: "hi" })).gapMarker).toBeUndefined();
+  const out = await handler({ history: [], message: "back again", gap: true });
+  const marker = out.gapMarker!;
+  expect(marker).toMatch(/^\[— \d{4}-\d{2}-\d{2} \d{2}:\d{2} [+-]\d{2}:\d{2} —\]$/);
+  const first = sent.at(-1)!;
+  expect(first.at(-1)!.content).toBe(`${marker}\nback again`);
+  // The shell keeps the marker on the turn (chatTurns): next turn, every earlier byte is unchanged
+  // and the marker reaches the model once.
+  await handler({ history: [{ role: "user", content: `${marker}\nback again` }, { role: "assistant", content: "ok" }], message: "and?" });
+  const second = sent.at(-1)!;
+  expect(second.slice(0, first.length)).toEqual(first);
+  expect(second.filter((m) => String(m.content).includes(marker))).toHaveLength(1);
+});
+
 test("models handler returns only models the enabled CLIs offer", () => {
   const handler = buildModelsHandler({
     getAvailableClis: () => ["claude"],

@@ -1,6 +1,6 @@
 import {
   converse, checkPdfAttachment, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  checkImageAttachments, compactHistory, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
+  checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, HOME_THREAD_TITLE, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
@@ -107,9 +107,13 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     // Bounded here, on the core (a remote shell never holds the API key): the summary rides back
     // with the reply and the shell keeps it as a hidden item (#975).
     const compacted = await compactHistory(req.history, req.summary, { chat: deps.converse, model: deps.getModel() }, signal);
+    // The shell says a long gap came before this message (#977); the time is the core's, which a
+    // remote shell can't know. It rides back so the shell keeps it on the turn, frozen.
+    const gapMarker = req.gap === true ? gapMarkerLine(new Date()) : undefined;
     const result = await converse({
       history: compacted.history,
       latestUserText: req.message,
+      gapMarker,
       latestUserImages: req.images,
       documents,
       skills: enabled,
@@ -135,6 +139,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       signal,
     });
     if (compacted.summary) result.summary = compacted.summary;
+    if (gapMarker) result.gapMarker = gapMarker;
     if (result.proposedSend && deps.proposeSend) {
       result.sendCard = deps.proposeSend(result.proposedSend.destination, result.proposedSend.text);
       delete result.proposedSend;

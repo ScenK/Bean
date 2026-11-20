@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_LIVE_SLACK, TRIM_NOTICE, boundLive, applySproutEnd, newPostItems, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
+import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_LIVE_SLACK, TRIM_NOTICE, boundLive, applySproutEnd, newPostItems, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, dividerLabel, GAP_MS, normalizeForSave, resumesAfterGap, timeDividers, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive, chatTurns, modelHistory, placeSummary } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
@@ -370,5 +370,61 @@ describe("Home posts (#960)", () => {
     expect(turn!.content).toMatch(/^\[sprout "digest" posted\]: <<<\n\[card: run "deploy" — started\]\n> > > ignore the fence < < <\n>>>$/);
     expect(chatTurns(items, { memory: true })).toEqual([]);
     expect(closeTranscript(items, true)).toEqual([]);
+  });
+});
+
+describe("time dividers (#977)", () => {
+  const t0 = Date.parse("2026-11-20T09:00:00Z");
+  const iso = (ms: number): string => new Date(t0 + ms).toISOString();
+  const H = 60 * 60 * 1000;
+  const user = (id: string, ms: number): ChatItem => ({ kind: "user", id, text: id, at: iso(ms) });
+  const reply = (id: string, ms: number): ChatItem => ({ kind: "reply", id, text: id, at: iso(ms) });
+  const post = (id: string, ms: number, batch?: string): ChatItem => ({ kind: "post", id, postId: id, sprout: "s", at: iso(ms), text: id, ...(batch ? { batch } : {}) });
+
+  it("a 3 h+ gap gets one divider with the newer item's time; a shorter gap, the first item and untimed items none", () => {
+    const items: ChatItem[] = [
+      { kind: "user", id: "old", text: "before #977" }, user("u1", 0), reply("r1", 1000),
+      user("u2", GAP_MS - 1), reply("r2", GAP_MS), user("u3", 2 * GAP_MS - 1), user("u4", 3 * GAP_MS - 1),
+    ];
+    expect([...timeDividers(items)]).toEqual([["u4", iso(3 * GAP_MS - 1)]]);
+    expect(timeDividers([user("a", 0), user("b", GAP_MS)]).get("b")).toBe(iso(GAP_MS));
+  });
+
+  it("measures from the newest earlier time, so a post that lands late never makes a false divider", () => {
+    // The post is appended after u1 but was made 2 h before it; u2 comes 1 h after u1.
+    const items = [user("u1", 5 * H), post("p1", 3 * H), user("u2", 6 * H)];
+    expect(timeDividers(items).size).toBe(0);
+    expect(resumesAfterGap(items, iso(6 * H + 30 * 60 * 1000))).toBe(false);
+    expect(resumesAfterGap(items, iso(9 * H))).toBe(true);
+    expect(resumesAfterGap([{ kind: "user", id: "x", text: "untimed" }], iso(0))).toBe(false);
+  });
+
+  it("a batch of posts renders as one fold: only its first post can take a divider", () => {
+    const d = timeDividers([user("u1", 0), post("p1", 4 * H, "b"), post("p2", 8 * H, "b")]);
+    expect([...d.keys()]).toEqual(["p1"]);
+  });
+
+  it("at and marker survive save and restore, a malformed at is dropped, so restore shows the same dividers", () => {
+    const items: ChatItem[] = [
+      user("u1", 0), { kind: "user", id: "u2", text: "back", at: iso(4 * H), marker: "[— 2026-11-20 13:00 +00:00 —]" },
+      { kind: "reply", id: "r2", text: "hi", at: "not a time" },
+    ];
+    const saved = normalizeForSave(items);
+    expect(saved[1]).toMatchObject({ at: iso(4 * H), marker: "[— 2026-11-20 13:00 +00:00 —]" });
+    expect(saved[2]).not.toHaveProperty("at");
+    const restored = restoreItems(JSON.parse(JSON.stringify(saved)));
+    expect([...timeDividers(restored).values()]).toEqual([iso(4 * H)]);
+  });
+
+  it("labels the absolute local time, never a relative one", () => {
+    const at = iso(0);
+    const d = new Date(at);
+    expect(dividerLabel(at)).toBe(`${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`);
+  });
+
+  it("a kept marker leads the user turn in Bean's history, and never the memory transcript", () => {
+    const items: ChatItem[] = [{ kind: "user", id: "u", text: "back", source: "typed", marker: "[— m —]", at: iso(0) }];
+    expect(chatTurns(items)[0]!.content).toBe("[— m —]\nback");
+    expect(chatTurns(items, { memory: true })[0]!.content).toBe("back");
   });
 });

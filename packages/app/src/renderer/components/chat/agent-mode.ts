@@ -103,7 +103,9 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
         return [{ role: "user", content: it.text, source, id: it.id }];
       }
       // Image bytes ride only on the current turn; older turns keep a text placeholder.
-      const text = it.images?.length ? `${it.text}\n[image attached]` : it.text;
+      // The gap marker (#977) leads the turn as it did when sent (core converse's spokenText).
+      const said = it.marker ? `${it.marker}\n${it.text}` : it.text;
+      const text = it.images?.length ? `${said}\n[image attached]` : said;
       return [{ role: "user", content: it.pdf ? `${text}\n${pdfPlaceholder(it.pdf.name)}` : text, source: it.source }];
     }
     // A Home post: sprout output, never the user's words — a fenced user-role turn the model reads as
@@ -272,7 +274,7 @@ export function turnFooter(t: { durationMs?: number; costUsd?: number; failed?: 
 /** A streaming bubble for the session, unless one is already open (a queued message joins it). */
 export function ensureStreaming(items: ChatItem[], session: string, agent: LiveCli, id: string): ChatItem[] {
   if (items.some((it) => it.kind === "reply" && it.session === session && it.streaming)) return items;
-  return [...items, { kind: "reply", id, text: "", agent, session, tail: [], streaming: true }];
+  return [...items, { kind: "reply", id, text: "", agent, session, tail: [], streaming: true, at: new Date().toISOString() }];
 }
 
 /** The agent picked up `count` messages sent to session `key` (#746): their oldest `count` pending
@@ -305,19 +307,19 @@ export function applyLiveEvent(items: ChatItem[], e: LiveEvent, newId: () => str
   // The agent's messages show as `display`; `text` stays the turn's final result, so history
   // (chatTurns) and saved chats never lose the answer behind long progress prose.
   if (e.type === "text") {
-    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", display: e.text, agent: e.agent, session: e.sessionId, tail: [], streaming: true }];
+    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", display: e.text, agent: e.agent, session: e.sessionId, tail: [], streaming: true, at: new Date().toISOString() }];
     return patch((it) => ({ ...it, display: it.display ? `${it.display}\n\n${e.text}` : e.text }));
   }
   if (e.type === "output") {
     // Prose arrives as `text` events; the collapsed steps keep only the `▸ tool` parts.
     const tools = e.line.split(" · ").filter((part) => part.startsWith("▸ "));
     if (!tools.length) return items;
-    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: tools, streaming: true }];
+    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: tools, streaming: true, at: new Date().toISOString() }];
     return patch((it) => ({ ...it, tail: [...(it.tail ?? []), ...tools].slice(-TAIL_LINES) }));
   }
   if (e.type === "turn") {
     const done = { text: e.result, footer: turnFooter(e), streaming: false };
-    if (open < 0) return [...items, { kind: "reply", id: newId(), agent: e.agent, session: e.sessionId, tail: [], ...done }];
+    if (open < 0) return [...items, { kind: "reply", id: newId(), agent: e.agent, session: e.sessionId, tail: [], ...done, at: new Date().toISOString() }];
     // The final answer is usually the last streamed message already — don't show it twice.
     return patch((it) => {
       if (!it.display) return { ...it, ...done };

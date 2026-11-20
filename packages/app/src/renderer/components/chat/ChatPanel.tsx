@@ -16,6 +16,7 @@ import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGua
 import {
   HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, imageLabelNumbers, isLiveAgent, labelPreviews, mappedImageLabels, offerAgent, parseSlash, removeImageLabel, type ImageLabels,
 } from "./agent-mode.js";
+import { dividerLabel, timeDividers } from "./chat-thread.js";
 import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
 import { copyPath, useCapabilities } from "../../shared/capabilities.js";
@@ -267,6 +268,12 @@ export function ChatPanel({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const caps = useCapabilities();
+  // A time divider (#977) above each item the chat resumed at after a quiet spell — restored chats too.
+  const dividers = timeDividers(items);
+  const withDividers = (nodes: ComponentChildren[]): ComponentChildren[] => nodes.map((node, i) => {
+    const at = dividers.get(items[i]!.id);
+    return at ? [<div key={`gap-${items[i]!.id}`} class="bean-chat-divider">{dividerLabel(at)}</div>, node] : node;
+  });
   // A remote core (#812): no terminal pane, and this machine's file paths mean nothing there.
   const pty = caps.has("pty");
   const localPaths = caps.has("pathOpen");
@@ -691,7 +698,7 @@ export function ChatPanel({
             {localPaths ? <div class="bean-panel-empty-text">{MOD_LABEL}-click a link or path to open it</div> : null}
           </PanelEmptyState>
         ) : null}
-        {items.map((it, i) => {
+        {withDividers(items.map((it, i) => {
           if (it.kind === "user") {
             const bubble = (
               <div key={it.id} class="bean-bubble bean-bubble--user">
@@ -954,7 +961,7 @@ export function ChatPanel({
               onCancel={() => onCancel(it.id)}
             />
           );
-        })}
+        }))}
       </div>
       {continued ? (
         <div class="bean-chat-continued" role="note">

@@ -369,6 +369,49 @@ test("chat history: star pins a chat past the prune; unstar returns it to Today"
   }
 });
 
+// #977: a chat resumed 3 h+ later shows one divider above the new message, sends Bean the core's gap
+// marker exactly once (frozen into history on the next turn), and the divider survives a restore.
+test("chat history: a 3 h gap renders one time divider and reaches Bean once as a marker", async () => {
+  const home = await makeBeanHome({ autoMemory: false });
+  const stub = await startStubOpenAI();
+  stub.queue({ content: "Welcome back!" });
+  stub.queue({ content: "Sure." });
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const id = "8b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e";
+  const then = Date.now() - 5 * 3_600_000;
+  saveDesktopChat(file, { id, title: "earlier", itemsJson: JSON.stringify([
+    { kind: "user", id: "a", text: "earlier", at: new Date(then).toISOString() },
+    { kind: "reply", id: "b", text: "Noted.", at: new Date(then + 1000).toISOString() },
+  ]) });
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  const markers = (req: unknown): number => JSON.stringify(req).match(/\[— \d{4}-\d{2}-\d{2} \d{2}:\d{2} [+-]\d{2}:\d{2} —\]/g)?.length ?? 0;
+  try {
+    let chat = await openChat(app);
+    const shown = (c: Page) => c.locator(".bean-chat:not([hidden])");
+    await chat.locator(`[data-row="${id}"] .bean-chat-sidebar-open`).click();
+    await expect(shown(chat).locator(".bean-bubble--bean")).toContainText("Noted.");
+    await expect(shown(chat).locator(".bean-chat-divider")).toHaveCount(0);
+    await chat.locator(".bean-input--composer").fill("back again");
+    await chat.locator(".bean-send").click();
+    await expect(shown(chat).locator(".bean-bubble--bean").last()).toContainText("Welcome back!");
+    await expect(shown(chat).locator(".bean-chat-divider")).toHaveCount(1);
+    await expect(shown(chat).locator(".bean-chat-divider + .bean-bubble--user")).toContainText("back again");
+    expect(markers(stub.requests[0])).toBe(1);
+    await chat.locator(".bean-input--composer").fill("one more");
+    await chat.locator(".bean-send").click();
+    await expect(shown(chat).locator(".bean-bubble--bean").last()).toContainText("Sure.");
+    expect(markers(stub.requests[1])).toBe(1);
+    await expect(shown(chat).locator(".bean-chat-divider")).toHaveCount(1);
+    await closeChat(app, chat);
+    chat = await openChat(app);
+    await chat.locator(`[data-row="${id}"] .bean-chat-sidebar-open`).click();
+    await expect(shown(chat).locator(".bean-bubble--bean").last()).toContainText("Sure.");
+    await expect(shown(chat).locator(".bean-chat-divider")).toHaveCount(1);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
+
 // #762: the open chat renamed by keyboard alone (focus a row, F2, type, Enter) keeps the new title
 // through its next saves and the close; a closed chat renames from ✎ too.
 test("chat history: rename a chat inline in the sidebar", async () => {

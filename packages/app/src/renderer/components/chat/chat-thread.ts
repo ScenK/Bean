@@ -20,20 +20,27 @@ const cap = (s: string): string => (s.length > THREAD_TEXT_MAX ? `${s.slice(0, T
 // A live agent's display is its progress prose ending in the final answer: keep the end.
 const capEnd = (s: string): string => (s.length > THREAD_TEXT_MAX ? `…${s.slice(-THREAD_TEXT_MAX)}` : s);
 const withPlaceholder = (text: string, had: boolean): string => (had ? `${text}\n${IMAGE_PLACEHOLDER}` : text);
+/** A saved `at` that parses as a time, or nothing — a bad one never reaches the divider rule. */
+const validAt = (at: unknown): { at?: string } =>
+  (typeof at === "string" && at.length <= 40 && !Number.isNaN(Date.parse(at)) ? { at } : {});
 
 function normalizeItem(it: ChatItem): ChatItem | undefined {
   switch (it.kind) {
     case "working":
       return undefined;
     case "user": {
-      const { images, pdf, pending: _p, ...rest } = it;
+      const { images, pdf, pending: _p, at, marker, ...rest } = it;
       const text = withPlaceholder(it.text, !!images?.length);
-      return { ...rest, text: cap(pdf ? `${text}\n${pdfPlaceholder(pdf.name)}` : text), ...(it.display !== undefined ? { display: cap(it.display) } : {}) };
+      return {
+        ...rest, ...validAt(at), text: cap(pdf ? `${text}\n${pdfPlaceholder(pdf.name)}` : text),
+        ...(it.display !== undefined ? { display: cap(it.display) } : {}),
+        ...(typeof marker === "string" && marker.length <= 100 ? { marker } : {}),
+      };
     }
     case "reply": {
-      const { images, session: _s, tail: _t, streaming, ...rest } = it;
+      const { images, session: _s, tail: _t, streaming, at, ...rest } = it;
       return {
-        ...rest,
+        ...rest, ...validAt(at),
         text: cap(withPlaceholder(it.text, !!images?.length)),
         ...(it.display !== undefined ? { display: capEnd(it.display) } : {}),
         ...(streaming ? { footer: "— turn interrupted" } : {}),
@@ -248,6 +255,38 @@ export function settleRestoredSprouts(
   }
   return { items: next, loopbacks, changed };
 }
+
+/** How long a quiet spell must be for the chat to mark where it resumed (#977). */
+export const GAP_MS = 3 * 60 * 60 * 1000;
+const atMs = (it: ChatItem): number => (it.kind === "user" || it.kind === "reply" || it.kind === "post") && it.at ? Date.parse(it.at) : NaN;
+
+/** The time dividers (#977): item id → its `at`, for each item GAP_MS or more past the NEWEST
+ * earlier timestamped item (not the one just above — a post lands later than its `at`). No earlier
+ * time = no divider; a batch's later posts never get one (the batch renders as one fold). */
+export function timeDividers(items: readonly ChatItem[]): Map<string, string> {
+  const out = new Map<string, string>();
+  let newest = -Infinity;
+  const batches = new Set<string>();
+  for (const it of items) {
+    const t = atMs(it);
+    if (Number.isNaN(t)) continue;
+    const inBatch = it.kind === "post" && it.batch !== undefined && batches.has(it.batch);
+    if (it.kind === "post" && it.batch !== undefined) batches.add(it.batch);
+    if (newest > -Infinity && t - newest >= GAP_MS && !inBatch) out.set(it.id, (it as { at: string }).at);
+    newest = Math.max(newest, t);
+  }
+  return out;
+}
+
+/** Whether a message made at `at`, after `earlier`, gets a divider — so Bean gets the gap marker. */
+export const resumesAfterGap = (earlier: readonly ChatItem[], at: string): boolean =>
+  timeDividers([...earlier, { kind: "user", id: "\0next", text: "", at }]).has("\0next");
+
+/** A divider's label, in the viewer's local time: absolute, never relative ("Thu, Nov 20 · 9:12 AM"). */
+export const dividerLabel = (at: string): string => {
+  const d = new Date(at);
+  return `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+};
 
 /** A Home post as a chat item. Posts drained together share `batch`. */
 export function postItem(p: { id: string; sprout: string; body: string; createdAt: string }, batch?: string): Extract<ChatItem, { kind: "post" }> {

@@ -863,6 +863,15 @@ button, input, textarea, select, a {
   font-size: 12px;
   cursor: pointer;
 }
+/* Where a chat resumed after 3 h+ (#977): the absolute time between two hairlines. */
+.bean-chat-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--bean-text-dim);
+  font-size: 11.5px;
+}
+.bean-chat-divider::before, .bean-chat-divider::after { content: ""; flex: 1; border-top: 1px solid var(--bean-border); }
 .bean-status-detail {
   max-width: 420px;
   margin-top: 4px;
