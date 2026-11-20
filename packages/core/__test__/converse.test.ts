@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "vitest";
-import { checkPdfAttachment, converse, gapMarkerLine, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
+import { CARD_LEAD, checkPdfAttachment, converse, gapMarkerLine, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
 import { cardRecord } from "../src/card-record.js";
 import { composePersonaPrompt, DEFAULT_PERSONA, type Persona } from "../src/persona.js";
 import { availableModels } from "../src/models.js";
@@ -453,6 +453,39 @@ test("leading system message is byte-stable across turns (prompt-cache prefix)",
     memories, deps, actions: [action], now: () => new Date("2026-07-04T22:31:07.000Z"),
   });
   expect(systems[1]).toBe(systems[0]);
+});
+
+test("a proposal with no sentence gets CARD_LEAD; one with a sentence keeps it; the rule rides in the system message (#978)", async () => {
+  let content = "";
+  const systems: string[] = [];
+  const toolSets: string[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages, tools }) => {
+      systems.push(messages[0]!.content);
+      toolSets.push(JSON.stringify(tools));
+      return { content, toolCalls: [{ name: "propose_note", args: { title: "T", body: "B" } }] };
+    },
+  };
+  const bare = await conv({ latestUserText: "save this", deps, noteAvailable: true });
+  expect(bare.reply).toBe(CARD_LEAD);
+  expect(bare.proposedNote).toMatchObject({ title: "T" });
+  content = "  ";
+  expect((await conv({ latestUserText: "again", deps, noteAvailable: true })).reply).toBe(CARD_LEAD);
+  content = "I'll draft that note for you.";
+  const spoken = await conv({
+    history: [{ role: "user", content: "save this" }, { role: "assistant", content: CARD_LEAD }],
+    latestUserText: "and once more", deps, noteAvailable: true,
+  });
+  expect(spoken.reply).toBe("I'll draft that note for you.");
+  expect(systems[0]).toContain("one short, natural sentence leading into the card");
+  expect(new Set(systems).size).toBe(1);
+  expect(new Set(toolSets).size).toBe(1);
+});
+
+test("a plain reply with no proposal is never given the card lead", async () => {
+  const deps: ConverseDeps = { model: "m", chat: async () => ({ content: "", toolCalls: [] }) };
+  expect((await conv({ latestUserText: "hi", deps })).reply).toBe("");
 });
 
 test("dated recall leaves the leading system message byte-identical with and without memories", async () => {

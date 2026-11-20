@@ -289,7 +289,9 @@ const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, w
   "When the user asks you to create a new skill or change an existing one, call propose_skill " +
   "with the complete markdown — the user confirms the card before anything is written. " +
   "If you are given a propose_todo tool, use it when the user wants a sprout to take a task — " +
-  "now or queued for later; the card's Run now / Queue is the confirmation.";
+  "now or queued for later; the card's Run now / Queue is the confirmation. " +
+  "Whenever you call a propose_* tool, also write one short, natural sentence leading into the " +
+  "card — don't restate what the card shows.";
   
 
 // Attached files are third-party content: data, never authority (safety-saved-text-never-system).
@@ -743,6 +745,10 @@ const SHARED_CHAT_NOTE =
   "Your saved memories are shared facts, plus private facts about the person speaking to you " +
   "in a DM, each marked with who it is about; never assume the speaker is your owner.";
 
+/** The neutral line a card arrives under when the model proposed it without a sentence of its own
+ * (#978). Neutral because the card can still be refused or blocked after it is sent. */
+export const CARD_LEAD = "Here's what I'd do:";
+
 export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const {
     history,
@@ -872,6 +878,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // as an error or fed back to the model as a tool result.
   const stopped = (): ConverseResult => ({ reply: "", model: deps.model, stopped: true });
   let content = "";
+  // Every confirm card comes with a sentence of speech: the model's own, else CARD_LEAD.
+  const card = (proposal: Omit<ConverseResult, "reply" | "model">): ConverseResult =>
+    ({ reply: content.trim() ? content : CARD_LEAD, model: deps.model, ...proposal });
   for (let round = 0; round < 3; round++) {
     if (signal?.aborted) return stopped();
     let toolCalls: ToolCall[] = [];
@@ -920,9 +929,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       const instruction = typeof args.instruction === "string" ? args.instruction : latestUserText;
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedRun: {
           skillName: skill.name,
           projectPath: project?.path,
@@ -930,7 +937,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
           confidence: 1,
           target: skill.target,
         },
-      };
+      });
     }
 
     const delegateCall = toolCalls.find((c) => c.name === "propose_delegate");
@@ -945,9 +952,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       const skill = skills.find((s) => s.name === args.skill);
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedDelegate: {
           projectPath,
           instruction: args.instruction,
@@ -960,7 +965,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
             ? (args.model as string)
             : undefined,
         },
-      };
+      });
     }
 
     const liveCall = toolCalls.find((c) => c.name === "propose_live_session");
@@ -975,14 +980,12 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       if (desktopLive) {
-        return { reply: content, model: deps.model, proposedLiveSession: { projectPath, instruction: args.instruction.trim() } };
+        return card({ proposedLiveSession: { projectPath, instruction: args.instruction.trim() } });
       }
       const cli = isLiveCli(args.cli) && liveClis.includes(args.cli) ? args.cli : undefined;
       // A model is kept only if the CLI that will run it (picked, else the bot's default) offers it.
       const runsOn = cli ?? (liveClis.includes("claude") ? "claude" : liveClis[0]);
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedLiveSession: {
           projectPath,
           instruction: args.instruction,
@@ -991,7 +994,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
             ? (args.model as string)
             : undefined,
         },
-      };
+      });
     }
 
     const noteCall = toolCalls.find((c) => c.name === "propose_note");
@@ -1002,11 +1005,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       const project = projects.find((p) => p.path === args.project)?.path;
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedNote: { title: args.title.trim(), body: args.body, project, slug: linkedNote?.slug },
-      };
+      });
     }
 
     const archiveCall = toolCalls.find((c) => c.name === "propose_note_archive");
@@ -1016,7 +1017,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(archiveCall, "propose_note_archive needs a query.");
         continue;
       }
-      return { reply: content, model: deps.model, proposedNoteArchive: { query: query.trim() } };
+      return card({ proposedNoteArchive: { query: query.trim() } });
     }
 
     const skillCall = toolCalls.find((c) => c.name === "propose_skill");
@@ -1027,11 +1028,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(skillCall, "invalid skill name or empty body.");
         continue;
       }
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedSkill: { name, body: args.body, updating: skills.some((s) => s.name === name) },
-      };
+      });
     }
 
     const todoCall = toolCalls.find((c) => c.name === "propose_todo");
@@ -1042,7 +1041,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(todoCall, "unknown sprout or empty text.");
         continue;
       }
-      return { reply: content, model: deps.model, proposedTodo: { routine: args.routine, text } };
+      return card({ proposedTodo: { routine: args.routine, text } });
     }
 
     const sproutCall = toolCalls.find((c) => c.name === "propose_sprout_run");
@@ -1052,7 +1051,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(sproutCall, "unknown sprout.");
         continue;
       }
-      return { reply: content, model: deps.model, proposedSproutRun: { routine } };
+      return card({ proposedSproutRun: { routine } });
     }
 
     const routineCall = toolCalls.find((c) => c.name === "propose_routine");
@@ -1070,13 +1069,11 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       }
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.
       const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId, routineAuthoring.destinations);
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedRoutine: {
           routine: parsed as Routine, updating: routineAuthoring.existing.some((e) => e.toLowerCase() === name.toLowerCase()), ...(problem ? { problem } : {}),
         },
-      };
+      });
     }
 
     const sendCall = toolCalls.find((c) => c.name === "propose_send");
@@ -1087,7 +1084,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(sendCall, "a send needs a destination name and a message.");
         continue;
       }
-      return { reply: content, model: deps.model, proposedSend: { destination, text: args.text } };
+      return card({ proposedSend: { destination, text: args.text } });
     }
 
     const actionCalls = toolCalls.filter((c) => actionByName.has(c.name));

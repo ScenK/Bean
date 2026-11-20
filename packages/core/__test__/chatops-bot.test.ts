@@ -10,7 +10,7 @@ import { ConversationStore } from "../src/chatops/conversation.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
 import { openDb } from "../src/db.js";
 import { MAX_DESK_TEXT } from "../src/chatops/desk.js";
-import { speakerLine } from "../src/converse.js";
+import { CARD_LEAD, speakerLine } from "../src/converse.js";
 import { MEMORY_INTENT_PROMPT } from "../src/memory/tools.js";
 import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
@@ -767,7 +767,8 @@ test("chat-target skill answer goes through reply, so voice turns get it spoken"
   const replies: string[] = [];
   const effects = { ...fx(), reply: async (t: string) => { replies.push(t); } };
   await buildTeamsBot(deps).onMessage(msg, effects);
-  expect(replies).toContain("Here's the summary.");
+  // No card follows a chat-target run here, so converse()'s card lead-in is dropped (#978).
+  expect(replies).toEqual(["Here's the summary."]);
 });
 
 // Second hop goes pure tool-use with no text (nested proposals are one-hop-ignored):
@@ -832,6 +833,26 @@ test("proposedNote posts a confirm-first note card instead of redirecting", asyn
   const s = JSON.stringify(effects.cards[0]);
   expect(s).toContain("note-proposal");
   expect(s).toContain("Our chat");
+});
+
+test("a card proposed with no sentence gets the fallback lead before it; one with a sentence keeps it (#978)", async () => {
+  const { deps: bare } = makeDeps({ chat: async () => ({ content: "", toolCalls: [{ name: "propose_note", args: { title: "T", body: "B" } }] }) });
+  const silent = fx();
+  await buildTeamsBot(bare).onMessage(msg, silent);
+  expect(silent.posted).toEqual([CARD_LEAD]);
+  expect(silent.cards).toHaveLength(1);
+  const { deps: spoken } = makeDeps({ chat: noteChat });
+  const said = fx();
+  await buildTeamsBot(spoken).onMessage(msg, said);
+  expect(said.posted).toEqual(["Want me to save that?"]);
+});
+
+test("a live-session card from the command (no converse) still gets the lead line (#978)", async () => {
+  const { deps } = makeDeps({ liveSessionsEnabled: () => true });
+  const effects = fx();
+  await buildTeamsBot(deps).proposeLiveSession({ conversationId: "c1", instruction: "fix it", proposedBy: "sam" }, effects);
+  expect(effects.posted).toEqual([CARD_LEAD]);
+  expect(effects.cards).toHaveLength(1);
 });
 
 test("save-note saves the draft, updates the card, and confirms", async () => {
@@ -1479,7 +1500,7 @@ test("a browser skill on opencode is refused without consuming the card; switchi
   // Teams: the picks arrive merged into the Start submit.
   deps.liveSessionProposals.update(proposalId, { cli: "claude", skillName: undefined });
   await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId, cli: "opencode", skillName: "web" } }, effects);
-  expect(effects.posted).toEqual([OPENCODE_BROWSER_REFUSAL, OPENCODE_BROWSER_REFUSAL]);
+  expect(effects.posted).toEqual([CARD_LEAD, OPENCODE_BROWSER_REFUSAL, OPENCODE_BROWSER_REFUSAL]);
   expect(reqs).toHaveLength(0);
   await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId, cli: "claude", skillName: "web" } }, effects);
   expect(reqs).toEqual([expect.objectContaining({ cli: "claude" })]);

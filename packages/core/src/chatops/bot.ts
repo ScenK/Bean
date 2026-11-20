@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
-import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedLiveSession, type ProposedSend } from "../converse.js";
+import { CARD_LEAD, converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedLiveSession, type ProposedSend } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
@@ -905,6 +905,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if ("refusal" in found) return found.refusal;
     const { run } = found;
     if (!liveClis().includes(run.cli)) return `${run.cli} isn't installed on this Mac any more.`;
+    await fx.post(CARD_LEAD); // no converse() in this path, so no sentence of the model's (#978)
     await postLiveSessionProposal({
       // No opening turn: the session opens on the channel's first message.
       projectPath: run.projectPath, instruction: "", steering: "restricted",
@@ -1534,6 +1535,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (!first) return "No projects are configured — add one first.";
     // Project/model are picked on the card; to the last started session's project, else the first (user can switch).
     const live: ProposedLiveSession = { projectPath: first.path, instruction: text };
+    await fx.post(CARD_LEAD); // no converse() in this path, so no sentence of the model's (#978)
     await postLiveSessionProposal(live, conversationId, proposedBy, fx, true);
     return "Proposed a live session — pick the project/model, edit the prompt if you want, then Start.";
   }
@@ -2199,10 +2201,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           role: "user",
           content: speakerLine(msg.fromName, msg.images?.length ? `${msg.text}\n[image attached]` : msg.text),
         });
-        if (result.reply) {
-          deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
+        // A chat-target run answers in-line here, with no card for converse()'s lead-in to introduce.
+        const reply = result.proposedRun?.target === "chat" && result.reply === CARD_LEAD ? "" : result.reply;
+        if (reply) {
+          deps.conversations.append(msg.conversationId, { role: "assistant", content: reply });
           // The owner talking to Bean while away here: a reminder, kept out of history.
-          await fx.reply(isOwner && deps.away?.get().on ? `${result.reply}\n\n${awayReminder(deps.away)}` : result.reply);
+          await fx.reply(isOwner && deps.away?.get().on ? `${reply}\n\n${awayReminder(deps.away)}` : reply);
         }
         // Drains (splices) the collector so a later pass — the chat-target follow-up below
         // shares this same tool instance — never re-sends already-delivered images.
@@ -2247,7 +2251,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             // except a send card, under the same owner-DM gate as the first hop.
             const sendCard = sendHere ? followup.proposedSend : undefined;
             // A pure tool-use second hop leaves reply empty; never answer with silence.
-            const text = followup.reply.trim() ||
+            // An ignored nested card's lead-in is no answer either.
+            const text = (sendCard || followup.reply !== CARD_LEAD ? followup.reply.trim() : "") ||
               (sendCard ? "" : `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`);
             if (text) {
               deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
