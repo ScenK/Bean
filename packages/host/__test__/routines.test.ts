@@ -22,6 +22,18 @@ test("routine handlers merge in-memory running state into the state view", async
   expect(state.r?.queue).toBeUndefined(); // not todo-driven
 });
 
+test("routine state carries the core's ended/archived view; a live sprout has none (#983)", async () => {
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [routine, { ...routine, name: "old", enabled: false, until: "2020-01-02" }],
+    saveRoutine: vi.fn(async () => {}), deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0,
+    runNow: async () => ({ started: true }),
+  });
+  const state = await h.state();
+  expect(state.old?.ended).toEqual({ archived: true, text: "Nothing by Jan 2" });
+  expect(state.r?.ended).toBeUndefined();
+});
+
 test("routine state fills the queue for every todo-driven sprout, cron included", async () => {
   const queueCounts = vi.fn(async () => ({ pending: 2, running: 3 }));
   const h = buildRoutineHandlers({

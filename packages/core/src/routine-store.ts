@@ -180,6 +180,23 @@ export function endReason(r: Pick<Routine, "enabled" | "until">, state: RoutineS
   return state?.history.some((h) => h.done && h.finishedAt === r.until) ? "found" : "expired";
 }
 
+const dayLabel = (t: number): string => new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+/** An ended sprout as the Sprouts panel lists it (#983), in core time so a remote shell sorts and
+ * words it the same: archived → "Found Nov 28" / "Nothing by Dec 20"; still in the grace →
+ * "Paused — found Nov 28 · archives Dec 5". Undefined = it hasn't ended. */
+export function endedView(r: Pick<Routine, "enabled" | "until">, state: RoutineState | undefined, now: Date): { archived: boolean; text: string } | undefined {
+  const reason = endReason(r, state, now);
+  const end = untilTime(r.until);
+  if (!reason || end === undefined) return undefined;
+  // A bare date is that day, not its end (untilTime's midnight after).
+  const d = DATE_ONLY_RE.exec(r.until!);
+  const on = dayLabel(d ? new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3])).getTime() : end);
+  const how = reason === "found" ? `found ${on}` : `nothing by ${on}`;
+  if (isArchived(r, now)) return { archived: true, text: how[0]!.toUpperCase() + how.slice(1) };
+  return { archived: false, text: `Paused — ${how} · archives ${dayLabel(end + GRACE_MS)}` };
+}
+
 export type RunStatus = "ok" | "failed" | "needs-attention";
 
 export interface RunRecord {

@@ -24,6 +24,10 @@ the optional `Routine.projects`.
   Scratch, `!needs-fixing`; default all open). Listed under edits only the draft (saves with the
   sprout). Register folder re-reads `listProjects` before appending. The renderer has no hidden
   skills, so a hidden step skill reads "not found" (muted note only). e2e: `routines-sections.e2e.ts`.
+  Archived (#983) is last and only for sprouts whose `routinesState` carries `ended.archived` —
+  the host computes `endedView()` in core time (never the renderer clock), so a remote shell lists
+  the same. It is folded by default, so its `!archived` key in that list means *open*. Restore opens
+  the editor with `until` cleared and `enabled` on; Save goes through the host's restore path.
 - Projects window (`ProjectsPanel.tsx` + `projects/project-members.ts`): row shows `n skills · m
   sprouts`; SKILLS edits the project's `skills` (re-reads `listProjects` before `saveProjects`, so it
   agrees with the Skills window's chips); SPROUTS is `sproutProjects()` membership, never written

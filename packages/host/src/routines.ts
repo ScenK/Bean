@@ -1,4 +1,4 @@
-import { hasEnded } from "@bean/core";
+import { endedView, hasEnded } from "@bean/core";
 import type {
   BuildStage, Routine, RoutineBrief, RoutineState, RoutineWatch, RunRecord, RunStatus, StepKind, WatchCheckResult, WatchItem,
 } from "@bean/core";
@@ -26,6 +26,8 @@ export interface RoutineStateView {
   lastPoll?: string; pollError?: string; pollFailures?: number;
   /** false = never enabled since its source was set — the list shows "needs review". */
   seeded?: boolean;
+  /** Ended (off, past its `until`), in core time (#983): `archived` = the panel's Archived section. */
+  ended?: { archived: boolean; text: string };
 }
 
 /** One executed step of a run, for the Dashboard's full-output view. `resume` is Bean's own
@@ -121,9 +123,12 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
     state: async (): Promise<Record<string, RoutineStateView>> => {
       const [routines, states] = await Promise.all([deps.loadRoutines(), deps.loadStates()]);
       const out: Record<string, RoutineStateView> = {};
+      const now = new Date();
       for (const r of routines) {
         const s = states[r.name];
+        const ended = endedView(r, s, now);
         out[r.name] = {
+          ...(ended ? { ended } : {}),
           lastRun: s?.lastRun, missed: s?.missed, history: s?.history ?? [],
           running: deps.isRunning(r.name), runningCount: deps.runningCount(r.name),
           ...(r.todoDriven && deps.queueCounts ? { queue: await deps.queueCounts(r.name) } : {}),
