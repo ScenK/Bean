@@ -52,8 +52,6 @@ export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
   return { title: `Closing stops ${count} tasks in ${busy.length} chat${busy.length === 1 ? "" : "s"}.`, stop: "Stop & close" };
 }
 
-/** How often the window re-reads which thread is today's Home (#960). */
-export const HOME_POLL_MS = 10 * 60_000;
 
 /** The chat window: the history sidebar plus the chat it shows. A switch or New chat shows the pick
  * — the BrowserWindow itself stays. The chat left behind is evicted when idle, otherwise it stays
@@ -185,19 +183,6 @@ export function ChatWindow() {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
     window.bean.chatThreadList().then((t) => setThreads(t ?? []), () => {});
-    // Today's Home is the core's call (its local date): re-read which listed thread it is, so yesterday's
-    // Home drops into history after midnight. Only the flag — the rows follow save acks.
-    const refreshHome = (): void => {
-      window.bean.chatThreadList().then((fresh) => {
-        const home = (fresh ?? []).find((t) => t.home)?.id;
-        setThreads((prev) => (prev.find((t) => t.home)?.id === home ? prev
-          : prev.map(({ home: _h, ...t }) => (t.id === home ? { ...t, home: true } : t))));
-      }, () => {});
-    };
-    window.addEventListener("focus", refreshHome);
-    // ponytail: a 10-minute poll, not a midnight timer — the shell doesn't know the core's local date
-    // (a remote core's zone may differ), so yesterday's row can stay hidden that long past midnight.
-    const homePoll = setInterval(refreshHome, HOME_POLL_MS);
     const refreshSynced = (): void => { window.bean.syncedChatList().then((c) => setSynced(c ?? []), () => {}); };
     refreshSynced();
     window.bean.chatopsStatus().then((st) => {
@@ -235,7 +220,7 @@ export function ChatWindow() {
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
     window.bean.homePending().then((n) => setHomePending(n > 0), () => {});
     window.bean.onTaskStatus((jobs) => setHomePending(jobs.some((j) => j.kind === "home")));
-    // The Home bubble, the avatar with posts pending, or a sprout banner: show today's Home.
+    // The Home bubble, the avatar with posts pending, or a sprout banner: show Home.
     window.bean.getPendingChatHome().then((h) => { if (h) openThreadRef.current("home"); }, () => {});
     window.bean.onChatShowHome(() => openThreadRef.current("home"));
     // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.
@@ -247,10 +232,6 @@ export function ChatWindow() {
       if (thread !== undefined) openThreadRef.current(thread);
       else if (mountId === shownRef.current) { setOverlayOpen(false); setSyncedShown(undefined); } // not saved yet, but on screen
     });
-    return () => {
-      window.removeEventListener("focus", refreshHome);
-      clearInterval(homePoll);
-    };
   }, []);
 
   // ChatPanel's prefill effect fires on a change to `droppedUrl` — flipping it back to
@@ -289,7 +270,7 @@ export function ChatWindow() {
   };
   // The shown chat left for `target` (kept mounted, or evicted). A pick another mounted chat already
   // holds is shown as is; otherwise it mounts fresh (restoring the thread). Then every other hidden
-  // chat that's idle now evicts itself. `home` = today's Home (#960); `incognito` = a new chat that
+  // chat that's idle now evicts itself. `home` = Home (#960); `incognito` = a new chat that
   // starts off the record (Home's incognito control — Home itself never goes off the record).
   const switchTo = (from: string, target: string, keep: boolean): void => {
     if (!keep) dropMount(from);

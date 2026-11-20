@@ -265,7 +265,7 @@ button, input, textarea, select, a {
   border-radius: 999px;
   background: color-mix(in oklch, var(--bean-group-color) 22%, transparent);
 }
-/* Today's Home (#960): pinned above the list, never folds; no star, rename, group or delete. */
+/* Home (#960): pinned above the list, never folds; no star, rename, group or delete. */
 .bean-chat-sidebar-home {
   flex: none;
   display: flex;

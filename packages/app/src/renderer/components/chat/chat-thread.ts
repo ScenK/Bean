@@ -92,22 +92,55 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
   }
 }
 
+/** The one fixed line atop a transcript the trim has dropped older items from (#976). A status row:
+ * shown, saved, never model history. */
+export const TRIM_NOTICE = "Older messages aren't kept here — Bean remembers what mattered.";
+const isTrimNotice = (it: ChatItem): boolean => it.kind === "status" && it.text === TRIM_NOTICE;
+
+/** Drops the oldest items to at most `max` (and `maxBytes` as JSON) — never one `keep` holds, nor the
+ * latest summary (#975), which stands for what was dropped. Once anything is dropped (now, or by an
+ * earlier trim: `items` holds the notice), TRIM_NOTICE leads, counted in both bounds. */
+function trimOldest(items: readonly ChatItem[], max: number, keep: (it: ChatItem) => boolean, maxBytes = Infinity): ChatItem[] {
+  const had = items.some(isTrimNotice);
+  const all = items.filter((it) => !isTrimNotice(it));
+  const s = all.findLastIndex((it) => it.kind === "summary");
+  const droppable = all.flatMap((it, i) => (i === s || keep(it) ? [] : [i]));
+  const view = (drop: number): ChatItem[] => {
+    const gone = new Set(droppable.slice(0, drop));
+    const body = all.filter((_, i) => !gone.has(i));
+    return drop > 0 || had ? [{ kind: "status", id: "trim-notice", tone: "info", text: TRIM_NOTICE }, ...body] : body;
+  };
+  let drop = Math.min(droppable.length, all.length + (had ? 1 : 0) > max ? all.length + 1 - max : 0);
+  const bytes = (xs: ChatItem[]): number => new TextEncoder().encode(JSON.stringify(xs)).length;
+  // ponytail: re-encodes per drop of a tenth; fine at ≤500 items.
+  while (drop < droppable.length && bytes(view(drop)) > maxBytes) drop = Math.min(droppable.length, drop + Math.max(1, Math.floor((droppable.length - drop) / 10)));
+  return view(drop);
+}
+
 /** The transcript as it is saved: transient state dropped, actions made inert, each text capped, at
  * most THREAD_ITEMS_MAX items (oldest dropped) and under THREAD_MAX_BYTES as JSON. Only the latest
- * rolling summary is kept, and never trimmed away: cut past, it stays first, standing for what was
- * dropped (#975). Never mutates. */
+ * rolling summary is kept, and never trimmed away: cut past, it stays first after the notice,
+ * standing for what was dropped (#975). Never mutates. */
 export function normalizeForSave(items: readonly ChatItem[]): ChatItem[] {
   const all = items.flatMap((it) => normalizeItem(it) ?? []);
   const latest = all.findLastIndex((it) => it.kind === "summary");
-  const kept = all.filter((it, i) => it.kind !== "summary" || i === latest);
-  const s = kept.findIndex((it) => it.kind === "summary");
-  const view = (cut: number): ChatItem[] => (s >= 0 && s < cut ? [kept[s]!, ...kept.slice(cut)] : kept.slice(cut));
-  let cut = Math.max(0, kept.length - THREAD_ITEMS_MAX);
-  if (s >= 0 && s < cut) cut++; // the pinned summary takes a slot
-  const bytes = (xs: ChatItem[]): number => new TextEncoder().encode(JSON.stringify(xs)).length;
-  // ponytail: re-encodes per drop of a tenth; fine at ≤500 items.
-  while (cut < kept.length && bytes(view(cut)) > THREAD_MAX_BYTES) cut += Math.max(1, Math.floor((kept.length - cut) / 10));
-  return view(cut);
+  return trimOldest(all.filter((it, i) => it.kind !== "summary" || i === latest), THREAD_ITEMS_MAX, () => false, THREAD_MAX_BYTES);
+}
+
+/** How far past THREAD_ITEMS_MAX a live transcript grows before it's trimmed back, so a long-running
+ * chat (Home never ends) trims now and then, not on every new item. */
+export const THREAD_LIVE_SLACK = 50;
+const UNSETTLED = new Set(["pending", "sending", "starting", "running", "queued", "undoing"]);
+/** Still in motion: a card awaiting a tap or a run's end, a streaming reply, a turn in flight. */
+const unsettled = (it: ChatItem): boolean => it.kind === "working" || (it.kind === "reply" && it.streaming === true)
+  || (it.kind === "status" && it.exiting !== undefined) || ("state" in it && UNSETTLED.has(it.state));
+
+/** The mounted transcript, bounded like the save (#976): past THREAD_ITEMS_MAX + THREAD_LIVE_SLACK
+ * items, the oldest go down to THREAD_ITEMS_MAX — never an unsettled card or a post in `pending` (not
+ * yet drained). The same array when under. */
+export function boundLive(items: ChatItem[], pending: ReadonlySet<string>): ChatItem[] {
+  return items.length <= THREAD_ITEMS_MAX + THREAD_LIVE_SLACK ? items
+    : trimOldest(items, THREAD_ITEMS_MAX, (it) => unsettled(it) || (it.kind === "post" && pending.has(it.postId)));
 }
 
 const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot", "continued", "post", "summary"]);

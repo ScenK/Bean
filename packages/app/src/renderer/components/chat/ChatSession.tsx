@@ -9,7 +9,7 @@ import {
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
-import { applySproutEnd, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
+import { applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, linkedNoteData } from "@bean/core/prompt";
@@ -174,7 +174,7 @@ export interface ChatSessionApi {
   liveEvent: (e: LiveEvent) => void;
   /** The thread this chat writes, once it has one. */
   threadId: () => string | undefined;
-  /** It holds today's Home (#960). */
+  /** It holds Home (#960). */
   home: () => boolean;
   /** Its thread was renamed in the sidebar: the stored title, for Continue in Discord. */
   renamed: (title: string) => void;
@@ -210,7 +210,7 @@ export interface ChatSessionApi {
 export interface ChatSessionProps {
   /** This chat's key in main (ipc.ts buildChatMounts) — a fresh UUID per mount. */
   mountId: string;
-  /** A saved thread to restore on mount ("home" = today's Home, #960); undefined = a new chat. */
+  /** A saved thread to restore on mount ("home" = Home, #960); undefined = a new chat. */
   restoreId?: string;
   /** A new chat that starts off the record (Home's incognito control opens one). */
   startIncognito?: boolean;
@@ -315,13 +315,12 @@ export function ChatSession({
   // An off-the-record chat has no thread: its sprout runs name this one, known only to main's memory.
   const offRecordThreadRef = useRef(crypto.randomUUID());
   const savedRef = useRef<string | undefined>(undefined);
-  // Today's Home (#960): its posts arrive with the restore and are appended only while this chat is
+  // Home (#960): its posts arrive with the restore and are appended only while this chat is
   // shown; `undrained` = appended post ids not yet confirmed drained by a landed save.
   const homeRef = useRef(false);
   const [home, setHome] = useState(false);
   const waitingPostsRef = useRef<Array<{ id: string; sprout: string; body: string; createdAt: string }>>([]);
   const undrainedRef = useRef(new Set<string>());
-  const dayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushRef = useRef(false);
   // Each write resolves to whether it landed (it never rejects) — a switch waits on that.
@@ -483,13 +482,19 @@ export function ChatSession({
     return savingRef.current;
   };
   useEffect(() => {
+    // A chat that never ends (Home) stays bounded on screen too (#976): one trim, then this effect
+    // again. Functional: an update queued since this render (a reply landing) must not be lost.
+    if (boundLive(itemsRef.current, undrainedRef.current) !== itemsRef.current) {
+      setItems((prev) => boundLive(prev, undrainedRef.current));
+      return;
+    }
     if (!threadRef.current || unsavableRef.current) return;
     if (flushRef.current) { flushRef.current = false; void saveThread(); return; }
     saveTimerRef.current ??= setTimeout(() => void saveThread(), THREAD_SAVE_MS);
   }, [items, linkedNote]);
   // Every unmount path writes first (evict, closeOut) or must not write (discard), so a debounced
   // save still pending then is stale: left alone it fires a second later against whatever is mounted.
-  useEffect(() => () => { clearTimeout(saveTimerRef.current); clearTimeout(dayTimerRef.current); }, []);
+  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
 
   // Home's waiting posts, once per post id, at the end (the prompt prefix stays byte-stable). No model
   // turn: a post is context for the owner's next message. Saved (and drained) on the next render.
@@ -516,28 +521,6 @@ export function ChatSession({
     }, () => {});
   };
   useEffect(() => { if (!hidden) pullPosts(); }, [hidden]);
-  // Midnight with Home open: this thread stays (now plain history); the next post starts the new day's Home.
-  const endHomeDay = (): void => {
-    homeRef.current = false;
-    setHome(false);
-    // Posts not yet saved here now belong to today's Home (main refuses them in this thread) — once
-    // a save in flight settles, so one that drained them before midnight keeps them.
-    waitingPostsRef.current = [];
-    void savingRef.current.then(() => {
-      const late = undrainedRef.current;
-      undrainedRef.current = new Set();
-      if (late.size > 0 && !goneRef.current) setItems((prev) => prev.filter((it) => it.kind !== "post" || !late.has(it.postId)));
-    });
-    const id = threadRef.current?.id;
-    setThreads((prev) => prev.map((t) => {
-      if (t.id !== id) return t;
-      const { home: _home, ...rest } = t;
-      return rest;
-    }));
-    if (!hiddenRef.current) onActive(id, false);
-    addStatus("A new day — the new day's Home starts with the next sprout post.", "info");
-  };
-
   useEffect(() => {
     window.bean.getModel().then(setModel);
     window.bean.listProjects().then(setProjects);
@@ -575,7 +558,6 @@ export function ChatSession({
         setHome(true);
         waitingPostsRef.current = t.home.posts;
         for (const p of t.home.posts) undrainedRef.current.add(p.id);
-        dayTimerRef.current = setTimeout(endHomeDay, Math.max(0, Date.parse(t.home.until) - Date.now()));
       }
       // Running sprout cards settle from main's record of their runs (their results loop back below).
       const sprouts = settleRestoredSprouts(restoreItems(t.items), t.sprouts);

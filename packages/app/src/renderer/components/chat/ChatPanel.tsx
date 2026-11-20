@@ -157,7 +157,7 @@ export function ChatPanel({
 }: {
   /** A chat kept mounted in the background while another one is shown. */
   hidden?: boolean;
-  /** Today's Home with posts pending (#961): the jump-down pill shows even at the bottom, and its
+  /** Home with posts pending (#961): the jump-down pill shows even at the bottom, and its
    * click loads them. A failed load leaves the count, so the pill stays for the next click. */
   homePosts?: boolean;
   onHomePosts?: () => void;
@@ -238,7 +238,7 @@ export function ChatPanel({
   // Off the record: nothing from this chat is remembered at close.
   incognito: boolean;
   onToggleIncognito: () => void;
-  /** Today's Home (#960): its empty state, and Off the record opens a separate chat. */
+  /** Home (#960): its empty state, and Off the record opens a separate chat. */
   home?: boolean;
   /** Continue in Discord's header button (ContinueDiscord), when this chat may offer it. */
   continueButton?: ComponentChildren;

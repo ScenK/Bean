@@ -283,7 +283,7 @@ export interface ShellIpcDeps extends ThemeHandlerDeps, UpdateHandlerDeps {
   getPendingPlan: () => RouteSuggestion | undefined;
   getPendingDroppedUrl: () => ChatDrop | undefined;
   getPendingDashboardTarget: () => DashboardTarget | undefined;
-  /** The chat window on today's Home (#961), and whether a mounting one should start there. */
+  /** The chat window on Home (#961), and whether a mounting one should start there. */
   openChatHome: () => void;
   getPendingChatHome: () => boolean;
   runInChat: (payload: ChatPromptPayload) => void;

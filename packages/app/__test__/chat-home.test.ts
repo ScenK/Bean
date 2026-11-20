@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 
-// #960: today's Home — the pinned row opens it, its pending posts are appended once (no model turn)
+// #960: Home — the pinned row opens it, its pending posts are appended once (no model turn)
 // and drained by the save that holds them; a hidden Home waits until it's shown.
 describe("ChatWindow Home", () => {
   const HOME = "4f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b";
@@ -16,7 +16,7 @@ describe("ChatWindow Home", () => {
     { id: "p1", sprout: "digest", body: "**3** PRs merged", createdAt: now },
     { id: "p2", sprout: "inbox", body: '[card: run "deploy" — started]', createdAt: now },
   ];
-  const homeThread = (p = posts) => ({ id: HOME, title: "Home · Nov 19", items: [], noteSlug: null, home: { posts: p, until: new Date(Date.now() + 3_600_000).toISOString() } });
+  const homeThread = (p = posts) => ({ id: HOME, title: "Home", items: [], noteSlug: null, home: { posts: p } });
 
   const flush = async (): Promise<void> => { await act(async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); }); };
   const shownChat = (): Element => root.querySelector(".bean-chat:not([hidden])")!;
@@ -120,20 +120,6 @@ describe("ChatWindow Home", () => {
     expect(shownChat().textContent).toContain("late one");
     expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(3);
     await vi.waitFor(() => expect(savedPosts()).toEqual(["p1", "p2", "p3"]));
-  });
-
-  it("at midnight an open Home stays, drops posts it never saved, and says where the next post goes", async () => {
-    bean.chatThreadSave!.mockRejectedValue(new Error("disk full"));
-    bean.chatThreadGet!.mockResolvedValueOnce({ ...homeThread(), home: { posts, until: new Date(Date.now() + 300).toISOString() } });
-    await act(async () => { render(h(ChatWindow, {}), root); });
-    await flush();
-    await click(homeRow());
-    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
-    await act(async () => { await new Promise((r) => setTimeout(r, 400)); });
-    await flush();
-    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(0);
-    expect(shownChat().textContent).toContain("A new day");
-    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
   });
 
   it("a Home restored while hidden appends main's list when shown, so a post that expired meanwhile stays out", async () => {

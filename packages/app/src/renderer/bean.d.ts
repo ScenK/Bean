@@ -97,7 +97,7 @@ declare global {
       /** Focus the chat window and show the chat (mount) that owns a bubble's task. */
       openChatMount(mountId: string): void;
       onShowChatMount(cb: (mountId: string) => void): void;
-      /** Open the chat window on today's Home (the Home bubble's click). */
+      /** Open the chat window on Home (the Home bubble's click). */
       openChatHome(): void;
       /** How many Home posts are pending (the job feed keeps it current after this first read). */
       homePending(): Promise<number>;

@@ -111,7 +111,7 @@ export type ChatItem =
   // Continue in Discord (#697): this chat moved to a Discord thread. A chat holding one is read-only
   // and offers Open thread (the thread's synced view) instead of a composer.
   | { kind: "continued"; id: string; surface: "discord"; conversationId: string; title: string }
-  // A sprout's Home post (#960), appended once per `postId` when today's Home is shown. Untrusted
+  // A sprout's Home post (#960), appended once per `postId` when Home is shown. Untrusted
   // sprout output: rendered as inert markdown, in history only as a fenced, non-typed user turn.
   // `batch` = drained together (2+ fold into one "While you were away · N" block); `at` = its ISO time.
   | { kind: "post"; id: string; postId: string; sprout: string; at: string; text: string; batch?: string }

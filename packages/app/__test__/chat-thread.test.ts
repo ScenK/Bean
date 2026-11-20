@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, applySproutEnd, newPostItems, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
+import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_LIVE_SLACK, TRIM_NOTICE, boundLive, applySproutEnd, newPostItems, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive, chatTurns, modelHistory, placeSummary } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
@@ -161,11 +161,43 @@ describe("normalizeForSave", () => {
     const many = Array.from({ length: THREAD_ITEMS_MAX + 20 }, (_, i): ChatItem => ({ kind: "status", id: `s${i}`, text: `${i}`, tone: "info" }));
     const capped = normalizeForSave(many);
     expect(capped).toHaveLength(THREAD_ITEMS_MAX);
-    expect(capped[0]!.id).toBe("s20");
+    expect(capped[0]).toMatchObject({ kind: "status", text: TRIM_NOTICE }); // the notice takes a slot
+    expect(capped[1]!.id).toBe("s21");
     const big = Array.from({ length: 200 }, (_, i): ChatItem => ({ kind: "reply", id: `b${i}`, text: "é".repeat(THREAD_TEXT_MAX) }));
     const fitted = normalizeForSave(big);
     expect(new TextEncoder().encode(JSON.stringify(fitted)).length).toBeLessThanOrEqual(THREAD_MAX_BYTES);
     expect(fitted.at(-1)!.id).toBe("b199");
+    expect(fitted[0]).toMatchObject({ text: TRIM_NOTICE });
+  });
+
+  it("#976: the trim notice stays one line on top through every later save and restore", () => {
+    const short = [{ kind: "status", id: "s", text: "hi", tone: "info" } as ChatItem];
+    expect(normalizeForSave(short)).toEqual(short); // nothing dropped, no notice
+    const many = Array.from({ length: THREAD_ITEMS_MAX + 5 }, (_, i): ChatItem => ({ kind: "status", id: `s${i}`, text: `${i}`, tone: "info" }));
+    const restored = restoreItems(JSON.parse(JSON.stringify(normalizeForSave(many))));
+    const again = normalizeForSave([...restored.slice(0, 1), ...restored.slice(300), { kind: "user", id: "u", text: "more" }]);
+    expect(again.filter((it) => it.kind === "status" && it.text === TRIM_NOTICE)).toHaveLength(1);
+    expect(again[0]).toMatchObject({ text: TRIM_NOTICE });
+  });
+});
+
+describe("boundLive (#976)", () => {
+  const rows = (n: number, from = 0): ChatItem[] => Array.from({ length: n }, (_, i): ChatItem => ({ kind: "status", id: `s${from + i}`, text: `${from + i}`, tone: "info" }));
+  it("leaves a transcript within the slack alone", () => {
+    const items = rows(THREAD_ITEMS_MAX + THREAD_LIVE_SLACK);
+    expect(boundLive(items, new Set())).toBe(items);
+  });
+  it("past it, drops the oldest down to the cap — never an unsettled card, an undrained post or the latest summary", () => {
+    const card: ChatItem = { kind: "note", id: "card", note: { title: "t", body: "b" } as never, state: "pending" };
+    const post: ChatItem = { kind: "post", id: "post", postId: "p1", sprout: "s", at: "x", text: "t" };
+    const drained: ChatItem = { kind: "post", id: "old", postId: "p0", sprout: "s", at: "x", text: "t" };
+    const sum: ChatItem = { kind: "summary", id: "sum", text: "S" };
+    const items = [card, post, drained, sum, ...rows(THREAD_ITEMS_MAX + THREAD_LIVE_SLACK)];
+    const out = boundLive(items, new Set(["p1"]));
+    expect(out).toHaveLength(THREAD_ITEMS_MAX);
+    expect(out.slice(0, 4).map((it) => it.id)).toEqual(["trim-notice", "card", "post", "sum"]);
+    expect(out[0]).toMatchObject({ text: TRIM_NOTICE });
+    expect(out.at(-1)!.id).toBe(items.at(-1)!.id);
   });
 });
 
@@ -236,7 +268,8 @@ describe("rolling summary (#975)", () => {
     const saved = normalizeForSave(items);
     expect(saved).toHaveLength(THREAD_ITEMS_MAX);
     expect(saved.filter((it) => it.kind === "summary")).toEqual([{ kind: "summary", id: items[51]!.id, text: "latest" }]);
-    expect(saved[0]!.kind).toBe("summary");
+    expect(saved[0]).toMatchObject({ kind: "status", text: TRIM_NOTICE });
+    expect(saved[1]!.kind).toBe("summary");
     expect(saved.at(-1)!.id).toBe(items.at(-1)!.id);
     // Kept in place when the cut doesn't reach it.
     const late = [...Array.from({ length: 590 }, (_, i) => turn(i)), summary("late"), turn(590)];
