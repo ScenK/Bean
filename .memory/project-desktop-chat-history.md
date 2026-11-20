@@ -4,7 +4,7 @@ Every non-incognito desktop chat is written through to `bean.db`'s `desktop_chat
 `desktop-chats.ts`, 90-day prune inside `listDesktopChats`). Epic #501; this entry covers the save/restore
 slice.
 
-**Starred threads (#752).** `desktop_chats.starred` exempts a thread from the prune. `starDesktopChat` never
+**Starred threads (#752).** `desktop_chats.starred` exempts a thread from the prune (so does being Home, #976). `starDesktopChat` never
 inserts and leaves `updated_at` alone — except unstarring a *starred* thread already past the cutoff resets
 `updated_at` to `now` (same `<` and `now` as the prune), else the next listing would delete it on the spot.
 The save upsert never lists `starred`, so saves keep it; `withSaveAck` carries it over from the old row.
@@ -86,7 +86,15 @@ from the thread's dispatch rows at restore (#921, [project-sprout-dispatches](pr
 live resumes through the host's `findDelegateRun(…, "desktop")`, never through restored JSON. Each text is
 capped at 20k chars, the list at 500 items (oldest dropped — except the latest rolling `summary` item, see
 [project-desktop-chat-compaction](project-desktop-chat-compaction.md)), the JSON at 2 MB (renderer copy of
-`DESKTOP_CHAT_MAX_BYTES`). `restoreItems` remaps every id with `newId()` (a restored `item-3` would
+`DESKTOP_CHAT_MAX_BYTES`). User/reply items carry `at` (ISO, #977; kept only when it parses) and a user
+item the core's gap `marker` it went out under. **Time dividers** (`timeDividers`): above an item `at`
+3 h+ past the **newest** earlier `at` (a post lands later than its `at`), labelled with its absolute
+local time; no calendar-day rule, untimed (older) items never fire one; each post in a batch counts
+(later ones draw theirs inside the fold); `at` must be an ISO instant with a zone. A queued Bean turn
+(loopbacks) starts from an effect after the previous turn renders — `itemsRef` follows the render, so
+draining in `finally` sent history without that turn's reply/marker; the chat stays busy until that hand-off,
+so a new send can't overtake it. ChatPanel wraps each row (+ divider) in a `Fragment` keyed by item id —
+unkeyed wrappers remount every kept row when a trim drops older ones. `restoreItems` remaps every id with `newId()` (a restored `item-3` would
 collide with the new load's counter) and drops `source` from user turns, so restored turns are context
 only for memory extraction. A restored done delegate has no `taskId`, so no event can loop it back.
 

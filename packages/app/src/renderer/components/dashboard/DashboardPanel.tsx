@@ -71,6 +71,8 @@ const stepTitle = (step: DashStep): string => {
 
 function nextRunText(routine: Routine | undefined, state: RoutineStateView | undefined): string {
   if (!routine) return "sprout deleted — history kept";
+  // An ended sprout reads like a paused one, with how it ended (the core's words, core time).
+  if (state?.ended) return `${state.ended.archived ? "archived · " : ""}${state.ended.text}`;
   if (!routine.enabled) return routine.watch ? "paused — won't run again until you enable it" : "on demand — runs only when you start it";
   // A watch has no "next run" — say what it's waiting for instead.
   if (routine.watch) return watchDashboardText(routine, state, new Date());
@@ -396,13 +398,16 @@ export function DashboardPanel() {
     const ordinal = runViews.length - index;
     const resolvedOpen = openResolved.includes(run.id);
     const digestOpen = (index === 0) !== flippedDigests.includes(run.id);
+    // A route ended it quiet: recorded, nothing delivered. A sink problem raised later still shows.
+    const quiet = run.quiet !== undefined && run.status === "ok";
     return [
       spineRow(`${run.id}-head`, `run ${ordinal}`, "run", (
         <div class="bean-dash-run-head">
           <span class="bean-dash-run-time">{clock(run.startedAt)} → {clock(run.finishedAt)}</span>
           <span class="bean-dash-meta">
-            {plural(run.steps.length, "step")} · {run.status === "ok" ? "healthy" : run.status === "needs-attention" ? "needs attention" : "failed"}
+            {plural(run.steps.length, "step")} · {quiet ? "Checked · nothing new" : run.status === "ok" ? "healthy" : run.status === "needs-attention" ? "needs attention" : "failed"}
           </span>
+          {quiet ? <span class="bean-dash-meta bean-dash-quiet">{run.quiet}</span> : null}
           {run.steps.length > 0 ? <span class="bean-dash-path">{executedPath(run, routine?.steps)}</span> : null}
         </div>
       )),

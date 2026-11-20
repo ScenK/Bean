@@ -520,7 +520,7 @@ app.whenReady().then(async () => {
     }
     if (target) pendingDashboardTarget = target;
   };
-  // The chat window on today's Home (#961): pushed to an open window, pulled by one still loading.
+  // The chat window on Home (#961): pushed to an open window, pulled by one still loading.
   let pendingHome = false;
   const openChatHome = (): void => {
     openComponent("chat");

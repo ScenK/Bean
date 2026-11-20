@@ -19,29 +19,39 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   no transaction of its own, so the host can run it inside the transcript save's transaction.
 - Not `sprout_dispatches`: posts have no origin conversation and never enter the chatops outbox.
 
-## Home thread (#960)
+## Home thread (#960, continuous since #976)
 
-- Today's Home id = `homeThreadId()`: a UUID-shaped sha256 of the **core-local** date (no stored
-  state, every shell agrees). The shell asks for it as `chatThreadGet("home", mount)` — it can't know
-  the core's date — and gets an empty thread before the first save, plus `home: { posts, until }`.
-  Earlier days' Home threads are plain history (deletable, never drain); the listing flags only
-  today's with `home: true`, which the sidebar pins instead of dating.
+- Home is **one continuous thread**: `HOME_THREAD_ID` (core `desktop-chats.ts`) is a fixed UUID-shaped
+  sha256 of a constant — no date, no stored state, every shell agrees. The shell asks for it as
+  `chatThreadGet("home", mount)` and gets an empty thread (titled `HOME_THREAD_TITLE`) before the first
+  save, plus `home: { posts }`. The listing flags it `home: true`; the sidebar pins it.
+- It never rolls over: no midnight timer, status row or listing re-check (they were the daily Home's,
+  #960 had no product reason for the roll). Its model history is bounded by the rolling summary
+  (#975, `project-desktop-chat-compaction.md`), its transcript by the save trim.
+- Exempt from the 90-day prune (`listDesktopChats` skips `HOME_THREAD_ID`); it still can't be starred.
+- Pre-#976 daily Home threads ("Home · Nov 19") stay plain history: listed with their dated titles,
+  deletable, never drained into, never merged. They age out normally.
 - Drain = the save that holds the posts: the host reads the `post` items in the saved transcript
   (no id list from the shell; only items with every field the shell's restore keeps — host
   `postShape` and chat-thread.ts `normalizeItem` stay in step) and drains those it handed **to that mount with that thread**, via
   `saveDesktopChatDraining` (save + mark drained in one `BEGIN IMMEDIATE`). A failed save leaves them
-  pending; the renderer appends by post id, so a re-hand never doubles. Past midnight a save of
-  yesterday's Home holding undrained posts is refused (today's Home owns them); the renderer drops
-  them at its day timer. A shown Home appends main's current pending list, re-asked on every show, so
-  a post that expired while it was hidden stays out. The host never appends to `items_json`.
+  pending; the renderer appends by post id, so a re-hand never doubles. A shown Home appends main's
+  current pending list, re-asked on every show, so a post that expired while it was hidden stays
+  out. The host never appends to `items_json`.
+- Bounded on screen too: `boundLive` (chat-thread.ts) trims a mounted chat past `THREAD_ITEMS_MAX +
+  THREAD_LIVE_SLACK` back to the cap — never an unsettled card, an undrained post or the latest
+  summary. It runs from ChatSession's save effect as a **functional** `setItems`: a plain set from
+  the render's snapshot clobbered a reply queued meanwhile (the turn hung on "Spinning up").
+- Once a trim (save or live) drops anything, a `status` row with `TRIM_NOTICE` ("Older messages aren't
+  kept here — Bean remembers what mattered.") leads the transcript, counted in the caps, kept through
+  every later save. Not model history (status rows never are).
+- Perf (#976 e2e, `chat-history.e2e.ts` "full Home"): a restored 500-item / ~1.9 MB Home opens in
+  ~0.7 s, scrolls at ~15 ms/frame, saves in well under 2 s; no `content-visibility` needed.
 - The renderer appends posts only while the chat is shown (a hidden Home waits), adds no model turn,
   and maps a `post` item into history as a `[sprout "<name>" posted]: <<<…>>>` user turn with source
   `loopback` (non-typed); it's left out of the close-time memory transcript.
 - Home is never deleted/starred/renamed/grouped (host throws) or taken off the record (host
   `setIncognito` ignores it; the shell's Off the record opens a separate incognito chat).
-- Midnight with Home open: the chat stays on that thread (now plain history) with a status row. The
-  chat window re-reads the listing's `home` flag on focus and every 10 minutes (it can't know the
-  core's date), so yesterday's row drops into history.
 
 ## Unread dot, avatar bubble, jump-down pill (#961)
 

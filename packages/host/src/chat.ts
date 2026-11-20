@@ -1,9 +1,10 @@
 import {
-  converse, checkPdfAttachment, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  checkImageAttachments, compactHistory, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
+  converse, checkPdfAttachment, isArchived, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
+  checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
-  DESKTOP_CHAT_MAX_BYTES, homeThreadId, homeThreadTitle, nextHomeDay, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
+  type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
+  DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, HOME_THREAD_TITLE, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
 } from "@bean/core";
 import { readFile } from "node:fs/promises";
 import type { ClientId } from "./shell-ops.js";
@@ -49,6 +50,12 @@ export interface ChatHandlerDeps {
   todoAhead?: (routine: string) => number;
   /** Enables propose_send: matches the spoken destination and keeps the proposal for the Send tap. */
   proposeSend?: (destination: string, body: string) => SendCard;
+  /** Enables propose_routine (#982) for a chat whose client can save it (else undefined): the
+   * tool's names (`authoring`, from every sprout) and the card that keeps the draft for its Save. */
+  routineDrafts?: (clientId: ClientId) => {
+    authoring: (routines: Routine[]) => RoutineAuthoring;
+    propose: (proposal: ProposedRoutine) => Promise<RoutineDraftCard>;
+  } | undefined;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
    * behind runtime config someday; onStart drives the 🎨 working indicator of the chat (mount) that asked. */
   imageGen?: {
@@ -60,11 +67,12 @@ export interface ChatHandlerDeps {
 export function buildChatHandler(deps: ChatHandlerDeps) {
   // signal = the turn's Stop (registerIpc's per-mount controller); converse() then resolves `stopped`.
   return async (req: ChatRequest, clientId?: ClientId, mountId?: string, signal?: AbortSignal): Promise<ConverseResult> => {
+    const arrived = new Date(); // the gap marker's time (#977): when the message came, not after compaction
     // The renderer's imageFileGuard is UX only; main re-checks before anything reaches OpenAI (#733).
     if (req.images !== undefined) checkImageAttachments(req.images);
     // Renderer input is untrusted: a spoofed (non-%PDF-) or oversize document fails the turn here.
     const documents = checkPdfAttachment(req.documents);
-    const [skills, projects, persona, memories, routines, ownerIds] = await Promise.all([
+    const [skills, projects, persona, memories, allRoutines, ownerIds] = await Promise.all([
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
       deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
@@ -72,6 +80,9 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       deps.loadRoutines?.() ?? Promise.resolve([] as Routine[]),
       deps.ownerSubjectIds?.() ?? Promise.resolve([]),
     ]);
+    // Archived sprouts (#980) are out of the run catalog and the todo picker (a draft may still reuse a name).
+    const routines = allRoutines.filter((r) => !isArchived(r, new Date()));
+    const drafts = clientId === undefined ? undefined : deps.routineDrafts?.(clientId);
     const enabled = skills.filter((s) => s.enabled !== false);
     const todoRoutines = routines.filter((r) => r.todoDriven).map((r) => r.name);
     // Per-request (not shared) so `paths` collects only this turn's generated files.
@@ -107,9 +118,13 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     // Bounded here, on the core (a remote shell never holds the API key): the summary rides back
     // with the reply and the shell keeps it as a hidden item (#975).
     const compacted = await compactHistory(req.history, req.summary, { chat: deps.converse, model: deps.getModel() }, signal);
+    // The shell says a long gap came before this message (#977); the time is the core's, which a
+    // remote shell can't know. It rides back so the shell keeps it on the turn, frozen.
+    const gapMarker = req.gap === true ? gapMarkerLine(arrived) : undefined;
     const result = await converse({
       history: compacted.history,
       latestUserText: req.message,
+      gapMarker,
       latestUserImages: req.images,
       documents,
       skills: enabled,
@@ -132,12 +147,18 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       webSearch: deps.webSearch?.() ?? false,
       runAvailable: clientId === undefined || (deps.runAvailable?.(clientId) ?? true),
       sendAvailable: deps.proposeSend !== undefined,
+      ...(drafts ? { routineAuthoring: drafts.authoring(allRoutines) } : {}),
       signal,
     });
     if (compacted.summary) result.summary = compacted.summary;
+    if (gapMarker) result.gapMarker = gapMarker;
     if (result.proposedSend && deps.proposeSend) {
       result.sendCard = deps.proposeSend(result.proposedSend.destination, result.proposedSend.text);
       delete result.proposedSend;
+    }
+    if (result.proposedRoutine && drafts) {
+      result.routineDraft = await drafts.propose(result.proposedRoutine);
+      delete result.proposedRoutine;
     }
     if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts);
     if (result.proposedTodo && deps.todoAhead) {
@@ -215,9 +236,8 @@ export interface ChatThreadAck { id: string; title: string; updatedAt: string; h
  * pruned) — the chat opens empty with a status row. */
 export type PendingChatThread = {
   id: string; title: string; items: unknown[]; noteSlug: string | null; sprouts?: SproutOutcome[];
-  /** Today's Home (#960): its pending posts, handed to this chat to append and drain with its next
-   * save, and when it stops being today's (the next core-local midnight). */
-  home?: { posts: HomePost[]; until: string };
+  /** Home (#960): its pending posts, handed to this chat to append and drain with its next save. */
+  home?: { posts: HomePost[] };
 } | { missing: true };
 
 /** A sprout run a desktop chat started (#921), as its card learns it: `status` absent = still
@@ -304,16 +324,16 @@ export function buildChatMounts() {
 export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
   const threads = new Map<string, string>(); // mount key → thread id; dropped at release
   const unsavable = new Set<string>();
-  // Per chat: the Home posts handed to it with today's Home — the only ids its saves may drain.
+  // Per chat: the Home posts handed to it with Home — the only ids its saves may drain.
   const handed = new Map<string, { thread: string; ids: Set<string> }>();
   const now = (): Date => deps.now?.() ?? new Date();
-  const isHome = (id: string): boolean => id === homeThreadId(now());
+  const isHome = (id: string): boolean => id === HOME_THREAD_ID;
   const holder = (id: string): string | undefined => [...threads].find(([, t]) => t === id)?.[0];
-  /** A saved thread for this chat to restore (pinned to it), or `missing` when it's gone. Today's
-   * Home (`HOME_TARGET` or its id) is never missing: an empty thread until its first save, with the
+  /** A saved thread for this chat to restore (pinned to it), or `missing` when it's gone. Home
+   * (`HOME_TARGET` or its id) is never missing: an empty thread until its first save, with the
    * pending posts. */
   const get = (key: string, target: unknown): PendingChatThread => {
-    const id = target === HOME_TARGET ? homeThreadId(now()) : target;
+    const id = target === HOME_TARGET ? HOME_THREAD_ID : target;
     if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
     const pinned = threads.get(key);
     if (pinned !== undefined && pinned !== id) throw new Error("this chat saves a different chat thread");
@@ -325,21 +345,18 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     let items: unknown = [];
     if (row) try { items = JSON.parse(row.itemsJson); } catch { items = []; }
     if (!unsavable.has(key)) threads.set(key, id);
-    const thread = { id, title: row?.title ?? homeThreadTitle(now()), items: Array.isArray(items) ? items : [], noteSlug: row?.noteSlug ?? null };
+    const thread = { id, title: row?.title ?? HOME_THREAD_TITLE, items: Array.isArray(items) ? items : [], noteSlug: row?.noteSlug ?? null };
     if (!home || unsavable.has(key)) return thread;
     const posts = deps.listPendingHomePosts?.(deps.dbFile) ?? [];
     handed.set(key, { thread: id, ids: new Set([...(handed.get(key)?.thread === id ? handed.get(key)!.ids : []), ...posts.map((p) => p.id)]) });
-    return { ...thread, home: { posts, until: nextHomeDay(now()).toISOString() } };
+    return { ...thread, home: { posts } };
   };
-  /** Today's Home is pinned in the sidebar: never deleted, starred, renamed or grouped. */
+  /** Home is pinned in the sidebar: never deleted, starred, renamed or grouped. */
   const notHome = (id: string, what: string): void => {
     if (isHome(id)) throw new Error(`Home can't be ${what}`);
   };
   return {
-    list: (): DesktopChatListing[] => {
-      const home = homeThreadId(now());
-      return deps.listDesktopChats(deps.dbFile).map((t) => (t.id === home ? { ...t, home: true } : t));
-    },
+    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile).map((t) => (isHome(t.id) ? { ...t, home: true } : t)),
     /** Sidebar delete: never a thread an open chat holds. */
     delete: (id: unknown): void => {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
@@ -399,8 +416,6 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
         const p = postShape(it);
         return p && mine.ids.has(p.postId) ? [p.postId] : [];
       }))];
-      // Past midnight they belong to today's Home (which may hold them already): yesterday's can't keep them.
-      if (drained.length > 0 && !isHome(o.id)) throw new Error("Home's day ended — its new posts go to today's Home");
       // The stored title, not the renderer's: a rename since the first save wins over the open chat's copy.
       const title = drained.length > 0 && deps.saveDesktopChatDraining
         ? deps.saveDesktopChatDraining(deps.dbFile, chat, drained, at)

@@ -9,11 +9,12 @@ import {
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
-import { applySproutEnd, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
+import { applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, resumesAfterGap, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, linkedNoteData } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
+import { CARD_LEAD } from "@bean/core/card-record";
 import { dataUrlToAttachment, labelNoteImages } from "../../shared/note-images.js";
 import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
@@ -174,7 +175,7 @@ export interface ChatSessionApi {
   liveEvent: (e: LiveEvent) => void;
   /** The thread this chat writes, once it has one. */
   threadId: () => string | undefined;
-  /** It holds today's Home (#960). */
+  /** It holds Home (#960). */
   home: () => boolean;
   /** Its thread was renamed in the sidebar: the stored title, for Continue in Discord. */
   renamed: (title: string) => void;
@@ -210,7 +211,7 @@ export interface ChatSessionApi {
 export interface ChatSessionProps {
   /** This chat's key in main (ipc.ts buildChatMounts) — a fresh UUID per mount. */
   mountId: string;
-  /** A saved thread to restore on mount ("home" = today's Home, #960); undefined = a new chat. */
+  /** A saved thread to restore on mount ("home" = Home, #960); undefined = a new chat. */
   restoreId?: string;
   /** A new chat that starts off the record (Home's incognito control opens one). */
   startIncognito?: boolean;
@@ -315,13 +316,12 @@ export function ChatSession({
   // An off-the-record chat has no thread: its sprout runs name this one, known only to main's memory.
   const offRecordThreadRef = useRef(crypto.randomUUID());
   const savedRef = useRef<string | undefined>(undefined);
-  // Today's Home (#960): its posts arrive with the restore and are appended only while this chat is
+  // Home (#960): its posts arrive with the restore and are appended only while this chat is
   // shown; `undrained` = appended post ids not yet confirmed drained by a landed save.
   const homeRef = useRef(false);
   const [home, setHome] = useState(false);
   const waitingPostsRef = useRef<Array<{ id: string; sprout: string; body: string; createdAt: string }>>([]);
   const undrainedRef = useRef(new Set<string>());
-  const dayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushRef = useRef(false);
   // Each write resolves to whether it landed (it never rejects) — a switch waits on that.
@@ -417,6 +417,7 @@ export function ChatSession({
   const [beanTurn, setBeanTurnState] = useState<{ id: string; stopping?: boolean } | undefined>(undefined);
   const setBeanTurn = (t: { id: string; stopping?: boolean } | undefined): void => { beanTurnRef.current = t; setBeanTurnState(t); };
   const queuedSendsRef = useRef<QueuedSend[]>([]);
+  const [turnsSettled, setTurnsSettled] = useState(0);
   const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
   const delegateTaskIdsRef = useRef(new Map<string, string>());
   const pendingDelegateEventsRef = useRef(new Map<string, DelegateEvent[]>());
@@ -483,13 +484,19 @@ export function ChatSession({
     return savingRef.current;
   };
   useEffect(() => {
+    // A chat that never ends (Home) stays bounded on screen too (#976): one trim, then this effect
+    // again. Functional: an update queued since this render (a reply landing) must not be lost.
+    if (boundLive(itemsRef.current, undrainedRef.current) !== itemsRef.current) {
+      setItems((prev) => boundLive(prev, undrainedRef.current));
+      return;
+    }
     if (!threadRef.current || unsavableRef.current) return;
     if (flushRef.current) { flushRef.current = false; void saveThread(); return; }
     saveTimerRef.current ??= setTimeout(() => void saveThread(), THREAD_SAVE_MS);
   }, [items, linkedNote]);
   // Every unmount path writes first (evict, closeOut) or must not write (discard), so a debounced
   // save still pending then is stale: left alone it fires a second later against whatever is mounted.
-  useEffect(() => () => { clearTimeout(saveTimerRef.current); clearTimeout(dayTimerRef.current); }, []);
+  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
 
   // Home's waiting posts, once per post id, at the end (the prompt prefix stays byte-stable). No model
   // turn: a post is context for the owner's next message. Saved (and drained) on the next render.
@@ -516,28 +523,6 @@ export function ChatSession({
     }, () => {});
   };
   useEffect(() => { if (!hidden) pullPosts(); }, [hidden]);
-  // Midnight with Home open: this thread stays (now plain history); the next post starts the new day's Home.
-  const endHomeDay = (): void => {
-    homeRef.current = false;
-    setHome(false);
-    // Posts not yet saved here now belong to today's Home (main refuses them in this thread) — once
-    // a save in flight settles, so one that drained them before midnight keeps them.
-    waitingPostsRef.current = [];
-    void savingRef.current.then(() => {
-      const late = undrainedRef.current;
-      undrainedRef.current = new Set();
-      if (late.size > 0 && !goneRef.current) setItems((prev) => prev.filter((it) => it.kind !== "post" || !late.has(it.postId)));
-    });
-    const id = threadRef.current?.id;
-    setThreads((prev) => prev.map((t) => {
-      if (t.id !== id) return t;
-      const { home: _home, ...rest } = t;
-      return rest;
-    }));
-    if (!hiddenRef.current) onActive(id, false);
-    addStatus("A new day — the new day's Home starts with the next sprout post.", "info");
-  };
-
   useEffect(() => {
     window.bean.getModel().then(setModel);
     window.bean.listProjects().then(setProjects);
@@ -575,7 +560,6 @@ export function ChatSession({
         setHome(true);
         waitingPostsRef.current = t.home.posts;
         for (const p of t.home.posts) undrainedRef.current.add(p.id);
-        dayTimerRef.current = setTimeout(endHomeDay, Math.max(0, Date.parse(t.home.until) - Date.now()));
       }
       // Running sprout cards settle from main's record of their runs (their results loop back below).
       const sprouts = settleRestoredSprouts(restoreItems(t.items), t.sprouts);
@@ -679,8 +663,11 @@ export function ChatSession({
     const doc = pdfRef.current;
     const attaching = doc !== undefined && !doc.sent;
     if (attaching) setPdf({ ...doc, sent: true });
+    // The divider rule (#977) over what's already here: a gap means Bean gets the core's marker line.
+    const at = new Date().toISOString();
+    const gap = resumesAfterGap(itemsRef.current, at);
     setItems((prev) => [...prev, {
-      kind: "user", id: turnId, text: message, display, source,
+      kind: "user", id: turnId, text: message, display, source, at,
       images: images?.map((i) => `data:${i.mimeType};base64,${i.data}`),
       ...(attaching ? { pdf: { name: doc.filename, size: doc.size } } : {}),
     }, { kind: "working", id: workingId, text: attaching ? `Reading ${doc.filename}…` : "Spinning up" }]);
@@ -694,7 +681,7 @@ export function ChatSession({
 
     try {
       const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
-      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
+      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
       if (res.model) setModel(res.model);
       // Stopped while attaching: the file may be what hung, so it's unpinned like a failure. A PDF an
       // earlier turn already read stays pinned.
@@ -708,12 +695,13 @@ export function ChatSession({
       rejectedMemoriesRef.current.push(...(res.forgotten ?? []).map((m) => m.text));
 
       setItems((prev) => {
-        const next = placeSummary(prev.filter((it) => it.id !== workingId), owners, res.summary);
+        const next = placeSummary(prev.flatMap((it) => (it.id === workingId ? []
+          : it.id === turnId && it.kind === "user" && res.gapMarker ? [{ ...it, marker: res.gapMarker }] : [it])), owners, res.summary);
         const generated = res.generatedImages?.filter(
           (g): g is { path: string; dataUrl: string } => typeof g.dataUrl === "string",
         );
         if (res.reply.trim() || generated?.length) {
-          next.push({ kind: "reply", id: newId(), text: res.reply, images: generated?.length ? generated : undefined });
+          next.push({ kind: "reply", id: newId(), text: res.reply, images: generated?.length ? generated : undefined, at: new Date().toISOString() });
         }
         if (res.proposedRun) {
           next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
@@ -733,6 +721,7 @@ export function ChatSession({
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
         if (res.sproutRun) next.push({ kind: "sprout", id: newId(), plan: res.sproutRun, state: "pending" });
         if (res.sendCard) next.push({ kind: "send", id: newId(), card: res.sendCard, state: "pending" });
+        if (res.routineDraft) next.push({ kind: "routine", id: newId(), card: res.routineDraft, state: "pending" });
         if (res.proposedDelegate) {
           next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
           const skillName = res.proposedDelegate.skillName;
@@ -763,14 +752,26 @@ export function ChatSession({
       setItems((prev) => [...prev.filter((it) => it.id !== workingId), { kind: "status", id: newId(), text: `Failed to reach Bean.${why}`, tone: "error" }]);
       setStatus("error");
     } finally {
-      busyRef.current = false;
-      setBusy(false);
+      // A queued turn keeps the chat busy until the effect below hands it off, so nothing sent
+      // meanwhile overtakes it.
+      if (queuedSendsRef.current.length === 0) {
+        busyRef.current = false;
+        setBusy(false);
+      }
       if (beanTurnRef.current?.id === turnId) setBeanTurn(undefined);
-      const next = queuedSendsRef.current.shift();
-      if (next) void sendMessage(next.text, next.display, true, undefined, next.source);
+      setTurnsSettled((n) => n + 1);
     }
   };
   sendRef.current = sendMessage;
+  // A queued turn starts only once the one before it has rendered: itemsRef follows the render, so its
+  // history then holds that turn's reply, summary and gap marker (#977).
+  useEffect(() => {
+    const next = queuedSendsRef.current.shift();
+    if (!next) return;
+    busyRef.current = false;
+    setBusy(false); // the send below takes the turn straight back (or leaves it free if it sends nothing)
+    void sendRef.current(next.text, next.display, true, undefined, next.source);
+  }, [turnsSettled]);
 
   const addStatus = (text: string, tone: "info" | "done" | "error", details?: string[], id = newId()): void => {
     setItems((prev) => [...prev, { kind: "status", id, text, tone, ...(details?.length ? { details } : {}) }]);
@@ -870,7 +871,7 @@ export function ChatSession({
     setLive(l);
     const history = handoffItems(itemsRef.current);
     const userId = newId();
-    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: typed ? "live" : "skill", pending: l.key }]);
+    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: typed ? "live" : "skill", pending: l.key, at: new Date().toISOString() }]);
     const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask, history, ...(label ? { label } : {}), ...(model ? { model } : {}) }, mountId)
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
@@ -906,7 +907,7 @@ export function ChatSession({
     const l = liveRef.current;
     if (!l || l.agent !== agent) { void startSession(agent, text, display, true, true); return; }
     const rowId = newId();
-    setItems((prev) => [...prev, { kind: "user", id: rowId, text, ...(display ? { display } : {}), source: "live", pending: l.key }]);
+    setItems((prev) => [...prev, { kind: "user", id: rowId, text, ...(display ? { display } : {}), source: "live", pending: l.key, at: new Date().toISOString() }]);
     if (!l.receipt) l.unopened?.push(typed);
     const toAgent = withImagePaths(text, imageLabelsRef.current);
     if (l.sessionId) void deliver(l.sessionId, agent, toAgent, rowId);
@@ -1205,7 +1206,9 @@ export function ChatSession({
     const prompt = composePrompt(skill, rest);
     const instruction = `${skill.name}${rest ? ` — ${rest}` : ""}`;
     const proposal = { projectPath: dest.projectPath, instruction, skillName: skill.name, composedPrompt: prompt };
-    setItems((prev) => addDelegateProposal(prev, proposal, id));
+    // No converse() turn here, so the card gets the neutral lead-in a bare proposal gets (#978).
+    const lead: ChatItem = { kind: "reply", id: newId(), text: CARD_LEAD, at: new Date().toISOString() };
+    setItems((prev) => addDelegateProposal([...prev, lead], proposal, id));
     setAutoFocusDelegateId(id);
   };
 
@@ -1392,6 +1395,31 @@ export function ChatSession({
       setState("pending");
       setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't send: ${err instanceof Error ? err.message : String(err)}`, tone: "error" }]);
     }
+  };
+
+  // Main re-checks and saves the draft it kept, switched on.
+  const saveRoutineDraft = async (id: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "routine" }> => it.kind === "routine" && it.id === id);
+    if (!item || item.state !== "pending") return;
+    const setState = (state: "pending" | "sending" | "saved"): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "routine" ? { ...it, state } : it)));
+    const fail = (error: string): void => {
+      setState("pending");
+      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't save the sprout: ${error}`, tone: "error" }]);
+    };
+    setState("sending");
+    try {
+      const res = await window.bean.routineDraftSave(item.card.id);
+      if (!res.ok) return fail(res.error);
+      setState("saved");
+      setItems((prev) => [...prev, { kind: "status", id: newId(), tone: "done", text: `Saved sprout "${res.name}" — it's on.` }]);
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const dismissRoutineDraft = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "routine" && it.state === "pending" ? { ...it, state: "dismissed" } : it)));
   };
 
   const dismissSend = (id: string): void => {
@@ -1641,7 +1669,7 @@ export function ChatSession({
     // the full instruction (notice.text) in context, not just the short bubble text (notice.display).
     notices: (notices) => setItems((prev) => [
       ...prev,
-      ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display })),
+      ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display, at: new Date().toISOString() })),
     ]),
     open,
     switching: () => evictingRef.current || leavingRef.current,
@@ -1779,6 +1807,8 @@ export function ChatSession({
         onSproutDismiss={dismissSprout}
         onSendConfirm={(id, optionId) => void confirmSend(id, optionId)}
         onSendDismiss={dismissSend}
+        onRoutineDraftSave={(id) => void saveRoutineDraft(id)}
+        onRoutineDraftDismiss={dismissRoutineDraft}
         onOfferStart={startOffer}
         onOfferDismiss={dismissOffer}
         onDelegateConfirm={(id, edited, choice) => void confirmDelegate(id, edited, choice)}

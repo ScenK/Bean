@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { openDb } from "./db.js";
 
 /** A desktop chat thread as listed in the history picker — no transcript. */
@@ -14,7 +15,7 @@ export interface DesktopChatListing extends DesktopChatSummary {
   starred: boolean;
   /** The starred thread's named group; null = ungrouped. Only starred threads have one. */
   groupName: string | null;
-  /** Today's Home thread (#960) — pinned in the sidebar, never in the dated list. Set by the host. */
+  /** The Home thread (#960) — pinned in the sidebar, never in the dated list. Set by the host. */
   home?: true;
 }
 
@@ -36,6 +37,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const DESKTOP_CHAT_MAX_BYTES = 2 * 1024 * 1024;
 export const DESKTOP_CHAT_TITLE_MAX = 80;
 export const DESKTOP_CHAT_RETENTION_DAYS = 90;
+
+/** Home's thread id (#976): one fixed, UUID-shaped hash of a constant, so every shell of this core
+ * lands in the same continuous thread with no stored state. Exempt from the retention prune. */
+export const HOME_THREAD_ID = ((h) => `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`)(
+  createHash("sha256").update("bean:home").digest("hex"));
 
 /** Upserts a thread: `created_at` and `title` are kept from the first save (a rename is the only
  * later writer of `title`), `updated_at` is `now`. Returns the stored title. Throws on a non-UUID id
@@ -75,10 +81,11 @@ export function renameDesktopChat(file: string, id: string, title: string): stri
 
 const retentionCutoff = (now: Date): string => new Date(now.getTime() - DESKTOP_CHAT_RETENTION_DAYS * 86_400_000).toISOString();
 
-/** Prunes unstarred threads not saved in DESKTOP_CHAT_RETENTION_DAYS, then lists the rest newest first. */
+/** Prunes unstarred threads not saved in DESKTOP_CHAT_RETENTION_DAYS (never Home), then lists the
+ * rest newest first. */
 export function listDesktopChats(file: string, now: Date = new Date()): DesktopChatListing[] {
   const db = openDb(file);
-  db.prepare("DELETE FROM desktop_chats WHERE updated_at < ? AND starred = 0").run(retentionCutoff(now));
+  db.prepare("DELETE FROM desktop_chats WHERE updated_at < ? AND starred = 0 AND id <> ?").run(retentionCutoff(now), HOME_THREAD_ID);
   // Agents are read in SQL so the picker never ships transcripts; a non-JSON row lists none.
   return db
     .prepare(

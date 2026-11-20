@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from "@playwright/t
 import { launchBean } from "./fixtures/launch-app.js";
 import { installFakeCli, makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, homeThreadId, insertHomePost, listPendingHomePosts, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
+import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, HOME_THREAD_ID, insertHomePost, listPendingHomePosts, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
 import { join } from "node:path";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -190,6 +190,7 @@ test("chat history: New chat in place, and a delegate keeps running in a chat sw
     const card = shown.locator(".bean-card", { hasText: "delegate" });
     const start = card.getByRole("button", { name: "Delegate" });
     await expect(start).toBeFocused();
+    await expect(shown.locator(".bean-bubble--bean")).toContainText("Here's what I'd do:"); // #978: no bare card
     await chat.keyboard.down("Enter"); // still held: a key-repeat, now on the focused Start
     await chat.keyboard.up("Enter");
     await chat.waitForTimeout(300);
@@ -366,6 +367,49 @@ test("chat history: star pins a chat past the prune; unstar returns it to Today"
     expect(listDesktopChats(file)).toMatchObject([{ id, starred: false }]);
   } finally {
     await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
+
+// #977: a chat resumed 3 h+ later shows one divider above the new message, sends Bean the core's gap
+// marker exactly once (frozen into history on the next turn), and the divider survives a restore.
+test("chat history: a 3 h gap renders one time divider and reaches Bean once as a marker", async () => {
+  const home = await makeBeanHome({ autoMemory: false });
+  const stub = await startStubOpenAI();
+  stub.queue({ content: "Welcome back!" });
+  stub.queue({ content: "Sure." });
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const id = "8b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e";
+  const then = Date.now() - 5 * 3_600_000;
+  saveDesktopChat(file, { id, title: "earlier", itemsJson: JSON.stringify([
+    { kind: "user", id: "a", text: "earlier", at: new Date(then).toISOString() },
+    { kind: "reply", id: "b", text: "Noted.", at: new Date(then + 1000).toISOString() },
+  ]) });
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  const markers = (req: unknown): number => JSON.stringify(req).match(/\[— \d{4}-\d{2}-\d{2} \d{2}:\d{2} [+-]\d{2}:\d{2} —\]/g)?.length ?? 0;
+  try {
+    let chat = await openChat(app);
+    const shown = (c: Page) => c.locator(".bean-chat:not([hidden])");
+    await chat.locator(`[data-row="${id}"] .bean-chat-sidebar-open`).click();
+    await expect(shown(chat).locator(".bean-bubble--bean")).toContainText("Noted.");
+    await expect(shown(chat).locator(".bean-chat-divider")).toHaveCount(0);
+    await chat.locator(".bean-input--composer").fill("back again");
+    await chat.locator(".bean-send").click();
+    await expect(shown(chat).locator(".bean-bubble--bean").last()).toContainText("Welcome back!");
+    await expect(shown(chat).locator(".bean-chat-divider")).toHaveCount(1);
+    await expect(shown(chat).locator(".bean-chat-divider + .bean-bubble--user")).toContainText("back again");
+    expect(markers(stub.requests[0])).toBe(1);
+    await chat.locator(".bean-input--composer").fill("one more");
+    await chat.locator(".bean-send").click();
+    await expect(shown(chat).locator(".bean-bubble--bean").last()).toContainText("Sure.");
+    expect(markers(stub.requests[1])).toBe(1);
+    await expect(shown(chat).locator(".bean-chat-divider")).toHaveCount(1);
+    await closeChat(app, chat);
+    chat = await openChat(app);
+    await chat.locator(`[data-row="${id}"] .bean-chat-sidebar-open`).click();
+    await expect(shown(chat).locator(".bean-bubble--bean").last()).toContainText("Sure.");
+    await expect(shown(chat).locator(".bean-chat-divider")).toHaveCount(1);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
 
@@ -676,7 +720,7 @@ test("continue in Discord: a continued chat is read-only and Open thread shows t
   }
 });
 
-// #960: sprout posts drain into today's Home when it's shown — once, with no model turn — and a
+// #960: sprout posts drain into Home when it's shown — once, with no model turn — and a
 // relaunch restores them from the transcript without draining them again.
 test("chat history: Home drains pending sprout posts once and restores them after a relaunch", async () => {
   const home = await makeBeanHome({ autoMemory: false });
@@ -692,7 +736,7 @@ test("chat history: Home drains pending sprout posts once and restores them afte
     await expect(chat.locator(".bean-post-batch summary")).toHaveText("While you were away · 2");
     await expect(chat.locator(".bean-post")).toHaveCount(2);
     await expect.poll(() => listPendingHomePosts(file).length).toBe(0);
-    const row = getDesktopChat(file, homeThreadId());
+    const row = getDesktopChat(file, HOME_THREAD_ID);
     expect((JSON.parse(row!.itemsJson) as Array<{ kind: string }>).map((it) => it.kind)).toEqual(["post", "post"]);
     // Pinned, not a dated row.
     await expect(chat.locator(".bean-chat-sidebar-row")).toHaveCount(0);
@@ -705,6 +749,78 @@ test("chat history: Home drains pending sprout posts once and restores them afte
     await expect(chat.locator(".bean-post")).toHaveCount(2);
     await expect(chat.locator(".bean-post").first()).toContainText("3 PRs merged");
     expect(stub.requests).toHaveLength(0);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
+
+// #976: Home never rolls over, so it's the chat that sits at the save cap (500 items / 2 MB). Times
+// open, scroll and save on a restored full Home, then on the same mount grown past the live bound —
+// which trims it back on screen, under the fixed "older messages" line. Timings go to the report.
+test("chat history: a full Home opens, scrolls and saves in time; a long-running mount stays bounded", async () => {
+  test.setTimeout(180_000);
+  const home = await makeBeanHome({ autoMemory: false });
+  const stub = await startStubOpenAI();
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const para = "Bean checked the **build**, merged two PRs and filed a follow-up.\n\n- one\n- two\n\n";
+  const text = (i: number): string => `${i}: ${para.repeat(Math.floor(3700 / para.length))}`;
+  // 500 items, a rolling summary near the end (as compaction leaves it), so a turn's history stays small.
+  const seeded = Array.from({ length: 500 }, (_, i) => (i === 494 ? { kind: "summary", id: `i${i}`, text: "They talked about builds." }
+    : { kind: i % 2 ? "reply" : "user", id: `i${i}`, text: text(i) }));
+  const itemsJson = JSON.stringify(seeded);
+  expect(Buffer.byteLength(itemsJson)).toBeGreaterThan(1.8 * 1024 * 1024);
+  saveDesktopChat(file, { id: HOME_THREAD_ID, title: "Home", itemsJson });
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  const timings: Record<string, number> = {};
+  try {
+    const chat = await openChat(app);
+    const shown = chat.locator(".bean-chat:not([hidden])");
+    let t = Date.now();
+    await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
+    await expect(shown.locator(".bean-bubble").last()).toContainText("499:");
+    timings.openMs = Date.now() - t;
+    // 20 jumps top to bottom, one frame each: the mean frame time.
+    const scrollFrameMs = (): Promise<number> => chat.evaluate(async () => {
+      const el = document.querySelector(".bean-chat:not([hidden]) .bean-chat-scroll") as HTMLElement;
+      const frame = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => r()));
+      const start = performance.now();
+      for (let k = 0; k <= 20; k++) { el.scrollTop = (el.scrollHeight * k) / 20; await frame(); }
+      return (performance.now() - start) / 21;
+    });
+    timings.scrollFrameMs = await scrollFrameMs();
+    let n = 0;
+    const turn = async (): Promise<void> => {
+      stub.queue({ content: `ok ${n}` });
+      await shown.locator(".bean-input--composer").fill(`more ${n}`);
+      await shown.locator(".bean-send").click();
+      await expect(shown.locator(".bean-bubble--bean").last()).toContainText(`ok ${n}`);
+      n++;
+    };
+    // Save: send to the row holding the reply (the 1 s save debounce included). The save trims.
+    const timedSave = async (): Promise<number> => {
+      const start = Date.now();
+      await turn();
+      const want = `ok ${n - 1}`;
+      await expect.poll(() => getDesktopChat(file, HOME_THREAD_ID)!.itemsJson.includes(want), { timeout: 15_000, intervals: [50] }).toBe(true);
+      return Date.now() - start;
+    };
+    timings.saveMs = await timedSave();
+    const saved = JSON.parse(getDesktopChat(file, HOME_THREAD_ID)!.itemsJson) as Array<{ kind: string; text?: string }>;
+    expect(saved).toHaveLength(500);
+    expect(saved[0]).toMatchObject({ kind: "status", text: "Older messages aren't kept here — Bean remembers what mattered." });
+    // Still on screen until the live bound (cap + slack) trims the mount.
+    await expect(shown.locator(".bean-bubble").first()).toContainText("0:");
+    while (n < 26) await turn();
+    await expect(shown.locator(".bean-chat-scroll").getByText("Older messages aren't kept here")).toHaveCount(1);
+    await expect(shown.locator(".bean-bubble").first()).not.toContainText(/^0:/);
+    timings.longScrollFrameMs = await scrollFrameMs();
+    timings.longSaveMs = await timedSave();
+    test.info().annotations.push({ type: "timings", description: JSON.stringify(timings) });
+    console.log(`full Home timings: ${JSON.stringify(timings)}`);
+    // Ceilings only catch a pathological regression; the numbers themselves are the record.
+    expect(timings.openMs).toBeLessThan(15_000);
+    expect(timings.scrollFrameMs).toBeLessThan(500);
+    expect(timings.saveMs).toBeLessThan(15_000);
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }

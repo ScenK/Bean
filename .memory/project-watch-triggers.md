@@ -17,6 +17,8 @@ Decisions worth keeping:
 - **"Needs review" is derived, not stored**: `!enabled && watch && !seeded`. The review card's
   Enable re-checks the source and seeds from *that* check (`scheduler.enableWatch`); the list
   pill on such a row opens the review instead of a bare flip.
+  `enableWatch` is also the restore path of an ended watch (#980, see project-routines "Ending"):
+  it re-seeds from now, so items published while it was off are never judged.
 - **All `.state.json` writes go through the scheduler's one promise chain** (`withStates`):
   ticks overlap once a long run keeps one tick awaiting. Due routines execute *after* the tick's
   poll pass so one long run can't stall other watches. `lastPoll`/`pollError` persist;

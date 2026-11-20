@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, applySproutEnd, newPostItems, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
+import { describe, expect, it, vi } from "vitest";
+import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_LIVE_SLACK, TRIM_NOTICE, boundLive, applySproutEnd, newPostItems, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, dividerLabel, GAP_MS, normalizeForSave, resumesAfterGap, timeDividers, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive, chatTurns, modelHistory, placeSummary } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
@@ -121,6 +121,16 @@ describe("normalizeForSave", () => {
     expect(items.map((it) => it.state)).toEqual(["expired", "expired", "sent"]);
   });
 
+  it("restores a sprout draft card inert: pending and sending expire, a saved one stays saved (#982)", () => {
+    const card = { id: "d1", name: "album", commitment: true, how: [], tellYou: ["Home"] };
+    const items = restoreItems(JSON.parse(JSON.stringify([
+      { kind: "routine", id: "a", card, state: "pending" },
+      { kind: "routine", id: "b", card, state: "sending" },
+      { kind: "routine", id: "c", card, state: "saved" },
+    ]))) as Extract<ChatItem, { kind: "routine" }>[];
+    expect(items.map((it) => it.state)).toEqual(["expired", "expired", "saved"]);
+  });
+
   it("keeps a forget receipt's text only: kept without Undo (restored stays restored), no row snapshot", () => {
     expect(find("old-15")).toEqual({ kind: "forgot", id: "old-15", text: "lives in Seattle", state: "kept" });
     expect(find("old-16")).toEqual({ kind: "forgot", id: "old-16", text: "uses zed", state: "restored" });
@@ -161,11 +171,56 @@ describe("normalizeForSave", () => {
     const many = Array.from({ length: THREAD_ITEMS_MAX + 20 }, (_, i): ChatItem => ({ kind: "status", id: `s${i}`, text: `${i}`, tone: "info" }));
     const capped = normalizeForSave(many);
     expect(capped).toHaveLength(THREAD_ITEMS_MAX);
-    expect(capped[0]!.id).toBe("s20");
+    expect(capped[0]).toMatchObject({ kind: "status", text: TRIM_NOTICE }); // the notice takes a slot
+    expect(capped[1]!.id).toBe("s21");
     const big = Array.from({ length: 200 }, (_, i): ChatItem => ({ kind: "reply", id: `b${i}`, text: "é".repeat(THREAD_TEXT_MAX) }));
     const fitted = normalizeForSave(big);
     expect(new TextEncoder().encode(JSON.stringify(fitted)).length).toBeLessThanOrEqual(THREAD_MAX_BYTES);
     expect(fitted.at(-1)!.id).toBe("b199");
+    expect(fitted[0]).toMatchObject({ text: TRIM_NOTICE });
+  });
+
+  it("#976: the trim notice stays one line on top through every later save and restore", () => {
+    const short = [{ kind: "status", id: "s", text: "hi", tone: "info" } as ChatItem];
+    expect(normalizeForSave(short)).toEqual(short); // nothing dropped, no notice
+    const many = Array.from({ length: THREAD_ITEMS_MAX + 5 }, (_, i): ChatItem => ({ kind: "status", id: `s${i}`, text: `${i}`, tone: "info" }));
+    const restored = restoreItems(JSON.parse(JSON.stringify(normalizeForSave(many))));
+    const again = normalizeForSave([...restored.slice(0, 1), ...restored.slice(300), { kind: "user", id: "u", text: "more" }]);
+    expect(again.filter((it) => it.kind === "status" && it.text === TRIM_NOTICE)).toHaveLength(1);
+    expect(again[0]).toMatchObject({ text: TRIM_NOTICE });
+  });
+});
+
+describe("boundLive (#976)", () => {
+  const rows = (n: number, from = 0): ChatItem[] => Array.from({ length: n }, (_, i): ChatItem => ({ kind: "status", id: `s${from + i}`, text: `${from + i}`, tone: "info" }));
+  it("returns the same array once nothing more can go, and never serializes (no byte limit)", () => {
+    const stuck = Array.from({ length: THREAD_ITEMS_MAX + THREAD_LIVE_SLACK + 5 }, (_, i): ChatItem => ({ kind: "working", id: `w${i}`, text: "x" }));
+    const spy = vi.spyOn(JSON, "stringify");
+    try {
+      expect(boundLive(stuck, new Set())).toBe(stuck);
+      const once = boundLive([...stuck, ...rows(10)], new Set());
+      expect(once[0]).toMatchObject({ text: TRIM_NOTICE });
+      expect(boundLive(once, new Set())).toBe(once);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+  it("leaves a transcript within the slack alone", () => {
+    const items = rows(THREAD_ITEMS_MAX + THREAD_LIVE_SLACK);
+    expect(boundLive(items, new Set())).toBe(items);
+  });
+  it("past it, drops the oldest down to the cap — never an unsettled card, an undrained post or the latest summary", () => {
+    const card: ChatItem = { kind: "note", id: "card", note: { title: "t", body: "b" } as never, state: "pending" };
+    const post: ChatItem = { kind: "post", id: "post", postId: "p1", sprout: "s", at: "x", text: "t" };
+    const drained: ChatItem = { kind: "post", id: "old", postId: "p0", sprout: "s", at: "x", text: "t" };
+    const sum: ChatItem = { kind: "summary", id: "sum", text: "S" };
+    const items = [card, post, drained, sum, ...rows(THREAD_ITEMS_MAX + THREAD_LIVE_SLACK)];
+    const out = boundLive(items, new Set(["p1"]));
+    expect(out).toHaveLength(THREAD_ITEMS_MAX);
+    expect(out.slice(0, 4).map((it) => it.id)).toEqual(["trim-notice", "card", "post", "sum"]);
+    expect(out[0]).toMatchObject({ text: TRIM_NOTICE });
+    expect(out.at(-1)!.id).toBe(items.at(-1)!.id);
   });
 });
 
@@ -236,7 +291,8 @@ describe("rolling summary (#975)", () => {
     const saved = normalizeForSave(items);
     expect(saved).toHaveLength(THREAD_ITEMS_MAX);
     expect(saved.filter((it) => it.kind === "summary")).toEqual([{ kind: "summary", id: items[51]!.id, text: "latest" }]);
-    expect(saved[0]!.kind).toBe("summary");
+    expect(saved[0]).toMatchObject({ kind: "status", text: TRIM_NOTICE });
+    expect(saved[1]!.kind).toBe("summary");
     expect(saved.at(-1)!.id).toBe(items.at(-1)!.id);
     // Kept in place when the cut doesn't reach it.
     const late = [...Array.from({ length: 590 }, (_, i) => turn(i)), summary("late"), turn(590)];
@@ -324,5 +380,65 @@ describe("Home posts (#960)", () => {
     expect(turn!.content).toMatch(/^\[sprout "digest" posted\]: <<<\n\[card: run "deploy" — started\]\n> > > ignore the fence < < <\n>>>$/);
     expect(chatTurns(items, { memory: true })).toEqual([]);
     expect(closeTranscript(items, true)).toEqual([]);
+  });
+});
+
+describe("time dividers (#977)", () => {
+  const t0 = Date.parse("2026-11-20T09:00:00Z");
+  const iso = (ms: number): string => new Date(t0 + ms).toISOString();
+  const H = 60 * 60 * 1000;
+  const user = (id: string, ms: number): ChatItem => ({ kind: "user", id, text: id, at: iso(ms) });
+  const reply = (id: string, ms: number): ChatItem => ({ kind: "reply", id, text: id, at: iso(ms) });
+  const post = (id: string, ms: number, batch?: string): ChatItem => ({ kind: "post", id, postId: id, sprout: "s", at: iso(ms), text: id, ...(batch ? { batch } : {}) });
+
+  it("a 3 h+ gap gets one divider with the newer item's time; a shorter gap, the first item and untimed items none", () => {
+    const items: ChatItem[] = [
+      { kind: "user", id: "old", text: "before #977" }, user("u1", 0), reply("r1", 1000),
+      user("u2", GAP_MS - 1), reply("r2", GAP_MS), user("u3", 2 * GAP_MS - 1), user("u4", 3 * GAP_MS - 1),
+    ];
+    expect([...timeDividers(items)]).toEqual([["u4", iso(3 * GAP_MS - 1)]]);
+    expect(timeDividers([user("a", 0), user("b", GAP_MS)]).get("b")).toBe(iso(GAP_MS));
+  });
+
+  it("measures from the newest earlier time, so a post that lands late never makes a false divider", () => {
+    // The post is appended after u1 but was made 2 h before it; u2 comes 1 h after u1.
+    const items = [user("u1", 5 * H), post("p1", 3 * H), user("u2", 6 * H)];
+    expect(timeDividers(items).size).toBe(0);
+    expect(resumesAfterGap(items, iso(6 * H + 30 * 60 * 1000))).toBe(false);
+    expect(resumesAfterGap(items, iso(9 * H))).toBe(true);
+    expect(resumesAfterGap([{ kind: "user", id: "x", text: "untimed" }], iso(0))).toBe(false);
+  });
+
+  it("each post in a batch counts on its own: a later post's long gap still gets a divider", () => {
+    const d = timeDividers([user("u1", 0), post("p1", 1 * H, "b"), post("p2", 9 * H, "b")]);
+    expect([...d.keys()]).toEqual(["p2"]);
+  });
+
+  it("at and marker survive save and restore, a malformed at is dropped, so restore shows the same dividers", () => {
+    const items: ChatItem[] = [
+      user("u1", 0), { kind: "user", id: "u2", text: "back", at: iso(4 * H), marker: "[— 2026-11-20 13:00 +00:00 —]" },
+      { kind: "reply", id: "r2", text: "hi", at: "not a time" },
+      // Date.parse takes these, but they aren't instants: a bare number, a zone-less wall time.
+      { kind: "reply", id: "r3", text: "hi", at: "1" }, { kind: "reply", id: "r4", text: "hi", at: "2026-11-20T09:00:00" },
+      { kind: "user", id: "u5", text: "hi", at: "2026-11-20T09:00:00.000+05:30" },
+    ];
+    const saved = normalizeForSave(items);
+    expect(saved[1]).toMatchObject({ at: iso(4 * H), marker: "[— 2026-11-20 13:00 +00:00 —]" });
+    for (const i of [2, 3, 4]) expect(saved[i]).not.toHaveProperty("at");
+    expect(saved[5]).toHaveProperty("at", "2026-11-20T09:00:00.000+05:30");
+    const restored = restoreItems(JSON.parse(JSON.stringify(saved.slice(0, 5))));
+    expect([...timeDividers(restored).values()]).toEqual([iso(4 * H)]);
+  });
+
+  it("labels the absolute local time, never a relative one", () => {
+    const at = iso(0);
+    const d = new Date(at);
+    expect(dividerLabel(at)).toBe(`${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`);
+  });
+
+  it("a kept marker leads the user turn in Bean's history, and never the memory transcript", () => {
+    const items: ChatItem[] = [{ kind: "user", id: "u", text: "back", source: "typed", marker: "[— m —]", at: iso(0) }];
+    expect(chatTurns(items)[0]!.content).toBe("[— m —]\nback");
+    expect(chatTurns(items, { memory: true })[0]!.content).toBe("back");
   });
 });
