@@ -579,6 +579,7 @@ export async function createHost(deps: HostDeps) {
       loadStates: () => loadRoutineStates(routineStateFile(dir)),
       isRunning: (name) => routineScheduler.isRunning(name),
       runningCount: (name) => routineScheduler.runningCount(name),
+      withSprout: routineScheduler.withSprout,
       queueCounts: async (name) => {
         const todos = await listTodos(db, name);
         return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };
@@ -626,6 +627,7 @@ export async function createHost(deps: HostDeps) {
       dbFile: db,
       loadRoutines: () => loadRoutines(routinesPath),
       addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
+      withSprout: routineScheduler.withSprout,
     }),
     destinations: buildDestinationHandlers({
       dbFile: db,

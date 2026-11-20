@@ -1,4 +1,4 @@
-import { isExpired } from "@bean/core";
+import { hasEnded } from "@bean/core";
 import type {
   BuildStage, Routine, RoutineBrief, RoutineState, RoutineWatch, RunRecord, RunStatus, StepKind, WatchCheckResult, WatchItem,
 } from "@bean/core";
@@ -45,7 +45,7 @@ export interface RoutineWatchDeps {
   pollFailures: (name: string) => number;
   checkNow: (name: string) => Promise<WatchCheckResult>;
   previewWatch: (watch: RoutineWatch) => Promise<WatchItem[]>;
-  enableWatch: (name: string, queueExisting: boolean, until?: string) => Promise<{ count: number }>;
+  enableWatch: (name: string, queueExisting: boolean, until?: string | null) => Promise<{ count: number }>;
   sinkRecipients: () => Promise<SinkRecipients>;
   draftBrief: (sentence: string, previous?: RoutineBrief) => Promise<BriefDraft>;
   builds: {
@@ -71,6 +71,9 @@ export interface RoutineHandlerDeps {
   /** A run's step attempts (bean.db), oldest first. */
   attempts?: (runId: string) => StepAttemptView[];
   watch?: RoutineWatchDeps;
+  /** The scheduler's per-sprout lane (#980): saves serialize with its admissions and endings.
+   * Absent = no lane (tests). */
+  withSprout?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 }
 
 export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
@@ -81,22 +84,29 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   return {
     list: (): Promise<Routine[]> => deps.loadRoutines(),
     save: async (routine: Routine): Promise<void> => {
-      // Turning an ended sprout (off, past its `until`) back on (#980): its end must be later, or it
-      // would only expire again on the next tick; an ended watch restores through enableWatch, which
-      // re-seeds from now, so items published while it was off aren't judged.
-      if (routine.enabled) {
-        const now = new Date();
-        const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
-        if (prior && !prior.enabled && isExpired({ ...prior, enabled: true }, now)) {
-          if (isExpired(routine, now)) throw new Error(`"${routine.name}" ended — give it a later end date to turn it back on`);
-          if (routine.watch && deps.watch) {
-            await deps.saveRoutine({ ...routine, enabled: false });
-            await watch().enableWatch(routine.name, false, routine.until);
-            return;
+      const lane = deps.withSprout ?? ((_: string, fn: () => Promise<boolean>) => fn());
+      // Turning an ended sprout (off, past its `until`) back on (#980): its end must be later (or
+      // cleared), or it would only expire again on the next tick. An ended watch restores through
+      // enableWatch, which re-seeds from now (items published while it was off aren't judged) and
+      // commits the new end with `enabled` only once that check succeeded — until then it stays ended.
+      const restoreWatch = await lane(routine.name, async () => {
+        if (routine.enabled) {
+          const now = new Date();
+          const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
+          if (prior && !prior.enabled && hasEnded(prior, now)) {
+            if (hasEnded(routine, now)) throw new Error(`"${routine.name}" ended — give it a later end date to turn it back on`);
+            if (routine.watch && deps.watch) {
+              const { until: _, ...rest } = routine;
+              await deps.saveRoutine({ ...rest, ...(prior.until !== undefined ? { until: prior.until } : {}), enabled: false });
+              return true;
+            }
           }
         }
-      }
-      await deps.saveRoutine(routine);
+        await deps.saveRoutine(routine);
+        return false;
+      });
+      // Outside the lane: enableWatch takes it for its own commit.
+      if (restoreWatch) await watch().enableWatch(routine.name, false, routine.until ?? null);
     },
     remove: async (name: string): Promise<void> => {
       await deps.deleteRoutine(name);

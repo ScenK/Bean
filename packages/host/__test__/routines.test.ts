@@ -95,16 +95,22 @@ test("save refuses turning on a sprout whose end has passed; an already-on one s
   expect(saveRoutine).toHaveBeenCalledTimes(2);
 });
 
-test("turning an ended watch back on with a later until goes through enableWatch (re-seeded from now)", async () => {
+test("turning an ended watch back on with a later until goes through enableWatch (re-seeded from now), outside the lane", async () => {
   const saveRoutine = vi.fn(async () => {});
-  const enableWatch = vi.fn(async () => ({ count: 0 }));
+  let inLane = false;
+  const enableWatch = vi.fn(async () => { expect(inLane).toBe(false); return { count: 0 }; });
+  const withSprout = async <T,>(_n: string, fn: () => Promise<T>): Promise<T> => { inLane = true; try { return await fn(); } finally { inLane = false; } };
   const ended: Routine = { name: "w", enabled: false, until: "2020-01-01", watch: { kind: "feed", url: "https://f" }, todoDriven: true, steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
   const h = buildRoutineHandlers({
     loadRoutines: async () => [ended], saveRoutine, deleteRoutine: vi.fn(async () => {}),
     loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0, runNow: async () => ({ started: true }),
-    watch: { enableWatch } as never,
+    watch: { enableWatch } as never, withSprout,
   });
   await h.save({ ...ended, enabled: true, until: "2999-01-01" });
-  expect(saveRoutine).toHaveBeenCalledWith({ ...ended, until: "2999-01-01", enabled: false });
+  // Still ended until enableWatch's check succeeds and commits the new end with `enabled`.
+  expect(saveRoutine).toHaveBeenCalledWith({ ...ended, enabled: false });
   expect(enableWatch).toHaveBeenCalledWith("w", false, "2999-01-01");
+  const { until: _, ...open } = ended;
+  await h.save({ ...open, enabled: true });
+  expect(enableWatch).toHaveBeenLastCalledWith("w", false, null); // the end date cleared
 });

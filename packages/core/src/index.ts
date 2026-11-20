@@ -92,7 +92,7 @@ export * from "./spawn-env.js";
 export {
   appendRunRecord, chatRoutineProblem, createRoutine, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, memberTodoEligible, resolveTodoRoutine, saveRoutine, todoRunHint, saveRoutineStates, usesGates,
-  resolveSinkAlias, sinkAliasProblems, untilTime, untilLabel, isArchived, isExpired, endReason, ARCHIVE_GRACE_DAYS,
+  resolveSinkAlias, sinkAliasProblems, untilTime, untilLabel, hasEnded, isArchived, isExpired, endReason, ARCHIVE_GRACE_DAYS,
 } from "./routine-store.js";
 export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate, StepKind, StepRoute,

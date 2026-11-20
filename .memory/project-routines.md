@@ -80,39 +80,36 @@ todos; `record.steps` keeps all); the record is quiet only when every todo was. 
 whole saved sprout on load): a step already named `quiet` wins, so old routes keep reaching it —
 always test the target with `isQuietEnd(goto, ids)`, never `goto === "quiet"`.
 **Ending: `until`, `done`, expiry, Archived (#980).** `Routine.until` = `YYYY-MM-DD` (end of that
-core-local day) or an ISO date-time (`untilTime`). Route target `"done"` (route-only, not reserved —
-`isDoneEnd`, same rule as quiet) on a clean ok pass sets `RunRecord.done`, appends `DONE_FOOTER`
-(recommended next step; its "a week" is `ARCHIVE_GRACE_DAYS`) and stops the drain claiming. The
-first done result owns the ending (`claimEnding`, synchronous, before any await): `ended` stops
-sibling claims and admissions until the owner settles and the last slot frees; a sibling's later
-done result is delivered as an ordinary run (no footer). The owner first saves
-`RoutineState.pendingEnding` (the record's id), then delivers; once it lands: drop the queue, pause
-with `until: <done run's finishedAt>`, clear the marker (`completeEnding`). A failed delivery (or a
-crash) leaves the marker: the sprout stays `ended` (nothing runs, queue kept), the record reads
-needs-attention, and each lease-holder tick (`retryEnding`, also after a restart — `markMissed`
-seeds `ended` from disk) re-delivers the saved record (no `results`, digest as is) — never a
-re-run or re-queue (delegate/command steps have side effects). `enableWatch` clears the marker. An
-ending is not deduped against the asking chat (`askedFrom`): the todo dispatch carries only the
-result, the owner's sink delivery carries the question. Expiry: a tick (lease holder only) finds `isExpired` (on and past `until`),
-waits for live runs, and `expire()` — under the `expiring` guard and re-reading the definition
-(overlapping ticks) — posts `Nothing by <date> — extend?` via `deliverDigest`
-(`ending: "expired"`, never recorded), then drops the queue and pauses last, only if `until` is
-unchanged and re-checking the lease before each write (a holder that loses it leaves the sprout
-on and expired for the new holder) — post first (a crash may re-post); a failed post leaves it on to retry. Expiry runs before the
-tick's due list is started, and that list is re-read (enabled, not expired, not ended, lease) right
-before the slots are taken. A poll whose results arrive after the sprout was paused, expired or
-ended hands nothing off; expiry and polls of one sprout exclude each other (`polling`/`expiring`),
-and a notify-only fire re-checks right before its digest. Either ending is chatops `context: true` and ignores
-`chatopsOnlyOnProblems`. `isArchived` = off and `ARCHIVE_GRACE_DAYS` past `until` — derived;
-refused by Run now / trigger / Check now / exact-todo runs / `resolveTodoRoutine` and
-filtered from the desktop + chatops run/todo catalogs and the `sprouts` / `enable` commands. A
-paused sprout within the grace stays visible. `enable` (chatops) refuses an ended one past its
-`until`, and so does the desktop save handler (off → on with a passed `until`; an ended watch
-saved on with a later `until` goes through `enableWatch`); todo Retry refuses
-an archived sprout; restore = `scheduler.enableWatch(name, false, later until)`, which refuses a
-passed end.
-"Why it ended" = `endReason()`: found when a `done` record's `finishedAt` equals the current `until`,
-else expired. A date-time `until` must name a real calendar date (no Feb 30 roll-over).
+core-local day) or an ISO date-time (`untilTime`; no Feb 30 roll-over). Route target `"done"`
+(route-only, not reserved — `isDoneEnd`, same rule as quiet) on a clean ok pass sets
+`RunRecord.done`, appends `DONE_FOOTER` ("a week" = `ARCHIVE_GRACE_DAYS`) and stops the drain claiming.
+**Concurrency = one serial lane per sprout** (`scheduler.withSprout(name, fn)`, a keyed promise
+chain; the host's save/restore and todo Retry use it too). Only two short phases run in it, each
+re-reading the definition: *admission* (Run now / trigger / exact todo / tick start take the slot;
+every worker claim) and *commit* (a done result's ending, expiry, a poll's hand-off, enableWatch's
+seed+save). Runs, poll fetches, `fill()`, `enableWatch()` stay outside — nothing in the lane may
+await something that takes it (deadlock). **Generation = `until`**: the admitted definition's
+`until` must still match at commit — a sibling's ending or a restore changes it, so a stale done is
+delivered as an ordinary run (no footer) and a stale poll's items are dropped; claims stop too.
+Don't answer a new race with per-race flags/markers — the previous attempt (`ended`/`ending`/
+`expiring` sets, a persisted pending-ending marker + replay) failed four review rounds.
+Done commit (winner, lease held): deliver, then pause with `until: <finishedAt>`, drop the queue. A
+failed hand-off: record → needs-attention with the error, sprout paused (`until` kept), queue kept
+for the owner — no re-delivery. Expiry (tick, lease holder, idle sprout only — a live run may
+still reach done): post `Nothing by <date> — extend?` (`ending: "expired"`, never recorded), then
+pause + drop; a failed post leaves it on for the next tick (a crash may re-post). One `mayFire()`
+at commit; lease handovers mid-commit are out of scope. Either ending is chatops `context: true`,
+ignores `chatopsOnlyOnProblems`, and isn't deduped against the asking chat (`askedFrom`): the
+dispatch carries the result, the sink the question. Workers prune step attempts only as the last
+worker out (`pendingKeep`) — lane claims add async hops, so "the last saver prunes" no longer held.
+Past `until` (`hasEnded`) = never fired automatically and no poll hands off; by hand it still runs
+until `isArchived` (off and `ARCHIVE_GRACE_DAYS` past `until`, derived) — refused by every
+admission path and `resolveTodoRoutine`, filtered from desktop + chatops run/todo catalogs and the
+`sprouts`/`enable` commands. Turning an ended one back on needs a later (or cleared) `until`
+(desktop save handler, chatops `enable`); an ended watch restores via
+`scheduler.enableWatch(name, false, until | null)`, which re-seeds from now and commits the new
+end with `enabled` only after its check succeeds. "Why it ended" = `endReason()`: found when a
+`done` record's `finishedAt` equals the current `until`, else expired.
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
 `stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
 never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.

@@ -170,35 +170,22 @@ describe("the done ending (scheduler)", () => {
     expect(t.deps.dropPendingTodos).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed done delivery stays pending: nothing re-runs, and a tick re-delivers the saved result, then ends it", async () => {
-    let firstHolds = true;
-    const t = setup([watchQueue()], { canSchedule: () => firstHolds });
+  it("a failed done delivery: the run needs attention, the sprout pauses with its queue kept, nothing re-delivers", async () => {
+    const t = setup([watchQueue()]);
     t.queue.push(todo("a"), todo("b"));
-    vi.mocked(t.deps.runRoutine).mockResolvedValueOnce(doneResult("found it", "item a"));
+    vi.mocked(t.deps.runRoutine).mockImplementationOnce(async () => doneResult("found it", "item a"));
     vi.mocked(t.deps.deliverDigest).mockRejectedValueOnce(new Error("outbox locked"));
     const res = await t.sched.runNow("w");
     expect(res).toMatchObject({ started: true, status: "needs-attention" });
-    expect(t.routine("w").enabled).toBe(true);
+    expect(t.routine("w").enabled).toBe(false);
+    expect(t.routine("w").until).toBeUndefined(); // paused, not ended: the owner retries or clears
     expect(t.deps.dropPendingTodos).not.toHaveBeenCalled();
-    expect(t.deps.addTodo).not.toHaveBeenCalled(); // never re-run: steps may have side effects
-    expect(t.states().w).toMatchObject({ pendingEnding: "run-found it", history: [{ status: "needs-attention", done: true }] });
-    expect(t.states().w!.history[0]!.digest).toMatch(/couldn't deliver this yet \(outbox locked\)/);
-    // Held meanwhile: nothing new runs.
-    expect(await t.sched.runNow("w")).toMatchObject({ started: false });
-
-    // The next lease holder (a restart) finishes it from disk: re-delivers the saved record, no run.
-    firstHolds = false;
-    const after = createRoutineScheduler({ ...t.deps, canSchedule: () => true });
-    await after.tick();
+    expect(t.queue.map((q) => q.id)).toEqual(["a", "b"]);
+    expect(t.states().w!.history[0]).toMatchObject({ status: "needs-attention", done: true });
+    expect(t.states().w!.history[0]!.digest).toMatch(/couldn't deliver this \(outbox locked\) — paused with its queue kept/);
+    await t.sched.tick();
+    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(1);
     expect(t.deps.runRoutine).toHaveBeenCalledTimes(1);
-    const [, again] = vi.mocked(t.deps.deliverDigest).mock.calls[1]!;
-    expect(again).toMatchObject({ ending: "done", digest: `found it\n\n${DONE_FOOTER}` });
-    expect(t.routine("w")).toMatchObject({ enabled: false, until: FOUND_AT });
-    expect(t.deps.dropPendingTodos).toHaveBeenCalledTimes(1);
-    expect(t.states().w!.pendingEnding).toBeUndefined();
-    expect(t.states().w!.history[0]).toMatchObject({ status: "ok", digest: `found it\n\n${DONE_FOOTER}` });
-    await after.tick();
-    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(2);
   });
 
   it("parallel workers claim nothing after a sibling's done; the sprout ends once", async () => {
@@ -270,33 +257,7 @@ describe("expiry (scheduler)", () => {
     expect(t.deps.runRoutine).not.toHaveBeenCalled();
   });
 
-  it("a lease lost during the expiry post leaves the pause and the queue to the new holder", async () => {
-    let held = true;
-    const t = setup([watchQueue({ until: "2026-12-20" })], { canSchedule: () => held });
-    vi.mocked(t.deps.deliverDigest).mockImplementationOnce(async () => { held = false; });
-    t.setClock(at(2026, 12, 21, 9, 0));
-    await t.sched.tick();
-    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(1);
-    expect(t.routine("w").enabled).toBe(true);
-    expect(t.deps.saveRoutine).not.toHaveBeenCalled();
-    expect(t.deps.dropPendingTodos).not.toHaveBeenCalled();
-  });
-
-  it("a lease lost while dropping the queue leaves the sprout on; the next holder re-posts and pauses it", async () => {
-    let held = true;
-    const t = setup([watchQueue({ until: "2026-12-20" })], { canSchedule: () => held });
-    vi.mocked(t.deps.dropPendingTodos!).mockImplementationOnce(async () => { held = false; });
-    t.setClock(at(2026, 12, 21, 9, 0));
-    await t.sched.tick();
-    expect(t.deps.saveRoutine).not.toHaveBeenCalled();
-    expect(t.routine("w").enabled).toBe(true);
-    held = true;
-    await t.sched.tick();
-    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(2);
-    expect(t.routine("w").enabled).toBe(false);
-  });
-
-  it("expiry waits for a poll in flight; the poll then hands nothing off (notify-only too)", async () => {
+  it("a poll in flight across the expiry hands nothing off (notify-only too)", async () => {
     let releasePoll: () => void = () => {};
     const notify = watchQueue({ steps: [], todoDriven: undefined, until: "2026-12-20" });
     const t = setup([notify], {
@@ -306,13 +267,11 @@ describe("expiry (scheduler)", () => {
     const check = t.sched.checkNow("w");
     await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
     t.setClock(at(2026, 12, 21, 9, 0));
-    await t.sched.tick(); // expired, but the poll is in flight: no post yet
-    expect(t.deps.deliverDigest).not.toHaveBeenCalled();
+    await t.sched.tick(); // expired: posted and paused while the poll is still fetching
+    expect(t.routine("w").enabled).toBe(false);
     releasePoll();
     expect(await check).toEqual({ newItems: 0 });
-    expect(t.deps.deliverDigest).not.toHaveBeenCalled(); // no digest after the end
-    await t.sched.tick();
-    expect(vi.mocked(t.deps.deliverDigest).mock.calls.map((c) => c[1].ending)).toEqual(["expired"]);
+    expect(vi.mocked(t.deps.deliverDigest).mock.calls.map((c) => c[1].ending)).toEqual(["expired"]); // no digest after the end
   });
 
   it("a poll in flight when the sprout is paused hands nothing off", async () => {
@@ -394,5 +353,49 @@ describe("restore (enableWatch)", () => {
     await expect(t.sched.enableWatch("w", false, "later")).rejects.toThrow(/until must be a date/);
     expect(t.routine("w").enabled).toBe(false);
     expect(t.seeded).toEqual([]);
+  });
+
+  it("a poll admitted before a restore queues nothing: its items are stale", async () => {
+    let releasePoll: () => void = () => {};
+    const t = setup([watchQueue({ until: "2026-12-31" })], {
+      pollWatch: vi.fn(async () => { await new Promise<void>((res) => { releasePoll = res; }); return [{ id: "old", text: "old item" }]; }),
+    });
+    const check = t.sched.checkNow("w");
+    await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
+    t.setRoutines([watchQueue({ until: "2027-01-31" })]); // ended and restored meanwhile
+    releasePoll();
+    expect(await check).toEqual({ newItems: 0 });
+    expect(t.deps.addTodo).not.toHaveBeenCalled();
+  });
+
+  it("a run admitted before a restore can't end the restored sprout: delivered as an ordinary run", async () => {
+    let release: () => void = () => {};
+    const t = setup([watchQueue({ until: "2026-12-31" })]);
+    t.queue.push(todo("a"));
+    vi.mocked(t.deps.runRoutine).mockImplementationOnce(async () => {
+      await new Promise<void>((res) => { release = res; });
+      return doneResult();
+    });
+    const run = t.sched.runNow("w");
+    await vi.waitFor(() => expect(t.deps.runRoutine).toHaveBeenCalled());
+    t.setRoutines([watchQueue({ until: "2027-01-31" })]);
+    release();
+    await run;
+    expect(t.routine("w")).toMatchObject({ enabled: true, until: "2027-01-31" });
+    expect(vi.mocked(t.deps.deliverDigest).mock.calls.map((c) => [c[1].digest, c[1].ending])).toEqual([["found it", undefined]]);
+    expect(t.deps.dropPendingTodos).not.toHaveBeenCalled();
+  });
+
+  it("a failed check leaves it ended", async () => {
+    const t = setup([watchQueue({ enabled: false, until: "2026-12-01" })], { pollWatch: vi.fn(async () => { throw new Error("feed down"); }) });
+    await expect(t.sched.enableWatch("w", false, "2027-01-31")).rejects.toThrow(/feed down/);
+    expect(t.routine("w")).toMatchObject({ enabled: false, until: "2026-12-01" });
+  });
+
+  it("null clears the end date", async () => {
+    const t = setup([watchQueue({ enabled: false, until: "2026-12-01" })]);
+    await t.sched.enableWatch("w", false, null);
+    expect(t.routine("w").enabled).toBe(true);
+    expect(t.routine("w").until).toBeUndefined();
   });
 });

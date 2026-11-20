@@ -158,6 +158,12 @@ export function isArchived(r: Pick<Routine, "enabled" | "until">, now: Date): bo
   return !r.enabled && end !== undefined && end + GRACE_MS < now.getTime();
 }
 
+/** Past its `until` (on = expired, off = ended): nothing new is admitted, claimed or handed off. */
+export function hasEnded(r: Pick<Routine, "until">, now: Date): boolean {
+  const end = untilTime(r.until);
+  return end !== undefined && end <= now.getTime();
+}
+
 /** Still on but past its `until`: the scheduler's expiry ends it. */
 export function isExpired(r: Pick<Routine, "enabled" | "until">, now: Date): boolean {
   const end = untilTime(r.until);
@@ -201,10 +207,6 @@ export interface RoutineState {
   history: RunRecord[]; // newest first, capped
   lastPoll?: string;  // ISO of the last watch poll attempt (ok or failed)
   pollError?: string; // last poll's error; absent when the last poll succeeded
-  /** A `done` run's ending not finished yet (#980) — its record's id (else startedAt). Set before
-   * the delivery; the scheduler's lease holder re-delivers that record (no re-run) and pauses the
-   * sprout until it lands. Cleared when the ending completes or the sprout is restored. */
-  pendingEnding?: string;
 }
 
 const HISTORY_CAP = 20;
@@ -550,7 +552,6 @@ export async function loadRoutineStates(file: string): Promise<Record<string, Ro
         history: Array.isArray(st.history) ? (st.history as RunRecord[]) : [],
         lastPoll: str(st.lastPoll) ? st.lastPoll : undefined,
         pollError: str(st.pollError) ? st.pollError : undefined,
-        ...(str(st.pendingEnding) ? { pendingEnding: st.pendingEnding } : {}),
       };
     }
     return out;

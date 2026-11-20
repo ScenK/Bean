@@ -130,6 +130,8 @@ export interface TodoHandlerDeps {
   reorderTodo: (file: string, id: string, newOrder: number) => Promise<void>;
   clearFinishedTodos: (file: string, routine: string) => Promise<void>;
   retryTodo: (file: string, id: string) => Promise<void>;
+  /** The scheduler's per-sprout lane (#980): a retry is admitted against the current definition. */
+  withSprout?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 }
 
 export function buildTodoHandlers(deps: TodoHandlerDeps) {
@@ -146,11 +148,15 @@ export function buildTodoHandlers(deps: TodoHandlerDeps) {
     reorder: (id: string, newOrder: number): Promise<void> => deps.reorderTodo(deps.dbFile, id, newOrder),
     clearFinished: (routine: string): Promise<void> => deps.clearFinishedTodos(deps.dbFile, routine),
     retry: async (id: string): Promise<void> => {
-      // Same admission rule as add: an archived sprout's queue stays closed (#980).
       const todo = (await deps.listAllTodos(deps.dbFile)).find((t) => t.id === id);
-      const routine = todo ? (await deps.loadRoutines()).find((r) => r.name === todo.routine) : undefined;
-      if (routine && isArchived(routine, new Date())) throw new Error(`sprout "${routine.name}" is archived — restore it first`);
-      return deps.retryTodo(deps.dbFile, id);
+      if (!todo) return deps.retryTodo(deps.dbFile, id);
+      const lane = deps.withSprout ?? ((_: string, fn: () => Promise<void>) => fn());
+      // Same admission rule as add, in the sprout's lane: an archived sprout's queue stays closed (#980).
+      return lane(todo.routine, async () => {
+        const routine = (await deps.loadRoutines()).find((r) => r.name === todo.routine);
+        if (routine && isArchived(routine, new Date())) throw new Error(`sprout "${routine.name}" is archived — restore it first`);
+        return deps.retryTodo(deps.dbFile, id);
+      });
     },
   };
 }
