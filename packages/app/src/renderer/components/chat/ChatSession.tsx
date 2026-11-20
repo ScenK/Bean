@@ -721,6 +721,7 @@ export function ChatSession({
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
         if (res.sproutRun) next.push({ kind: "sprout", id: newId(), plan: res.sproutRun, state: "pending" });
         if (res.sendCard) next.push({ kind: "send", id: newId(), card: res.sendCard, state: "pending" });
+        if (res.routineDraft) next.push({ kind: "routine", id: newId(), card: res.routineDraft, state: "pending" });
         if (res.proposedDelegate) {
           next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
           const skillName = res.proposedDelegate.skillName;
@@ -1396,6 +1397,31 @@ export function ChatSession({
     }
   };
 
+  // Main re-checks and saves the draft it kept, switched on.
+  const saveRoutineDraft = async (id: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "routine" }> => it.kind === "routine" && it.id === id);
+    if (!item || item.state !== "pending") return;
+    const setState = (state: "pending" | "sending" | "saved"): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "routine" ? { ...it, state } : it)));
+    const fail = (error: string): void => {
+      setState("pending");
+      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't save the sprout: ${error}`, tone: "error" }]);
+    };
+    setState("sending");
+    try {
+      const res = await window.bean.routineDraftSave(item.card.id);
+      if (!res.ok) return fail(res.error);
+      setState("saved");
+      setItems((prev) => [...prev, { kind: "status", id: newId(), tone: "done", text: `Saved sprout "${res.name}" — it's on.` }]);
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const dismissRoutineDraft = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "routine" && it.state === "pending" ? { ...it, state: "dismissed" } : it)));
+  };
+
   const dismissSend = (id: string): void => {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "send" && it.state === "pending" ? { ...it, state: "dismissed" } : it)));
   };
@@ -1781,6 +1807,8 @@ export function ChatSession({
         onSproutDismiss={dismissSprout}
         onSendConfirm={(id, optionId) => void confirmSend(id, optionId)}
         onSendDismiss={dismissSend}
+        onRoutineDraftSave={(id) => void saveRoutineDraft(id)}
+        onRoutineDraftDismiss={dismissRoutineDraft}
         onOfferStart={startOffer}
         onOfferDismiss={dismissOffer}
         onDelegateConfirm={(id, edited, choice) => void confirmDelegate(id, edited, choice)}

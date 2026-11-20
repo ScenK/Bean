@@ -207,6 +207,7 @@ export const CHANNEL_CONTRACT = {
   destinationsRetarget: core(str, str, str),
   destinationsNameRaw: core(str, str, str),
   sendToDestination: core(str, str),
+  routineDraftSave: core(str),
   skillProposalsList: core(),
   skillProposalsApprove: core(str),
   skillProposalsReject: core(str),

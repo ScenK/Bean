@@ -2975,6 +2975,25 @@ describe("owner routines from chat (#285)", () => {
     expect(h.notices[0]).toMatch(/Say `enable mia-summary` to turn it on\.$/);
   });
 
+  test("a forged Home sink on an admin's draft is neither shown nor saved (#982)", async () => {
+    const h = setup({ ...channelJson, sinks: { ...channelJson.sinks, home: { ttlMinutes: 5 } } });
+    const effects = fx();
+    await h.bot.onMessage(adminMsg(), effects);
+    const card = effects.cards[0] as { proposalId: string; sinks: string[] };
+    expect(card.sinks).not.toContain("Home");
+    await h.bot.onCardAction(tap("save-routine", card.proposalId, "ada"), effects);
+    expect(h.store).toEqual([{ ...channelJson, enabled: false }]);
+  });
+
+  test("a draft whose end date has already passed isn't saved (#982)", async () => {
+    const h = setup({ ...channelJson, until: "2020-01-01" });
+    const effects = fx();
+    await h.bot.onMessage(adminMsg(), effects);
+    await h.bot.onCardAction(tap("save-routine", (effects.cards[0] as { proposalId: string }).proposalId, "ada"), effects);
+    expect(h.store).toEqual([]);
+    expect(effects.posted.at(-1)).toMatch(/Couldn't save the sprout: its end date has passed/);
+  });
+
   test("an admin never sees the catalog and can't replace a routine, in any case", async () => {
     const existing = { ...(channelJson as Routine), name: "Mia-Summary", enabled: true };
     const h = setup(channelJson, [existing]);
@@ -3075,6 +3094,17 @@ describe("owner routines from chat (#285)", () => {
     const card = effects.cards.at(-1) as { proposalId: string };
     await h.bot.onCardAction(tap("save-routine", card.proposalId), effects);
     expect(h.store).toEqual([{ ...routineJson, projects: ["/w/app", "/w/gone"], sinks: { ...(routineJson as Routine).sinks, home } }]);
+  });
+
+  test("an owner's replacement card refuses once the sprout was edited after it was posted (#982)", async () => {
+    const h = setup(routineJson, [{ ...(routineJson as Routine) }]);
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, text: "weekday 7am summary to Mia" }, effects);
+    const edited = { ...(routineJson as Routine), cron: "0 8 * * 1-5" };
+    h.store[0] = edited; // changed in desktop Sprouts while the card sat
+    await h.bot.onCardAction(tap("save-routine", (effects.cards.at(-1) as { proposalId: string }).proposalId), effects);
+    expect(h.store).toEqual([edited]);
+    expect(effects.posted.at(-1)).toMatch(/"mia-summary" changed since this card/);
   });
 
   test("an owner's chat replacement never sets or changes sinks.home, whatever the draft carries", async () => {

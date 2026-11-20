@@ -244,7 +244,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     }
     const final = finalStepOutput(routine, result.results);
     const brief = await composeChatBrief({
-      input: chatBriefInput(result.results), final, persona, chat: deps.converse, model: deps.getBriefModel?.() || deps.getModel(),
+      input: chatBriefInput(result.results), final, purpose: routine.description, persona, chat: deps.converse, model: deps.getBriefModel?.() || deps.getModel(),
     });
     const body = brief ?? final;
     return body ? body + (result.footer ?? "") : result.digest;
