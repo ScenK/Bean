@@ -1,32 +1,41 @@
 import type { Project, Routine } from "@bean/core";
 import { sproutProblems, sproutProjects, type SproutProblem } from "@bean/core/usage-sections";
 
-// The Sprouts list's sections (#883): Needs fixing, then registered projects A–Z, then Scratch.
-// Derived on every render from the saved sprouts and the registry; nothing here is stored.
+// The Sprouts list's sections (#883): Needs fixing, then registered projects A–Z, then Scratch,
+// then Archived (#983). Derived on every render from the saved sprouts, the registry and the
+// core's archived set; nothing here is stored.
 
 /** Section keys double as the fold keys in localStorage: a project's path (stable — names repeat
  * and get renamed), `""` for Scratch, `NEEDS_FIXING` for Needs fixing. */
 export const NEEDS_FIXING = "!needs-fixing";
 export const SCRATCH = "";
+/** Folded by default, so its fold key in localStorage marks it *open*. */
+export const ARCHIVED = "!archived";
 
 export interface SproutRow { routine: Routine; also: string[]; problems: SproutProblem[] }
 export interface SproutSection { key: string; label: string; rows: SproutRow[] }
 
 const isFolderProblem = (p: SproutProblem): boolean => p.kind !== "missing-skill";
 
-/** A sprout with a folder problem goes under Needs fixing; one listed under (or whose steps start
+/** An archived sprout (`archived`, the core's derived set) goes only under Archived. Otherwise: a
+ * sprout with a folder problem goes under Needs fixing; one listed under (or whose steps start
  * in) projects goes under each of them, `also` naming the others; anything else under Scratch.
  * `skillNames` should be the full catalog, or a hidden step skill reads as missing. Empty sections
  * are dropped; rows keep `routines` order. */
-export function sproutSections(routines: readonly Routine[], projects: readonly Project[], skillNames: ReadonlySet<string>): SproutSection[] {
+export function sproutSections(routines: readonly Routine[], projects: readonly Project[], skillNames: ReadonlySet<string>, archived: ReadonlySet<string> = new Set()): SproutSection[] {
   const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name));
   const sections: SproutSection[] = [
     { key: NEEDS_FIXING, label: "Needs fixing", rows: [] },
     ...sorted.map((p) => ({ key: p.path, label: p.name, rows: [] as SproutRow[] })),
     { key: SCRATCH, label: "Scratch", rows: [] },
+    { key: ARCHIVED, label: "Archived", rows: [] },
   ];
   const byKey = new Map(sections.map((s) => [s.key, s]));
   for (const routine of routines) {
+    if (archived.has(routine.name)) {
+      byKey.get(ARCHIVED)!.rows.push({ routine, also: [], problems: [] });
+      continue;
+    }
     const problems = sproutProblems(routine, projects, skillNames);
     const homes = sproutProjects(routine, projects);
     const names = homes.map((p) => p.name);

@@ -7,7 +7,7 @@ import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
 import type { CliModels } from "./cli-models.js";
 import type { Destination } from "./destinations.js";
-import { describeContinueErrors, describeEdgeError, describeGroupErrors } from "./routine-graph.js";
+import { describeContinueErrors, describeEdgeError, describeGroupErrors, isDoneEnd } from "./routine-graph.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
@@ -178,6 +178,23 @@ export function endReason(r: Pick<Routine, "enabled" | "until">, state: RoutineS
   const end = untilTime(r.until);
   if (r.enabled || end === undefined || end > now.getTime()) return undefined;
   return state?.history.some((h) => h.done && h.finishedAt === r.until) ? "found" : "expired";
+}
+
+const dayLabel = (t: number): string => new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+/** An ended sprout as the Sprouts panel lists it (#983), in core time so a remote shell sorts and
+ * words it the same: archived → "Found Nov 28" / "Nothing by Dec 20"; still in the grace →
+ * "Paused — found Nov 28 · archives Dec 5". Undefined = it hasn't ended. */
+export function endedView(r: Pick<Routine, "enabled" | "until">, state: RoutineState | undefined, now: Date): { archived: boolean; text: string } | undefined {
+  const reason = endReason(r, state, now);
+  const end = untilTime(r.until);
+  if (!reason || end === undefined) return undefined;
+  // A bare date is that day, not its end (untilTime's midnight after).
+  const d = DATE_ONLY_RE.exec(r.until!);
+  const on = dayLabel(d ? new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3])).getTime() : end);
+  const how = reason === "found" ? `found ${on}` : `nothing by ${on}`;
+  if (isArchived(r, now)) return { archived: true, text: how[0]!.toUpperCase() + how.slice(1) };
+  return { archived: false, text: `Paused — ${how} · archives ${dayLabel(end + GRACE_MS)}` };
 }
 
 export type RunStatus = "ok" | "failed" | "needs-attention";
@@ -374,9 +391,10 @@ export function isValidRoutine(v: unknown): v is Routine {
  * the drafting surface's own (#320) — and DMs only to `recipients`
  * (the owner and household members), never an arbitrary user id the model wrote. A channel sink
  * may only be `channelId`, the server channel it was drafted in: any other id could be a DM
- * channel, which would bypass the recipient check. */
+ * channel, which would bypass the recipient check. The desktop (#982) is the owner's own machine:
+ * its chat sinks may DM the owner on either surface or name a known destination, never an id. */
 export function chatRoutineProblem(
-  v: unknown, transport: RoutineChatopsSink["transport"], recipients: { id: string }[],
+  v: unknown, transport: RoutineChatopsSink["transport"] | "desktop", recipients: { id: string }[],
   cliModels?: CliModels[], channelId?: string, destinations: readonly Destination[] = [],
 ): string | null {
   const error = describeRoutineError(v, cliModels);
@@ -394,6 +412,12 @@ export function chatRoutineProblem(
     // A named destination is checked as the conversation it names.
     const resolved = sink.alias === undefined ? undefined : resolveSinkAlias(sink, destinations);
     if (resolved && "error" in resolved) return resolved.error;
+    if (transport === "desktop") {
+      if (sink.alias === undefined && (sink.user !== undefined || sink.channel !== undefined)) {
+        return "sprouts from this chat post to Home or DM you — pick other chat destinations in the sprout's editor";
+      }
+      continue;
+    }
     const s = resolved ? { transport: sink.transport, channel: resolved.channel } as RoutineChatopsSink : sink;
     if (s.transport !== transport) return `only ${transport === "discord" ? "Discord" : "Teams"} delivery can be set up from this chat`;
     if (s.user !== undefined && !recipients.some((p) => p.id === s.user)) {
@@ -404,6 +428,53 @@ export function chatRoutineProblem(
     }
   }
   return null;
+}
+
+/** True when a step routes to the `done` ending — a commitment that stops once it finds its answer. */
+export function routesToDone(r: Pick<Routine, "steps">): boolean {
+  // Defensive about shape: withDefaultUntil runs it on a raw draft, before validation.
+  const ids = new Set(r.steps.flatMap((s) => (typeof s.id === "string" ? [s.id] : [])));
+  return r.steps.some((s) => typeof s.route === "object" && s.route !== null && Array.isArray(s.route.paths)
+    && [...s.route.paths.map((p) => (p as { goto?: unknown } | null)?.goto), s.route.otherwise].some((g) => isDoneEnd(g, ids)));
+}
+
+/** How long a chat-drafted commitment watches when the owner names no end (#982). */
+export const COMMITMENT_DAYS = 30;
+
+/** A chat draft with its default end: a commitment (it routes to `done`) with no `until` ends
+ * COMMITMENT_DAYS after `now` (core-local date); anything else comes back as it was. */
+export function withDefaultUntil(v: unknown, now: Date): unknown {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return v;
+  const r = v as Record<string, unknown>;
+  if (r.until !== undefined || !Array.isArray(r.steps) || r.steps.some((s) => typeof s !== "object" || s === null)) return v;
+  if (!routesToDone(r as unknown as Routine)) return v;
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + COMMITMENT_DAYS);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return { ...r, until: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}` };
+}
+
+/** "Dec 20, 2026, or sooner if found" — when a draft stops; undefined = it runs until turned off. */
+export function stopsLabel(r: Pick<Routine, "until" | "steps">): string | undefined {
+  if (r.until === undefined) return undefined;
+  return `${untilLabel(r.until)}${routesToDone(r) ? ", or sooner if found" : ""}`;
+}
+
+/** At most this many archived names ride the propose_routine text (the most recently ended). */
+const LISTED_ARCHIVED = 10;
+
+/** The names a propose_routine draft sees (#982): `existing` = every name (a draft reusing any
+ * replaces it), `live` + the most recently `archived` = what the tool text lists. Each list is
+ * sorted by code point so the tool spec stays byte-stable until the set itself changes. */
+export function draftNames(routines: Routine[], now: Date): { existing: string[]; live: string[]; archived: string[] } {
+  const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+  const archived = routines.filter((r) => isArchived(r, now))
+    .sort((a, b) => (untilTime(b.until) ?? 0) - (untilTime(a.until) ?? 0) || byName(a.name, b.name))
+    .slice(0, LISTED_ARCHIVED).map((r) => r.name);
+  return {
+    existing: routines.map((r) => r.name).sort(byName),
+    live: routines.filter((r) => !isArchived(r, now)).map((r) => r.name).sort(byName),
+    archived: archived.sort(byName),
+  };
 }
 
 const SURFACE = { discord: "Discord", teams: "Teams" } as const;

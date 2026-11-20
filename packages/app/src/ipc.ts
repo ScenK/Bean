@@ -521,6 +521,10 @@ export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
     if (!deps.isChatClient(e.sender.id)) throw new Error("Sends are confirmed in the chat window.");
     return host.sends.send(proposalId, optionId);
   });
+  ipcMain.handle(IPC.routineDraftSave, (e, id: unknown) => {
+    if (!deps.isChatClient(e.sender.id)) throw new Error("Sprout drafts are saved in the chat window.");
+    return host.routineDrafts.save(id);
+  });
   ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
     destinations.retarget(alias, surface, conversationId));
 

@@ -71,6 +71,7 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
     case "offer":
       return it.state === "pending" ? { ...it, state: "expired" } : it;
     case "send": // main's pending proposal is gone after a reload
+    case "routine":
       return it.state === "pending" || it.state === "sending" ? { ...it, state: "expired" } : it;
     case "sprout":
       // An admitted run keeps its job id and stays running: the restore settles it from main's record
@@ -155,7 +156,7 @@ export function boundLive(items: ChatItem[], pending: ReadonlySet<string>): Chat
     : trimOldest(items, THREAD_ITEMS_MAX, (it) => unsettled(it) || (it.kind === "post" && pending.has(it.postId)));
 }
 
-const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot", "continued", "post", "summary"]);
+const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "routine", "status", "memory", "forgot", "continued", "post", "summary"]);
 
 /** A saved transcript back into the window: well-formed items only, normalized again, fresh ids (a
  * restored `item-3` would collide with this load's counter), and user turns stripped of `source` —

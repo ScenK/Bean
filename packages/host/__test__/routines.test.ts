@@ -22,6 +22,18 @@ test("routine handlers merge in-memory running state into the state view", async
   expect(state.r?.queue).toBeUndefined(); // not todo-driven
 });
 
+test("routine state carries the core's ended/archived view; a live sprout has none (#983)", async () => {
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [routine, { ...routine, name: "old", enabled: false, until: "2020-01-02" }],
+    saveRoutine: vi.fn(async () => {}), deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0,
+    runNow: async () => ({ started: true }),
+  });
+  const state = await h.state();
+  expect(state.old?.ended).toEqual({ archived: true, text: "Nothing by Jan 2" });
+  expect(state.r?.ended).toBeUndefined();
+});
+
 test("routine state fills the queue for every todo-driven sprout, cron included", async () => {
   const queueCounts = vi.fn(async () => ({ pending: 2, running: 3 }));
   const h = buildRoutineHandlers({
@@ -96,6 +108,12 @@ test("save refuses turning on a sprout whose end has passed; an already-on one s
   await h({ ...ended, enabled: true }).save({ ...ended, enabled: true, description: "edited" });
   expect(saveRoutine).toHaveBeenCalledTimes(2);
   expect(rebase).toHaveBeenCalledTimes(1);
+  // #983: a later end saved while still off would let the next Enable skip the restore (no reseed).
+  const { until: _u, ...cleared } = ended;
+  await expect(h(ended).save(cleared)).rejects.toThrow(/Restore it/);
+  await expect(h(ended).save({ ...ended, until: "2999-01-01" })).rejects.toThrow(/Restore it/);
+  await h(ended).save({ ...ended, description: "still ended" }); // other edits while off still save
+  expect(saveRoutine).toHaveBeenCalledTimes(3);
 });
 
 test("turning an ended watch back on with a later until goes through enableWatch (re-seeded from now), outside the lane", async () => {

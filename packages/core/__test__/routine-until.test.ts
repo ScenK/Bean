@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createRoutineScheduler, type RoutineSchedulerDeps } from "../src/routine-scheduler.js";
 import { DONE_FOOTER } from "../src/routine-runner.js";
 import {
-  addTodo, describeRoutineError, dropPendingTodos, endReason, isArchived, isExpired, listTodos, resolveTodoRoutine,
+  addTodo, describeRoutineError, dropPendingTodos, endReason, endedView, isArchived, isExpired, listTodos, resolveTodoRoutine,
   untilLabel, untilTime, claimTodo, queueTodoDispatch, getDispatch, undeliveredDispatches, ENDED_BEFORE_RUN,
 } from "../src/index.js";
 import { closeDb, openDb } from "../src/db.js";
@@ -50,6 +50,18 @@ describe("until and archived (store)", () => {
     expect(endReason({ enabled: false, until: "2026-12-20" }, { history: [] }, now)).toBe("expired");
     expect(endReason({ enabled: false, until: "2027-01-20" }, done, now)).toBeUndefined(); // paused before its end
     expect(endReason({ enabled: true, until: foundAt }, done, now)).toBeUndefined();
+  });
+
+  it("the panel's ended line (#983): paused within the grace names when it archives; archived names how it ended", () => {
+    const foundAt = at(2026, 11, 28, 15).toISOString();
+    const done: RoutineState = { history: [{ startedAt: "x", finishedAt: foundAt, status: "ok", digest: "", steps: [], done: true }] };
+    expect(endedView({ enabled: false, until: foundAt }, done, at(2026, 11, 30))).toEqual({ archived: false, text: "Paused — found Nov 28 · archives Dec 5" });
+    expect(endedView({ enabled: false, until: foundAt }, done, at(2026, 12, 6))).toEqual({ archived: true, text: "Found Nov 28" });
+    // A bare date reads as that day, not the midnight after it.
+    expect(endedView({ enabled: false, until: "2026-12-20" }, undefined, at(2026, 12, 22))).toEqual({ archived: false, text: "Paused — nothing by Dec 20 · archives Dec 28" });
+    expect(endedView({ enabled: false, until: "2026-12-20" }, undefined, at(2027, 1, 5))).toEqual({ archived: true, text: "Nothing by Dec 20" });
+    expect(endedView({ enabled: true, until: "2026-12-20" }, undefined, at(2027, 1, 5))).toBeUndefined();
+    expect(endedView({ enabled: false }, undefined, at(2027, 1, 5))).toBeUndefined();
   });
 
   it("an archived sprout takes no todos; a paused one within the grace still does", () => {

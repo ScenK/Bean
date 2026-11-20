@@ -1,4 +1,4 @@
-import { hasEnded } from "@bean/core";
+import { endedView, hasEnded } from "@bean/core";
 import type {
   BuildStage, Routine, RoutineBrief, RoutineState, RoutineWatch, RunRecord, RunStatus, StepKind, WatchCheckResult, WatchItem,
 } from "@bean/core";
@@ -26,6 +26,8 @@ export interface RoutineStateView {
   lastPoll?: string; pollError?: string; pollFailures?: number;
   /** false = never enabled since its source was set — the list shows "needs review". */
   seeded?: boolean;
+  /** Ended (off, past its `until`), in core time (#983): `archived` = the panel's Archived section. */
+  ended?: { archived: boolean; text: string };
 }
 
 /** One executed step of a run, for the Dashboard's full-output view. `resume` is Bean's own
@@ -92,10 +94,16 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
       // enableWatch, which re-seeds from now (items published while it was off aren't judged) and
       // commits the new end with `enabled` only once that check succeeded — until then it stays ended.
       const restoreWatch = await lane(routine.name, async () => {
+        const now = new Date();
+        const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
+        const priorEnded = prior !== undefined && !prior.enabled && hasEnded(prior, now);
+        // A later end only comes back with the switch (#983): saved while still off, the next Enable
+        // would skip the restore below and a watch would keep its old seen-set.
+        if (priorEnded && !routine.enabled && !hasEnded(routine, now)) {
+          throw new Error(`"${routine.name}" ended — Restore it to give it a later end date`);
+        }
         if (routine.enabled) {
-          const now = new Date();
-          const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
-          if (prior && !prior.enabled && hasEnded(prior, now)) {
+          if (prior && priorEnded) {
             if (hasEnded(routine, now)) throw new Error(`"${routine.name}" ended — give it a later end date to turn it back on`);
             if (routine.watch && deps.watch) {
               const { until: _, ...rest } = routine;
@@ -121,9 +129,12 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
     state: async (): Promise<Record<string, RoutineStateView>> => {
       const [routines, states] = await Promise.all([deps.loadRoutines(), deps.loadStates()]);
       const out: Record<string, RoutineStateView> = {};
+      const now = new Date();
       for (const r of routines) {
         const s = states[r.name];
+        const ended = endedView(r, s, now);
         out[r.name] = {
+          ...(ended ? { ended } : {}),
           lastRun: s?.lastRun, missed: s?.missed, history: s?.history ?? [],
           running: deps.isRunning(r.name), runningCount: deps.runningCount(r.name),
           ...(r.todoDriven && deps.queueCounts ? { queue: await deps.queueCounts(r.name) } : {}),
