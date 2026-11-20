@@ -604,7 +604,7 @@ export async function createHost(deps: HostDeps) {
         pollFailures: (name) => routineScheduler.pollFailures(name),
         checkNow: (name) => routineScheduler.checkNow(name),
         previewWatch: routines.pollWatch,
-        enableWatch: (name, queueExisting) => routineScheduler.enableWatch(name, queueExisting),
+        enableWatch: (name, queueExisting, until) => routineScheduler.enableWatch(name, queueExisting, until),
         sinkRecipients: () => sinkRecipients(dir),
         draftBrief: async (sentence, previous) => {
           const [skills, projects] = await Promise.all([loadSkills(), loadProjects(projectsFile(dir))]);

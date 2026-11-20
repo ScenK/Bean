@@ -170,21 +170,35 @@ describe("the done ending (scheduler)", () => {
     expect(t.deps.dropPendingTodos).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed done delivery keeps the sprout on and its queue, shows needs attention and queues the item again", async () => {
-    const t = setup([watchQueue()]);
+  it("a failed done delivery stays pending: nothing re-runs, and a tick re-delivers the saved result, then ends it", async () => {
+    let firstHolds = true;
+    const t = setup([watchQueue()], { canSchedule: () => firstHolds });
     t.queue.push(todo("a"), todo("b"));
     vi.mocked(t.deps.runRoutine).mockResolvedValueOnce(doneResult("found it", "item a"));
     vi.mocked(t.deps.deliverDigest).mockRejectedValueOnce(new Error("outbox locked"));
     const res = await t.sched.runNow("w");
     expect(res).toMatchObject({ started: true, status: "needs-attention" });
     expect(t.routine("w").enabled).toBe(true);
-    expect(t.deps.saveRoutine).not.toHaveBeenCalled();
     expect(t.deps.dropPendingTodos).not.toHaveBeenCalled();
     expect(t.deps.addTodo).not.toHaveBeenCalled(); // never re-run: steps may have side effects
-    const rec = t.states().w!.history[0]!;
-    expect(rec.status).toBe("needs-attention");
-    expect(rec.done).toBeUndefined();
-    expect(rec.digest).toMatch(/couldn't deliver this \(outbox locked\)/);
+    expect(t.states().w).toMatchObject({ pendingEnding: "run-found it", history: [{ status: "needs-attention", done: true }] });
+    expect(t.states().w!.history[0]!.digest).toMatch(/couldn't deliver this yet \(outbox locked\)/);
+    // Held meanwhile: nothing new runs.
+    expect(await t.sched.runNow("w")).toMatchObject({ started: false });
+
+    // The next lease holder (a restart) finishes it from disk: re-delivers the saved record, no run.
+    firstHolds = false;
+    const after = createRoutineScheduler({ ...t.deps, canSchedule: () => true });
+    await after.tick();
+    expect(t.deps.runRoutine).toHaveBeenCalledTimes(1);
+    const [, again] = vi.mocked(t.deps.deliverDigest).mock.calls[1]!;
+    expect(again).toMatchObject({ ending: "done", digest: `found it\n\n${DONE_FOOTER}` });
+    expect(t.routine("w")).toMatchObject({ enabled: false, until: FOUND_AT });
+    expect(t.deps.dropPendingTodos).toHaveBeenCalledTimes(1);
+    expect(t.states().w!.pendingEnding).toBeUndefined();
+    expect(t.states().w!.history[0]).toMatchObject({ status: "ok", digest: `found it\n\n${DONE_FOOTER}` });
+    await after.tick();
+    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(2);
   });
 
   it("parallel workers claim nothing after a sibling's done; the sprout ends once", async () => {
@@ -266,6 +280,39 @@ describe("expiry (scheduler)", () => {
     expect(t.routine("w").enabled).toBe(true);
     expect(t.deps.saveRoutine).not.toHaveBeenCalled();
     expect(t.deps.dropPendingTodos).not.toHaveBeenCalled();
+  });
+
+  it("a lease lost while dropping the queue leaves the sprout on; the next holder re-posts and pauses it", async () => {
+    let held = true;
+    const t = setup([watchQueue({ until: "2026-12-20" })], { canSchedule: () => held });
+    vi.mocked(t.deps.dropPendingTodos!).mockImplementationOnce(async () => { held = false; });
+    t.setClock(at(2026, 12, 21, 9, 0));
+    await t.sched.tick();
+    expect(t.deps.saveRoutine).not.toHaveBeenCalled();
+    expect(t.routine("w").enabled).toBe(true);
+    held = true;
+    await t.sched.tick();
+    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(2);
+    expect(t.routine("w").enabled).toBe(false);
+  });
+
+  it("expiry waits for a poll in flight; the poll then hands nothing off (notify-only too)", async () => {
+    let releasePoll: () => void = () => {};
+    const notify = watchQueue({ steps: [], todoDriven: undefined, until: "2026-12-20" });
+    const t = setup([notify], {
+      pollWatch: vi.fn(async () => { await new Promise<void>((res) => { releasePoll = res; }); return [{ id: "new", text: "late item" }]; }),
+    });
+    t.setClock(at(2026, 12, 20, 23, 0));
+    const check = t.sched.checkNow("w");
+    await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
+    t.setClock(at(2026, 12, 21, 9, 0));
+    await t.sched.tick(); // expired, but the poll is in flight: no post yet
+    expect(t.deps.deliverDigest).not.toHaveBeenCalled();
+    releasePoll();
+    expect(await check).toEqual({ newItems: 0 });
+    expect(t.deps.deliverDigest).not.toHaveBeenCalled(); // no digest after the end
+    await t.sched.tick();
+    expect(vi.mocked(t.deps.deliverDigest).mock.calls.map((c) => c[1].ending)).toEqual(["expired"]);
   });
 
   it("a poll in flight when the sprout is paused hands nothing off", async () => {

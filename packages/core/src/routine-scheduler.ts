@@ -177,7 +177,41 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   const ended = new Set<string>();
   const ending = new Set<string>();
   const expiring = new Set<string>();
-  const clearEnded = (name: string): void => { if (count(name) === 0 && !ending.has(name)) ended.delete(name); };
+  // Mirror of `RoutineState.pendingEnding`: a done ending whose delivery hasn't landed yet. Such a
+  // sprout stays `ended` (nothing new runs) until a tick re-delivers the saved record and pauses it.
+  const pendingEndings = new Set<string>();
+  const clearEnded = (name: string): void => {
+    if (count(name) === 0 && !ending.has(name) && !pendingEndings.has(name)) ended.delete(name);
+  };
+  const recordKey = (r: RunRecord): string => r.id ?? r.startedAt;
+  const UNDELIVERED = "\n\n⚠ couldn't deliver this yet";
+  /** The record's digest without the undelivered-ending warning. */
+  const deliveredDigest = (digest: string): string => {
+    const at = digest.indexOf(UNDELIVERED);
+    return at < 0 ? digest : digest.slice(0, at);
+  };
+  /** The ending's last writes, once its delivery landed: drop the queue, pause at the done run's
+   * finish (`endReason` matches on it), clear the marker and the record's warning. `holds` false
+   * stops before a write (the lease holder's tick retry; the new holder finishes it). */
+  async function completeEnding(name: string, rec: RunRecord, holds: () => boolean): Promise<void> {
+    if (!holds()) return;
+    await deps.dropPendingTodos?.(name);
+    if (!holds()) return;
+    const current = (await deps.loadRoutines()).find((r) => r.name === name);
+    if (current?.enabled && deps.saveRoutine) await deps.saveRoutine({ ...current, enabled: false, until: rec.finishedAt });
+    await updateState(name, (s) => {
+      const { pendingEnding: _, ...rest } = s ?? { history: [] };
+      return {
+        ...rest,
+        history: rest.history.map((h) => {
+          if (recordKey(h) !== recordKey(rec) || !h.digest.includes(UNDELIVERED)) return h;
+          const digest = deliveredDigest(h.digest);
+          return { ...h, digest, status: digest.includes("\n\n⚠ ") ? h.status : "ok" as const };
+        }),
+      };
+    });
+    pendingEndings.delete(name);
+  }
   /** Synchronous, before any await after the run returns: the first done result owns the ending;
    * a sibling's later done result is delivered as an ordinary run. */
   const claimEnding = (routine: Routine, result: RoutineRunResult): boolean => {
@@ -194,37 +228,58 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     return { ...rest, digest: result.digest.replace(line, ""), ...(result.footer ? { footer: result.footer.replace(line, "") } : {}) };
   };
 
-  /** Delivers the run that owns a done ending (#980) and pauses the sprout only once the
-   * delivery landed, stamping `until` with the done run's finish time (`endReason` matches on it),
-   * and drops the queue. A failed delivery keeps the sprout on and its queue intact and marks the
-   * record needs-attention, keeping the undelivered result readable in the Dashboard. Nothing is
-   * re-run or re-queued (that would repeat delegate/command steps), and like every other run's
-   * delivery there's no redelivery — the sprout simply keeps watching. */
+  /** Delivers the run that owns a done ending (#980). The pending-ending marker is saved first, so
+   * a failed delivery or a crash leaves the ending to the lease holder's tick (`retryEnding`), which
+   * re-delivers this saved record — never a re-run — until it lands. Meanwhile the sprout stays
+   * `ended` (nothing new runs, the queue kept) and the record shows needs-attention. */
   async function deliverRun(routine: Routine, result: RoutineRunResult, run: RunOutcome, opts: RunOpts): Promise<void> {
+    const name = routine.name;
     try {
+      await updateState(name, (s) => ({ ...(s ?? { history: [] }), pendingEnding: recordKey(result.record) }));
+      pendingEndings.add(name);
       try {
         await deliver(deps, routine, result, run, opts);
       } catch (err) {
         const why = err instanceof Error ? err.message : String(err);
-        console.error(`bean: sprout "${routine.name}" done delivery failed — it keeps going`, err);
+        console.error(`bean: sprout "${name}" done delivery failed — retrying on the next tick`, err);
         run.status = "needs-attention";
-        const line = `⚠ couldn't deliver this (${why.slice(0, 200)}) — the sprout stays on and keeps watching`;
-        const { done: _, ...rest } = result.record;
-        await updateState(routine.name, (s) => ({
+        const line = `${UNDELIVERED} (${why.slice(0, 200)}) — I'll keep trying`;
+        await updateState(name, (s) => ({
           ...(s ?? { history: [] }),
-          history: (s?.history ?? []).map((h) => (h.startedAt === rest.startedAt && h.id === rest.id
-            ? { ...rest, status: "needs-attention" as const, digest: `${rest.digest}\n\n${line}` } : h)),
+          history: (s?.history ?? []).map((h) => (recordKey(h) === recordKey(result.record)
+            ? { ...h, status: "needs-attention" as const, digest: `${h.digest}${line}` } : h)),
         })).catch(() => {});
         return;
       }
-      const current = (await deps.loadRoutines()).find((r) => r.name === routine.name);
-      if (current && deps.saveRoutine) await deps.saveRoutine({ ...current, enabled: false, until: result.record.finishedAt });
-      await deps.dropPendingTodos?.(routine.name);
+      await completeEnding(name, result.record, () => true);
     } catch (err) {
-      console.error(`bean: sprout "${routine.name}" couldn't end after done`, err);
+      console.error(`bean: sprout "${name}" couldn't end after done`, err);
     } finally {
-      ending.delete(routine.name);
-      clearEnded(routine.name);
+      ending.delete(name);
+      clearEnded(name);
+    }
+  }
+
+  /** Tick (lease holder): finishes a pending ending — re-delivers the saved done record (no
+   * results, so chat sinks get its digest as is), then completes it. A failed delivery stays
+   * pending for the next tick. */
+  async function retryEnding(routine: Routine, state: RoutineState | undefined): Promise<void> {
+    const name = routine.name;
+    if (!state?.pendingEnding || ending.has(name) || count(name) > 0 || !mayFire()) return;
+    ending.add(name);
+    try {
+      const rec = state.history.find((h) => recordKey(h) === state.pendingEnding);
+      if (!rec) {
+        // Evicted from history: nothing left to deliver — finish without it.
+        await completeEnding(name, { startedAt: "", finishedAt: now().toISOString(), status: "ok", digest: "", steps: [] }, mayFire);
+        return;
+      }
+      const digest = deliveredDigest(rec.digest);
+      await deps.deliverDigest(routine, { record: { ...rec, digest, status: "ok" }, digest, results: [], ending: "done" });
+      await completeEnding(name, rec, mayFire);
+    } finally {
+      ending.delete(name);
+      clearEnded(name);
     }
   }
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -425,6 +480,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     // ponytail: a lease lost during the history save leaves that one record undelivered; the new
     // holder re-offers the items (not marked seen). Delivery itself, once started, can't be recalled.
     if (lost()) return false;
+    // Paused, expired or ended during the history save: deliver nothing (items stay unseen).
+    const current = (await deps.loadRoutines()).find((r) => r.name === routine.name);
+    if (!current?.enabled || isExpired(current, now()) || ended.has(routine.name)) return false;
     await deps.deliverDigest(routine, fired);
     return true;
   }
@@ -437,7 +495,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     const watch = routine.watch;
     const lost = (): boolean => auto && !mayFire();
     if (!watch || !deps.pollWatch || !deps.watchSeen) return { newItems: 0, error: "watch polling isn't available" };
-    if (polling.has(routine.name)) return { newItems: 0, error: "already checking" };
+    if (polling.has(routine.name) || expiring.has(routine.name)) return { newItems: 0, error: "already checking" };
     const at = now().toISOString();
     // A failed check OR a failed hand-off (todo insert, digest delivery) is one failure: it
     // shows on the status line and counts toward the alarm, and nothing gets marked seen.
@@ -513,8 +571,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     for (const routine of candidates) checking.set(routine.name, token);
     const unflag = (): void => { for (const r of candidates) if (checking.get(r.name) === token) checking.delete(r.name); };
     const due: Routine[] = [];
+    let states: Record<string, RoutineState> = {};
     try {
-      const states = await deps.loadStates();
+      states = await deps.loadStates();
       const nowT = now();
       // Runs start only after every poll in this pass, so one long run can't stall other watches.
       for (const routine of candidates) {
@@ -531,7 +590,14 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     }
     let current: Routine[];
     try {
+      for (const r of routines) {
+        if (!states[r.name]?.pendingEnding) continue;
+        ended.add(r.name); // after a restart the marker is only on disk
+        pendingEndings.add(r.name);
+        await retryEnding(r, states[r.name]).catch((err: unknown) => console.error(`bean: sprout "${r.name}" ending retry failed`, err));
+      }
       for (const r of expired) {
+        if (pendingEndings.has(r.name)) continue; // its done ending comes first
         if (count(r.name) > 0 || !mayFire()) continue; // a live run finishes first
         await expire(r).catch((err: unknown) => console.error(`bean: sprout "${r.name}" expiry failed`, err));
       }
@@ -555,6 +621,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
     async function consider(routine: Routine, state: RoutineState | undefined, nowT: Date): Promise<void> {
       if (!mayFire()) return; // earlier polls this pass may be slow
+      if (state?.pendingEnding) return; // its done ending finishes first (below), nothing new runs
       if (routine.watch) {
         // No cron, no missed-marking: a watch is due when its queue has work. The window gates
         // scheduled polls only (read against now(), since earlier polls this pass may be slow);
@@ -597,19 +664,22 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       // Under the guard, against the current definition: an overlapping tick may already have
       // posted and paused it, or the owner extended it meanwhile.
       const found = (await deps.loadRoutines()).find((r) => r.name === name);
-      if (!found || !isExpired(found, now()) || count(name) > 0 || !mayFire()) return;
+      // A poll in flight hands off nothing once it sees the expiry, but must not be mid-delivery.
+      if (!found || !isExpired(found, now()) || count(name) > 0 || polling.has(name) || !mayFire()) return;
       const at = now().toISOString();
       const digest = `Nothing by ${untilLabel(found.until)} — extend?`;
       await deps.deliverDigest(found, {
         digest, results: [], ending: "expired",
         record: { startedAt: at, finishedAt: at, status: "ok", digest, steps: [] },
       });
-      // Pause only the deadline that was posted about: an edit during the post wins. A lease lost
-      // meanwhile belongs to the new holder, which re-posts (at-least-once) and pauses itself.
+      // Pause only the deadline that was posted about: an edit during the post wins. Queue first,
+      // pause last, each under the lease: a holder that loses it stops, and the sprout is still on
+      // and expired, so the new holder re-posts (at-least-once) and finishes.
       const after = (await deps.loadRoutines()).find((r) => r.name === name);
       if (!after?.enabled || after.until !== found.until || !mayFire()) return;
-      await deps.saveRoutine({ ...after, enabled: false });
       await deps.dropPendingTodos?.(name);
+      if (!mayFire()) return;
+      await deps.saveRoutine({ ...after, enabled: false });
     } finally {
       expiring.delete(name);
     }
@@ -620,6 +690,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     const routines = await deps.loadRoutines();
     const flagged: string[] = [];
     const states = await deps.loadStates();
+    // An unfinished done ending survives a restart on disk: hold the sprout until a tick finishes it.
+    for (const [name, s] of Object.entries(states)) if (s.pendingEnding) { ended.add(name); pendingEndings.add(name); }
     for (const routine of routines) {
       const state = states[routine.name];
       if (!routine.enabled || !routine.cron || !state?.lastRun || state.missed) continue;
@@ -767,8 +839,13 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         }
         deps.watchSeen.seed(name, watchSourceKey(watch), items.map((i) => i.id));
         failures.delete(name);
-        await updateState(name, (s) => ({ ...(s ?? { history: [] }), lastPoll: at, pollError: undefined }));
+        // A restore overrides an unfinished done ending: it's live again.
+        await updateState(name, (s) => {
+          const { pendingEnding: _, ...rest } = s ?? { history: [] };
+          return { ...rest, lastPoll: at, pollError: undefined };
+        });
         await deps.saveRoutine(routine);
+        pendingEndings.delete(name);
         ended.delete(name);
         return { count: items.length };
       } finally {

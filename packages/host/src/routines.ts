@@ -45,7 +45,7 @@ export interface RoutineWatchDeps {
   pollFailures: (name: string) => number;
   checkNow: (name: string) => Promise<WatchCheckResult>;
   previewWatch: (watch: RoutineWatch) => Promise<WatchItem[]>;
-  enableWatch: (name: string, queueExisting: boolean) => Promise<{ count: number }>;
+  enableWatch: (name: string, queueExisting: boolean, until?: string) => Promise<{ count: number }>;
   sinkRecipients: () => Promise<SinkRecipients>;
   draftBrief: (sentence: string, previous?: RoutineBrief) => Promise<BriefDraft>;
   builds: {
@@ -81,11 +81,20 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   return {
     list: (): Promise<Routine[]> => deps.loadRoutines(),
     save: async (routine: Routine): Promise<void> => {
-      // Turning on a sprout whose end has passed would only expire again on the next tick
-      // (another notice, the queue dropped): a later `until` comes first (#980).
-      if (routine.enabled && isExpired(routine, new Date())) {
+      // Turning an ended sprout (off, past its `until`) back on (#980): its end must be later, or it
+      // would only expire again on the next tick; an ended watch restores through enableWatch, which
+      // re-seeds from now, so items published while it was off aren't judged.
+      if (routine.enabled) {
+        const now = new Date();
         const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
-        if (!prior?.enabled) throw new Error(`"${routine.name}" ended — give it a later end date to turn it back on`);
+        if (prior && !prior.enabled && isExpired({ ...prior, enabled: true }, now)) {
+          if (isExpired(routine, now)) throw new Error(`"${routine.name}" ended — give it a later end date to turn it back on`);
+          if (routine.watch && deps.watch) {
+            await deps.saveRoutine({ ...routine, enabled: false });
+            await watch().enableWatch(routine.name, false, routine.until);
+            return;
+          }
+        }
       }
       await deps.saveRoutine(routine);
     },

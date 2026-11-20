@@ -524,9 +524,8 @@ describe("routed runs", () => {
       const res = await runRoutine(routine(found(), { todoDriven: true }), deps(f.delegate, {
         todos: { claim: async (r) => { claims++; return claim(r); }, setStatus: async (_id, _st, sum) => { summaries.push(sum); } },
       }));
-      // The done todo's summary (what its origin chat's dispatch carries) keeps the question whole.
-      expect(summaries[1]).toMatch(new RegExp(`\\n\\n${DONE_FOOTER.replace(/[?.]/g, "\\$&")}$`));
-      expect(summaries[1]!.length).toBeLessThanOrEqual(200);
+      // The question rides the elected owner's sink delivery, never a todo's dispatch summary.
+      expect(summaries[1]).not.toContain(DONE_FOOTER);
       expect(claims).toBe(2);
       expect(f.ids).toEqual(["d", "d"]);
       expect(res.record.done).toBe(true);

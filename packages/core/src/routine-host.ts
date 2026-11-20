@@ -276,7 +276,9 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       // Unresolved: sinkProblems already marked the run; never fall back to the owner's DM.
       return "error" in resolved ? [] : [{ sink, channel: resolved.channel }];
     });
-    const asked = targets.length > 0 ? askedFrom(result, origin) : [];
+    // An ending's "keep watching?" goes to every chat sink, the asking chat's too: its dispatch
+    // notice carries only the result, and only the scheduler's elected owner delivers an ending.
+    const asked = targets.length > 0 && result.ending === undefined ? askedFrom(result, origin) : [];
     const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
     const holds = (): boolean => deps.holdsLease?.() ?? true;
     const home = routine.sinks.home !== undefined && holds() ? routine.sinks.home : undefined;

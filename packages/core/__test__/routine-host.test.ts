@@ -190,6 +190,9 @@ describe("createRoutineHost", () => {
       [expect.stringMatching(/^Heads up: it's out at \$499\.\n\nWant me to keep watching\?/), true],
       ["Nothing by Dec 20, 2026 — extend?", true],
     ]);
+    // The asking chat isn't skipped for an ending: its dispatch notice doesn't carry the question.
+    await h.deliverDigest(r, res, false, { transport: "discord", channel: "c1" });
+    expect((await claimOutbox(outboxDir(dir), "discord")).map((m) => m.body)).toEqual([expect.stringContaining("Want me to keep watching?")]);
     // An ordinary ok run stays muted and keeps the configured context.
     await h.deliverDigest(r, { ...res, ending: undefined, record: { ...res.record, done: undefined } });
     expect(await claimOutbox(outboxDir(dir), "discord")).toEqual([]);

@@ -94,3 +94,17 @@ test("save refuses turning on a sprout whose end has passed; an already-on one s
   await h({ ...ended, enabled: true }).save({ ...ended, enabled: true, description: "edited" });
   expect(saveRoutine).toHaveBeenCalledTimes(2);
 });
+
+test("turning an ended watch back on with a later until goes through enableWatch (re-seeded from now)", async () => {
+  const saveRoutine = vi.fn(async () => {});
+  const enableWatch = vi.fn(async () => ({ count: 0 }));
+  const ended: Routine = { name: "w", enabled: false, until: "2020-01-01", watch: { kind: "feed", url: "https://f" }, todoDriven: true, steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [ended], saveRoutine, deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0, runNow: async () => ({ started: true }),
+    watch: { enableWatch } as never,
+  });
+  await h.save({ ...ended, enabled: true, until: "2999-01-01" });
+  expect(saveRoutine).toHaveBeenCalledWith({ ...ended, until: "2999-01-01", enabled: false });
+  expect(enableWatch).toHaveBeenCalledWith("w", false, "2999-01-01");
+});

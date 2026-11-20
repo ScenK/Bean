@@ -201,6 +201,10 @@ export interface RoutineState {
   history: RunRecord[]; // newest first, capped
   lastPoll?: string;  // ISO of the last watch poll attempt (ok or failed)
   pollError?: string; // last poll's error; absent when the last poll succeeded
+  /** A `done` run's ending not finished yet (#980) — its record's id (else startedAt). Set before
+   * the delivery; the scheduler's lease holder re-delivers that record (no re-run) and pauses the
+   * sprout until it lands. Cleared when the ending completes or the sprout is restored. */
+  pendingEnding?: string;
 }
 
 const HISTORY_CAP = 20;
@@ -546,6 +550,7 @@ export async function loadRoutineStates(file: string): Promise<Record<string, Ro
         history: Array.isArray(st.history) ? (st.history as RunRecord[]) : [],
         lastPoll: str(st.lastPoll) ? st.lastPoll : undefined,
         pollError: str(st.pollError) ? st.pollError : undefined,
+        ...(str(st.pendingEnding) ? { pendingEnding: st.pendingEnding } : {}),
       };
     }
     return out;
