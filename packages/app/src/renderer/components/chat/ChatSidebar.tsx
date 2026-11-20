@@ -36,7 +36,7 @@ export function groupThreads<T extends { updatedAt: string }>(threads: T[], now:
 export function withSaveAck(threads: DesktopChatListing[], ack: ChatThreadAck, items: ChatItem[]): DesktopChatListing[] {
   const agents = [...new Set(items.flatMap((it) => (it.kind === "reply" && it.agent && it.agent !== "bean" ? [it.agent] : [])))];
   const { home: _home, ...old } = threads.find((t) => t.id === ack.id) ?? {};
-  // `home` follows the ack only: a Home thread kept open past midnight becomes plain history.
+  // `home` follows the ack only.
   return [{ starred: false, groupName: null, ...old, ...ack, agents }, ...threads.filter((t) => t.id !== ack.id)];
 }
 
@@ -66,7 +66,7 @@ interface Props {
   /** Threads whose chat holds a live terminal shell: a calm `>_` (a dev server never finishes, so no spinner). */
   terminal: Set<string>;
   overlay: boolean;
-  /** The shown chat is today's Home (#960). */
+  /** The shown chat is Home (#960). */
   homeActive: boolean;
   /** Home posts are waiting (#961): the Home row's unread dot. */
   homePending?: boolean;
@@ -169,7 +169,7 @@ export function rowTime(iso: string, now: Date): string {
 
 export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, homeActive, homePending = false, onNew, onOpen, onDelete, onStar, onRename, onGroup, onRenameGroup }: Props) {
   const now = new Date();
-  // Today's Home is the pinned row, never a dated one (earlier days' Home threads are plain history).
+  // Home is the pinned row, never a dated one (the old daily Home threads, pre-#976, are plain history).
   // Filtered here, not into `threads`: effects key on that prop's identity.
   const homeId = threads.find((t) => t.home)?.id;
   const rows = mergeRows(threads.filter((t) => !t.home), synced);

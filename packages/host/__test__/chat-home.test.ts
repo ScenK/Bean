@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  deleteDesktopChat, getDesktopChat, groupDesktopChats, homeThreadId, insertHomePost, listDesktopChats, listPendingHomePosts,
+  deleteDesktopChat, getDesktopChat, groupDesktopChats, HOME_THREAD_ID, insertHomePost, listDesktopChats, listPendingHomePosts,
   renameDesktopChat, renameDesktopChatGroup, saveDesktopChat, saveDesktopChatDraining, starDesktopChat,
 } from "@bean/core";
 import { buildChatThreadHandlers, HOME_TARGET } from "../src/chat.js";
 
-// Today's Home (#960) over a real bean.db: the host hands pending posts to the chat that opens it and
+// Home (#960, #976) over a real bean.db: the host hands pending posts to the chat that opens it and
 // drains only those, with the save that holds them.
 function setup(at = new Date(2026, 10, 19, 12), onDrained = () => {}) {
   const dbFile = join(mkdtempSync(join(tmpdir(), "bean-home-")), "bean.db");
@@ -20,7 +20,7 @@ function setup(at = new Date(2026, 10, 19, 12), onDrained = () => {}) {
   });
   const post = (body: string): string => insertHomePost(dbFile, { sprout: "digest", body }, undefined, () => clock.now);
   const pending = (): string[] => listPendingHomePosts(dbFile, () => clock.now).map((p) => p.id);
-  return { dbFile, threads, clock, post, pending, home: homeThreadId(at) };
+  return { dbFile, threads, clock, post, pending, home: HOME_THREAD_ID };
 }
 const posts = (...ids: string[]) => ids.map((postId) => ({ kind: "post", id: `i-${postId}`, postId, sprout: "digest", at: "x", text: "t" }));
 
@@ -72,16 +72,15 @@ describe("Home thread", () => {
     expect(pending()).toEqual([]);
   });
 
-  it("after midnight yesterday's Home can't keep posts it never saved; today's Home gets them", () => {
+  it("stays one thread across midnight: posts handed before it drain with a save after it (#976)", () => {
     const { threads, clock, post, pending, home } = setup(new Date(2026, 10, 19, 23, 59));
     const p1 = post("one");
-    threads.get("a", HOME_TARGET);
+    expect(threads.get("a", HOME_TARGET)).toMatchObject({ id: home, title: "Home" });
     clock.now = new Date(2026, 10, 20, 0, 1);
-    expect(() => threads.save("a", { id: home, title: "Home", items: posts(p1) })).toThrow(/day ended/);
-    expect(threads.exists(home)).toBe(false);
-    expect(threads.save("a", { id: home, title: "Home", items: [] })).toBeDefined();
-    expect(threads.get("b", HOME_TARGET)).toMatchObject({ id: homeThreadId(clock.now), home: { posts: [{ id: p1 }] } });
-    expect(pending()).toEqual([p1]);
+    expect(threads.save("a", { id: home, title: "Home", items: posts(p1) })).toMatchObject({ id: home, home: true });
+    expect(pending()).toEqual([]);
+    threads.release("a");
+    expect(threads.get("b", HOME_TARGET)).toMatchObject({ id: home, items: posts(p1) });
   });
 
   it("a hidden chat can't drain: another mount is refused while one holds Home", () => {
@@ -102,8 +101,8 @@ describe("Home thread", () => {
     expect(threads.get("b", HOME_TARGET)).toMatchObject({ home: { posts: [{ id: p1 }] } });
   });
 
-  it("can't be deleted, starred, renamed, grouped or taken off the record; yesterday's Home is plain history", () => {
-    const { threads, clock, home } = setup();
+  it("can't be deleted, starred, renamed, grouped or taken off the record", () => {
+    const { threads, home } = setup();
     threads.get("a", HOME_TARGET);
     threads.save("a", { id: home, title: "Home", items: [] });
     expect(() => threads.star(home, true)).toThrow(/Home/);
@@ -114,12 +113,19 @@ describe("Home thread", () => {
     expect(threads.save("a", { id: home, title: "Home", items: [] })).toBeDefined(); // not latched
     threads.release("a");
     expect(() => threads.delete(home)).toThrow(/Home/);
-    clock.now = new Date(2026, 10, 20, 9);
-    const t = threads.get("b", home);
+  });
+
+  it("an old daily Home is plain history: no posts, no flag, deletable", () => {
+    const { dbFile, threads, post } = setup();
+    const daily = "11111111-1111-4111-8111-111111111111";
+    saveDesktopChat(dbFile, { id: daily, title: "Home · Nov 18", itemsJson: "[]" });
+    post("one");
+    const t = threads.get("b", daily);
+    expect(t).toMatchObject({ id: daily, title: "Home · Nov 18" });
     expect(t).not.toHaveProperty("home");
     expect(threads.list()[0]).not.toHaveProperty("home");
     threads.release("b");
-    threads.delete(home);
-    expect(threads.exists(home)).toBe(false);
+    threads.delete(daily);
+    expect(threads.exists(daily)).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ import type { AvailableModel, CliName, LiveCli } from "@bean/core";
 import type { HandoffItem, LiveEvent } from "@bean/host";
 import type { CloseTurn } from "@bean/host";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
-import type { AgentId, ChatItem } from "../../shared/chat-types.js";
+import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { cardRecord, runEndState, type CardRecordState } from "@bean/core/card-record";
 import { quoteFence } from "@bean/core/prompt";
 import { pdfPlaceholder, SPROUT_UNKNOWN } from "./chat-thread.js";
@@ -103,7 +103,9 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
         return [{ role: "user", content: it.text, source, id: it.id }];
       }
       // Image bytes ride only on the current turn; older turns keep a text placeholder.
-      const text = it.images?.length ? `${it.text}\n[image attached]` : it.text;
+      // The gap marker (#977) leads the turn as it did when sent (core converse's spokenText).
+      const said = it.marker ? `${it.marker}\n${it.text}` : it.text;
+      const text = it.images?.length ? `${said}\n[image attached]` : said;
       return [{ role: "user", content: it.pdf ? `${text}\n${pdfPlaceholder(it.pdf.name)}` : text, source: it.source }];
     }
     // A Home post: sprout output, never the user's words — a fenced user-role turn the model reads as
@@ -120,6 +122,31 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     const capped = text.length > max ? `${text.slice(0, max)}…` : text;
     return [{ role: "assistant", content: `[${AGENT_NAMES[it.agent]}] ${capped}` }];
   });
+}
+
+const latestSummary = (items: readonly ChatItem[]): number => items.findLastIndex((it) => it.kind === "summary");
+
+/** The items after the latest rolling summary (#975): what Bean's history and the close-time memory
+ * transcript read — a summary is never episode evidence, and what it covers isn't re-read. */
+export const sinceSummary = (items: ChatItem[]): ChatItem[] => items.slice(latestSummary(items) + 1);
+
+/** A Bean turn's history (#975): the latest summary's text and the turns of the items after it.
+ * `owners[i]` = the item turn i came from, so a reply's new summary lands after what it covers. */
+export function modelHistory(items: ChatItem[]): { summary?: string; turns: CloseTurn[]; owners: string[] } {
+  const s = items[latestSummary(items)];
+  const turns: CloseTurn[] = [];
+  const owners: string[] = [];
+  for (const it of sinceSummary(items)) for (const t of chatTurns([it])) { turns.push(t); owners.push(it.id); }
+  return { ...(s?.kind === "summary" ? { summary: s.text } : {}), turns, owners };
+}
+
+/** A reply's new summary (covering the request's first `covers` turns) as a hidden item right after
+ * the last item it covers; unchanged when there is none or that item is gone. */
+export function placeSummary(items: ChatItem[], owners: readonly string[], summary: { text: string; covers: number } | undefined): ChatItem[] {
+  const owner = summary && Number.isInteger(summary.covers) && summary.covers > 0 ? owners[summary.covers - 1] : undefined;
+  const at = owner === undefined ? -1 : items.findIndex((it) => it.id === owner);
+  if (at < 0 || !summary?.text) return items;
+  return [...items.slice(0, at + 1), { kind: "summary", id: newId(), text: summary.text }, ...items.slice(at + 1)];
 }
 
 /** A Home post's history turn: code-built header, the sprout's text fenced as data. */
@@ -149,6 +176,8 @@ export function cardItemRecord(it: ChatItem): string | undefined {
       return cardRecord("live session", it.state);
     case "send":
       return cardRecord("send", it.state);
+    case "routine":
+      return cardRecord("sprout draft", it.state, it.card.name);
     case "todo":
       return cardRecord("todo", it.state === "done" ? doneState(it.result, true) : it.state, it.todo.routine);
     case "sprout":
@@ -247,7 +276,7 @@ export function turnFooter(t: { durationMs?: number; costUsd?: number; failed?: 
 /** A streaming bubble for the session, unless one is already open (a queued message joins it). */
 export function ensureStreaming(items: ChatItem[], session: string, agent: LiveCli, id: string): ChatItem[] {
   if (items.some((it) => it.kind === "reply" && it.session === session && it.streaming)) return items;
-  return [...items, { kind: "reply", id, text: "", agent, session, tail: [], streaming: true }];
+  return [...items, { kind: "reply", id, text: "", agent, session, tail: [], streaming: true, at: new Date().toISOString() }];
 }
 
 /** The agent picked up `count` messages sent to session `key` (#746): their oldest `count` pending
@@ -280,19 +309,19 @@ export function applyLiveEvent(items: ChatItem[], e: LiveEvent, newId: () => str
   // The agent's messages show as `display`; `text` stays the turn's final result, so history
   // (chatTurns) and saved chats never lose the answer behind long progress prose.
   if (e.type === "text") {
-    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", display: e.text, agent: e.agent, session: e.sessionId, tail: [], streaming: true }];
+    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", display: e.text, agent: e.agent, session: e.sessionId, tail: [], streaming: true, at: new Date().toISOString() }];
     return patch((it) => ({ ...it, display: it.display ? `${it.display}\n\n${e.text}` : e.text }));
   }
   if (e.type === "output") {
     // Prose arrives as `text` events; the collapsed steps keep only the `▸ tool` parts.
     const tools = e.line.split(" · ").filter((part) => part.startsWith("▸ "));
     if (!tools.length) return items;
-    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: tools, streaming: true }];
+    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: tools, streaming: true, at: new Date().toISOString() }];
     return patch((it) => ({ ...it, tail: [...(it.tail ?? []), ...tools].slice(-TAIL_LINES) }));
   }
   if (e.type === "turn") {
     const done = { text: e.result, footer: turnFooter(e), streaming: false };
-    if (open < 0) return [...items, { kind: "reply", id: newId(), agent: e.agent, session: e.sessionId, tail: [], ...done }];
+    if (open < 0) return [...items, { kind: "reply", id: newId(), agent: e.agent, session: e.sessionId, tail: [], ...done, at: new Date().toISOString() }];
     // The final answer is usually the last streamed message already — don't show it twice.
     return patch((it) => {
       if (!it.display) return { ...it, ...done };

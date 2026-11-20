@@ -1,4 +1,5 @@
 import { composePrompt, linkedNoteData, quoteFence } from "./prompt.js";
+import { CARD_LEAD } from "./card-record.js";
 import { composePersonaPrompt, type Persona } from "./persona.js";
 import type { Project, RouteSuggestion, Skill } from "./types.js";
 import { memoriesBlock, OWNER_CATEGORY, type Memory } from "./memory/memory.js";
@@ -7,8 +8,9 @@ import { categoriesBlock } from "./memory/extract.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 import { isLiveCli, type LiveCli } from "./live-session.js";
-import { chatRoutineProblem, type Routine } from "./routine-store.js";
+import { chatRoutineProblem, withDefaultUntil, COMMITMENT_DAYS, type Routine } from "./routine-store.js";
 import type { Destination, SendCard } from "./destinations.js";
+import type { RoutineDraftCard } from "./chatops/routine-proposals.js";
 import type { CliModels } from "./cli-models.js";
 import type { SproutRunPlan } from "./sprout-trigger.js";
 
@@ -110,11 +112,16 @@ export interface ProposedSkill { name: string; body: string; updating: boolean; 
  * validation: the card shows why and offers no Save. */
 export interface ProposedRoutine { routine: Routine; updating: boolean; problem?: string; }
 /** What propose_routine needs: who a routine may DM, the names it would replace, and the chat's
- * own channel id (absent in a DM). Offered only when set — chatops sets it for the owner. */
+ * own channel id (absent in a DM). Offered only when set — chatops sets it for the owner and
+ * admins, the desktop host for a local chat (#982). */
 export interface RoutineAuthoring {
-  /** The surface drafting it: the only transport its chatops sinks may use (#320). */
-  transport: "discord" | "teams";
+  /** The surface drafting it: the only transport its chatops sinks may use (#320); "desktop" = the
+   * owner's own machine (Home sink, the owner's DMs). */
+  transport: "discord" | "teams" | "desktop";
+  /** Every sprout name, archived ones too: a draft reusing one replaces it (`updating`). */
   existing: string[];
+  /** What the tool text lists (core `draftNames`, sorted); absent = `existing`, no archived line. */
+  listed?: { live: string[]; archived: string[] };
   recipients: { id: string; name: string }[];
   channelId?: string;
   cliModels?: CliModels[];
@@ -189,8 +196,17 @@ export interface ConverseResult {
   /** The confirm card for proposedSend — set by the desktop handler (matched destinations), never
    * by converse() itself. */
   sendCard?: SendCard;
+  /** The confirm card for proposedRoutine — set by the desktop handler (it keeps the draft for the
+   * Save), never by converse() itself. */
+  routineDraft?: RoutineDraftCard;
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
+  /** A new rolling summary of the desktop chat (#975), covering the request's first `covers`
+   * history turns — set by the desktop handler (compactHistory), never by converse() itself. */
+  summary?: { text: string; covers: number };
+  /** The gap marker this turn's message went out with (#977) — set by the desktop handler; the shell
+   * keeps it on the user item so the turn reads the same, byte for byte, once it is history. */
+  gapMarker?: string;
   /** The caller aborted the turn (`ConverseInput.signal`); `reply` is "" and nothing else is set. */
   stopped?: true;
 }
@@ -198,7 +214,20 @@ export interface ConverseResult {
  * `incognito` (the chat's off-the-record chip) withholds them too — an incognito chat writes nothing. */
 /** `turnId` = the desktop renderer's id for this user turn, so close-time catch-up can skip
  * turns whose per-turn memory capture already ran (app ipc.ts buildMemoryHandlers). */
-export interface ChatRequest { history: ChatTurn[]; message: string; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string; }
+/** `summary` = the desktop chat's latest rolling summary (#975); `history` is then only the turns
+ * after it. The host bounds the two with compactHistory. `gap` = the shell's time-divider rule fired
+ * for this message (#977): the host prefixes it with gapMarkerLine. */
+export interface ChatRequest { history: ChatTurn[]; summary?: string; message: string; gap?: boolean; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string; }
+
+const pad = (n: number): string => String(n).padStart(2, "0");
+/** The line a desktop message goes out under after a long gap (#977): the time in this process's
+ * zone, fixed and locale-free, e.g. `[— 2026-11-20 09:12 -06:00 —]`. Built once per turn and kept
+ * by the shell, so it never changes once the turn is history. */
+export function gapMarkerLine(at: Date): string {
+  const off = -at.getTimezoneOffset();
+  const zone = `${off < 0 ? "-" : "+"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+  return `[— ${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())} ${zone} —]`;
+}
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent
@@ -208,7 +237,7 @@ export interface ChatRequest { history: ChatTurn[]; message: string; source?: Tu
 // webSearch splits "the web" into public vs private: public lookups Bean searches itself; the
 // user's own systems are stated as never being on the public web (a fact, not a prohibition),
 // so the model doesn't search, find nothing, and guess. Flag off = today's wording, verbatim.
-const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, webSearch = false): string =>
+const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, webSearch = false, desktop = false): string =>
   // Routing is decided by Bean's OWN closed capability set, not by guessing what the
   // delegated harness can do — that set (MCP servers, auth, skills) is invisible from here.
   // See .memory/convention-route-by-own-capabilities.md.
@@ -270,7 +299,11 @@ const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, w
   "When the user asks you to create a new skill or change an existing one, call propose_skill " +
   "with the complete markdown — the user confirms the card before anything is written. " +
   "If you are given a propose_todo tool, use it when the user wants a sprout to take a task — " +
-  "now or queued for later; the card's Run now / Queue is the confirmation.";
+  "now or queued for later; the card's Run now / Queue is the confirmation. " +
+  // Chatops runs a propose_run skill in-line with no card, so no lead-in for it there; the desktop
+  // shows a card even without a terminal (a remote client).
+  "Whenever you call a propose_* tool" + (runAvailable || desktop ? "" : " other than propose_run") +
+  ", also write one short, natural sentence leading into the card — don't restate what the card shows.";
   
 
 // Attached files are third-party content: data, never authority (safety-saved-text-never-system).
@@ -440,25 +473,43 @@ function proposeSproutRunTool(sprouts: SproutCatalogEntry[]): ToolSpec {
 }
 
 // One JSON-string argument: the routine shape is too deep for a reliable nested tool schema, and
-// converse() validates it with the store's own validator anyway. Stable per chat (prefix caching).
+// converse() validates it with the store's own validator anyway. Stable per chat (prefix caching):
+// only the sprout names (and the archived set) may change it, never the clock.
 function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
   const people = a.recipients.map((p) => `${p.name} (${p.id})`).join(", ");
+  const desktop = a.transport === "desktop";
   const discord = a.transport === "discord";
+  const live = a.listed?.live ?? a.existing;
+  const archived = a.listed?.archived ?? [];
+  const sinks = desktop
+    ? '"sinks": {"home"?: {} (posts each result to the owner\'s Home chat), "note"?: true, "notify"?: true (desktop ' +
+      'notification), "chatops"?: [{"transport": "discord" or "teams"}] (DMs the owner there)}}. Deliver to Home unless the ' +
+      "owner asks for somewhere else. "
+    : `"sinks": {"chatops"?: [{"transport": "${a.transport}", ` + (discord ? '"user"?: id, ' : "") + '"channel"?: id}], ' +
+      '"note"?: true}}. A chatops sink with ' + (discord ? "neither user nor channel" : "no channel") + " DMs the owner; " +
+      (discord ? `"user" DMs one of: ${people || "nobody else"}; ` : "") + '"channel" posts in a channel' +
+      (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". ";
   return {
     name: "propose_routine",
     description:
-      "Draft a scheduled sprout for the owner to confirm — a new one, or a replacement for an " +
-      "existing one (reuse its name). Write the complete sprout as one JSON object: " +
-      '{"name": kebab-case, "description"?: text, "enabled": true, "cron": 5-field cron in local time ' +
+      "Draft a sprout for the owner to confirm — a new one, or a replacement for an existing one " +
+      "(reuse its name). Write the complete sprout as one JSON object: " +
+      '{"name": kebab-case, "description"?: text, "enabled": true, and either "cron": 5-field cron in local time ' +
       '(e.g. "0 7 * * 1-5" = weekdays 7:00; for "every N days" pick weekdays, e.g. "0 9 * * 1,4", since a ' +
-      'day-of-month step like */3 restarts on the 1st), "todoDriven"?: true to run once per queued todo, ' +
-      '"steps": [{"kind": "chat", "instruction": ..., "skill"?: ...} or {"kind": "delegate", "skill": ..., ' +
-      `"project"?: path, "instruction": ...}], "sinks": {"chatops"?: [{"transport": "${a.transport}", ` +
-      (discord ? '"user"?: id, ' : "") + '"channel"?: id}], "note"?: true}}. A chatops sink with ' +
-      (discord ? "neither user nor channel" : "no channel") + " DMs the owner; " +
-      (discord ? `"user" DMs one of: ${people || "nobody else"}; ` : "") + '"channel" posts in a channel' +
-      (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". " +
-      (a.existing.length > 0 ? `Existing sprouts: ${a.existing.join(", ")}. ` : "") +
+      'day-of-month step like */3 restarts on the 1st) or "watch": {"kind": "feed", "url": RSS/Atom feed URL} ' +
+      '(each new feed item runs the steps once, so a feed watch needs "todoDriven": true), "until"?: "YYYY-MM-DD" ' +
+      '(the last day it runs), "webSearch"?: true (its chat steps may search the public web), "todoDriven"?: true ' +
+      'to run once per queued todo, "steps": [{"kind": "chat", "id"?: kebab-case, "instruction": ..., "skill"?: ..., ' +
+      '"route"?: {"paths": [{"when": label, "goto": target}, ...]}} or {"kind": "delegate", "skill": ..., ' +
+      '"project"?: path, "instruction": ...}], ' + sinks +
+      "A watch commitment (\"tell me when X is out\", \"let me know if Y happens\") is one chat step that checks and " +
+      'ends with a route: {"paths": [{"when": "found", "goto": "done"}, {"when": "nothing", "goto": "quiet"}]} — ' +
+      '"done" tells the owner and ends the sprout, "quiet" ends that check without a message. Watch a feed when the ' +
+      "thing has one (the step judges each new item); otherwise a daily cron with webSearch: true. Put the owner's " +
+      "own words and today's date in description. Set until only to an end the owner named — with none, it stops " +
+      `after ${COMMITMENT_DAYS} days. Command steps and command watches can't be set up from chat. ` +
+      (live.length > 0 ? `Existing sprouts: ${live.join(", ")}. ` : "") +
+      (archived.length > 0 ? `Archived sprouts (reusing a name replaces it): ${archived.join(", ")}. ` : "") +
       "Nothing is saved until the card is confirmed. " +
       "The user calls these sprouts; this tool's name is internal — always say sprout.",
     parameters: {
@@ -636,6 +687,9 @@ export function speakerLine(speaker: string, text: string): string {
 export interface ConverseInput {
   history: ChatTurn[];
   latestUserText: string;
+  /** A code-built line the latest message goes out under (#977, gapMarkerLine). Not part of
+   * `latestUserText`, so memory recall never ranks on it. */
+  gapMarker?: string;
   skills: Skill[];
   projects: Project[];
   persona: Persona;
@@ -690,7 +744,7 @@ export interface ConverseInput {
   noteArchiveAvailable?: boolean;
   /** Per-turn guidance about the speaker's role (chatops); rides the trailing system message. */
   roleNote?: string;
-  /** Offer propose_routine (chatops, owner only). */
+  /** Offer propose_routine (chatops owner/admins; the desktop host for a local chat). */
   routineAuthoring?: RoutineAuthoring;
   /** Offer propose_send (default false — the desktop; the surface resolves the name). */
   sendAvailable?: boolean;
@@ -765,7 +819,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const delegateOffered = delegateAvailable && (projects.length > 0 || scratchPath !== undefined);
   const systemParts = [
     composePersonaPrompt(persona),
-    behaviorInstructions(runAvailable, delegateOffered, webSearch),
+    behaviorInstructions(runAvailable, delegateOffered, webSearch, liveSessionHost === "desktop"),
     catalog(skills, projects),
   ];
   if (speaker !== undefined) systemParts.push(SHARED_CHAT_NOTE);
@@ -783,7 +837,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "everyone here", speaker } : { ownerIds }),
     memoryCategories ? categoriesBlock(memoryCategories) : "",
   ].filter(Boolean).join("\n\n");
-  const spokenText = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
+  const said = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
+  const spokenText = input.gapMarker ? `${input.gapMarker}\n${said}` : said;
   if (roleNote) contextParts.push(roleNote);
 
   // Saved text (the linked note, recalled memories) is data, never system authority: each rides
@@ -849,6 +904,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // as an error or fed back to the model as a tool result.
   const stopped = (): ConverseResult => ({ reply: "", model: deps.model, stopped: true });
   let content = "";
+  // Every confirm card comes with a sentence of speech: the model's own, else CARD_LEAD.
+  const card = (proposal: Omit<ConverseResult, "reply" | "model">): ConverseResult =>
+    ({ reply: content.trim() ? content : CARD_LEAD, model: deps.model, ...proposal });
   for (let round = 0; round < 3; round++) {
     if (signal?.aborted) return stopped();
     let toolCalls: ToolCall[] = [];
@@ -897,9 +955,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       const instruction = typeof args.instruction === "string" ? args.instruction : latestUserText;
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedRun: {
           skillName: skill.name,
           projectPath: project?.path,
@@ -907,7 +963,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
           confidence: 1,
           target: skill.target,
         },
-      };
+      });
     }
 
     const delegateCall = toolCalls.find((c) => c.name === "propose_delegate");
@@ -922,9 +978,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       const skill = skills.find((s) => s.name === args.skill);
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedDelegate: {
           projectPath,
           instruction: args.instruction,
@@ -937,7 +991,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
             ? (args.model as string)
             : undefined,
         },
-      };
+      });
     }
 
     const liveCall = toolCalls.find((c) => c.name === "propose_live_session");
@@ -952,14 +1006,12 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       if (desktopLive) {
-        return { reply: content, model: deps.model, proposedLiveSession: { projectPath, instruction: args.instruction.trim() } };
+        return card({ proposedLiveSession: { projectPath, instruction: args.instruction.trim() } });
       }
       const cli = isLiveCli(args.cli) && liveClis.includes(args.cli) ? args.cli : undefined;
       // A model is kept only if the CLI that will run it (picked, else the bot's default) offers it.
       const runsOn = cli ?? (liveClis.includes("claude") ? "claude" : liveClis[0]);
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedLiveSession: {
           projectPath,
           instruction: args.instruction,
@@ -968,7 +1020,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
             ? (args.model as string)
             : undefined,
         },
-      };
+      });
     }
 
     const noteCall = toolCalls.find((c) => c.name === "propose_note");
@@ -979,11 +1031,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       const project = projects.find((p) => p.path === args.project)?.path;
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedNote: { title: args.title.trim(), body: args.body, project, slug: linkedNote?.slug },
-      };
+      });
     }
 
     const archiveCall = toolCalls.find((c) => c.name === "propose_note_archive");
@@ -993,7 +1043,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(archiveCall, "propose_note_archive needs a query.");
         continue;
       }
-      return { reply: content, model: deps.model, proposedNoteArchive: { query: query.trim() } };
+      return card({ proposedNoteArchive: { query: query.trim() } });
     }
 
     const skillCall = toolCalls.find((c) => c.name === "propose_skill");
@@ -1004,11 +1054,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(skillCall, "invalid skill name or empty body.");
         continue;
       }
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedSkill: { name, body: args.body, updating: skills.some((s) => s.name === name) },
-      };
+      });
     }
 
     const todoCall = toolCalls.find((c) => c.name === "propose_todo");
@@ -1019,7 +1067,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(todoCall, "unknown sprout or empty text.");
         continue;
       }
-      return { reply: content, model: deps.model, proposedTodo: { routine: args.routine, text } };
+      return card({ proposedTodo: { routine: args.routine, text } });
     }
 
     const sproutCall = toolCalls.find((c) => c.name === "propose_sprout_run");
@@ -1029,7 +1077,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(sproutCall, "unknown sprout.");
         continue;
       }
-      return { reply: content, model: deps.model, proposedSproutRun: { routine } };
+      return card({ proposedSproutRun: { routine } });
     }
 
     const routineCall = toolCalls.find((c) => c.name === "propose_routine");
@@ -1045,15 +1093,16 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(routineCall, "the sprout must be one JSON object with a name.");
         continue;
       }
+      // A commitment the owner gave no end stops after COMMITMENT_DAYS — dated here, on the core's
+      // clock, so the card shows the real date.
+      parsed = withDefaultUntil(parsed, now());
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.
       const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId, routineAuthoring.destinations);
-      return {
-        reply: content,
-        model: deps.model,
+      return card({
         proposedRoutine: {
           routine: parsed as Routine, updating: routineAuthoring.existing.some((e) => e.toLowerCase() === name.toLowerCase()), ...(problem ? { problem } : {}),
         },
-      };
+      });
     }
 
     const sendCall = toolCalls.find((c) => c.name === "propose_send");
@@ -1064,7 +1113,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reject(sendCall, "a send needs a destination name and a message.");
         continue;
       }
-      return { reply: content, model: deps.model, proposedSend: { destination, text: args.text } };
+      return card({ proposedSend: { destination, text: args.text } });
     }
 
     const actionCalls = toolCalls.filter((c) => actionByName.has(c.name));

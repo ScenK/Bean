@@ -1,7 +1,7 @@
 import { describe, expect, it, test, vi } from "vitest";
 import { buildChatHandler, buildModelsHandler, buildModelMemoryHandlers, type ChatHandlerDeps } from "../src/chat.js";
 import { buildMemoryHandlers } from "../src/memory.js";
-import type { Project, Skill, Persona, Memory } from "@bean/core";
+import { formatSummaryBlock, type ChatTurn, type Project, type Skill, type Persona, type Memory } from "@bean/core";
 
 test("chat handler wires skills/projects/persona into converse", async () => {
   const skills: Skill[] = [{ name: "review-code", description: "r", body: "BODY" }];
@@ -374,6 +374,41 @@ test("chat handler offers propose_send only with proposeSend and turns the call 
   expect(out.proposedSend).toBeUndefined();
 });
 
+test("chat handler offers propose_routine only to a client that can save it, and turns the call into a draft card (#982)", async () => {
+  const base = {
+    loadSkills: async () => [] as Skill[],
+    loadProjects: async () => [] as Project[],
+    loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills", skillsDir: "/b/skills", projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json", projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [], dbFile: "/b/memory.json",
+    loadRoutines: async (): Promise<Routine[]> => [{ name: "old", enabled: false, until: "2020-01-01", cron: "0 9 * * *", steps: [], sinks: {} }],
+  };
+  const draft = { name: "album", enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: { home: {} } };
+  const offered: string[][] = [];
+  const converse: ChatHandlerDeps["converse"] = async ({ tools }) => {
+    offered.push(tools.map((t) => t.name));
+    return tools.some((t) => t.name === "propose_routine")
+      ? { content: "", toolCalls: [{ name: "propose_routine", args: { json: JSON.stringify(draft) } }] }
+      : { content: "ok", toolCalls: [] };
+  };
+  const seen: { names?: string[]; proposed?: unknown } = {};
+  const ops = {
+    authoring: (rs: Routine[]) => { seen.names = rs.map((r) => r.name); return { transport: "desktop" as const, existing: ["old"], recipients: [] }; },
+    propose: async (p: unknown) => { seen.proposed = p; return { id: "d1", name: "album", commitment: false, how: [], tellYou: [] }; },
+  };
+  const handler = buildChatHandler({ ...base, converse, routineDrafts: (c) => (c === 1 ? ops : undefined) } as ChatHandlerDeps);
+  await handler({ history: [], message: "watch it" }, 2);
+  expect(offered[0]).not.toContain("propose_routine");
+  const out = await handler({ history: [], message: "watch it" }, 1);
+  expect(offered[1]).toContain("propose_routine");
+  expect(seen.names).toEqual(["old"]); // archived names still reach the tool
+  expect(seen.proposed).toEqual({ routine: draft, updating: false });
+  expect(out.routineDraft).toMatchObject({ id: "d1" });
+  expect(out.proposedRoutine).toBeUndefined();
+});
+
 test("buildChatHandler passes todo-driven routine names into converse", async () => {
   const nightlyTodoDriven: Routine = {
     name: "nightly", enabled: true, cron: "0 2 * * *", todoDriven: true,
@@ -446,6 +481,26 @@ describe("chat handler sprout runs", () => {
     expect(off.reply).toBe("feed-watch is off — turn it on in Sprouts.");
     const review = await handlerFor([{ ...watch, enabled: false }], "feed-watch", { pending: 0, seeded: false }).run();
     expect(review.reply).toBe("feed-watch needs its first review in Bean's Sprouts panel.");
+  });
+
+  it("leaves archived sprouts out of the catalog; a paused one within the grace stays (#980)", async () => {
+    let spec = "";
+    const handler = buildChatHandler({
+      loadSkills: async () => [] as Skill[], loadProjects: async () => [] as Project[],
+      loadPersona: async () => ({ name: "Bean", tags: [] }) as unknown as Persona,
+      converse: async ({ tools }) => { spec = JSON.stringify(tools.find((t) => t.name === "propose_sprout_run")); return { content: "ok", toolCalls: [] }; },
+      getModel: () => "m",
+      projectSkillsDir: "/b/ps", skillsDir: "/b/s", projectsFile: "/b/p.json", personaFile: "/b/pe.json", projectPersonaFile: "/b/pp.json",
+      loadMemories: async () => [], dbFile: "/b/bean.db",
+      loadRoutines: async () => [
+        { ...daily, name: "old-watch", until: "2020-01-01" },
+        { ...daily, name: "just-ended", until: new Date(Date.now() - 24 * 60 * 60_000).toISOString() },
+      ],
+      sproutFacts: async () => ({ pending: 0, seeded: true }),
+    });
+    await handler({ history: [], message: "run it" });
+    expect(spec).toContain("just-ended");
+    expect(spec).not.toContain("old-watch");
   });
 
   it("isn't offered without sproutFacts", async () => {
@@ -527,6 +582,63 @@ test("a forget receipt's Undo: memory.append of result.forgotten restores the id
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("the chat handler bounds a long history with a rolling summary on the core, local or remote shell alike (#975)", async () => {
+  const calls: Array<{ tools: number; messages: Array<{ role: string; content: unknown }> }> = [];
+  let failSummary = false;
+  const handler = buildChatHandler({
+    loadSkills: async () => [], loadProjects: async () => [], loadPersona: async () => ({ name: "Ponyta", tags: [] }),
+    converse: async ({ messages, tools }) => {
+      calls.push({ tools: tools.length, messages });
+      if (tools.length === 0) {
+        if (failSummary) throw new Error("down");
+        return { content: "they planned the trip", toolCalls: [] };
+      }
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m", projectSkillsDir: "/b/p", skillsDir: "/b/s", projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json", projectPersonaFile: "/b/pp.json", loadMemories: async () => [], dbFile: "/b/memory.json",
+  });
+  const history: ChatTurn[] = Array.from({ length: 61 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: `turn ${i}` }));
+  const out = await handler({ history, summary: "they met", message: "next?" });
+  expect(out.reply).toBe("ok");
+  expect(out.summary).toEqual({ text: "they planned the trip", covers: 41 });
+  const sent = calls.at(-1)!.messages.map((m) => m.content);
+  expect(sent).toContain(formatSummaryBlock("they planned the trip"));
+  expect(sent).not.toContain("turn 40");
+  expect(sent).toContain("turn 41");
+
+  // A failed summary call still answers: the old summary and a bounded tail, no new summary.
+  failSummary = true;
+  const failed = await handler({ history, summary: "they met", message: "next?" });
+  expect(failed.reply).toBe("ok");
+  expect(failed.summary).toBeUndefined();
+  const tail = calls.at(-1)!.messages.map((m) => m.content);
+  expect(tail).toContain(formatSummaryBlock("they met"));
+  expect(tail).not.toContain("turn 40");
+});
+
+test("a gap-flagged message goes to Bean under the core's marker once, and it reads the same as history (#977)", async () => {
+  const sent: Array<Array<{ role: string; content: unknown }>> = [];
+  const handler = buildChatHandler({
+    loadSkills: async () => [], loadProjects: async () => [], loadPersona: async () => ({ name: "Ponyta", tags: [] }),
+    converse: async ({ messages }) => { sent.push(messages); return { content: "ok", toolCalls: [] }; },
+    getModel: () => "m", projectSkillsDir: "/b/p", skillsDir: "/b/s", projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json", projectPersonaFile: "/b/pp.json", loadMemories: async () => [], dbFile: "/b/memory.json",
+  });
+  expect((await handler({ history: [], message: "hi" })).gapMarker).toBeUndefined();
+  const out = await handler({ history: [], message: "back again", gap: true });
+  const marker = out.gapMarker!;
+  expect(marker).toMatch(/^\[— \d{4}-\d{2}-\d{2} \d{2}:\d{2} [+-]\d{2}:\d{2} —\]$/);
+  const first = sent.at(-1)!;
+  expect(first.at(-1)!.content).toBe(`${marker}\nback again`);
+  // The shell keeps the marker on the turn (chatTurns): next turn, every earlier byte is unchanged
+  // and the marker reaches the model once.
+  await handler({ history: [{ role: "user", content: `${marker}\nback again` }, { role: "assistant", content: "ok" }], message: "and?" });
+  const second = sent.at(-1)!;
+  expect(second.slice(0, first.length)).toEqual(first);
+  expect(second.filter((m) => String(m.content).includes(marker))).toHaveLength(1);
 });
 
 test("models handler returns only models the enabled CLIs offer", () => {

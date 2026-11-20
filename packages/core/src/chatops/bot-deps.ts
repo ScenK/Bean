@@ -14,7 +14,7 @@ import { makeOpenAIImageGen } from "../openai-chat.js";
 import { enqueueOutbox } from "../outbox.js";
 import { loadPersona } from "../persona-store.js";
 import { loadProjects } from "../project-registry.js";
-import { createRoutine, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine } from "../routine-store.js";
+import { createRoutine, isArchived, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine } from "../routine-store.js";
 import { loadLayeredSkills, saveSkill } from "../skill-library.js";
 import { addTodo, cancelPendingTodo, listOpenTodos, pendingTodoCount, queueTodoDispatch } from "../todo-store.js";
 import type { BeanConfig } from "../types.js";
@@ -90,7 +90,7 @@ export function sharedBotDeps(opts: {
     },
     pendingTodos: async (routine) => pendingTodoCount(db, routine),
     listTodoRoutines: async (member) => (await loadRoutines(routinesDir(dir)))
-      .filter((r) => (member ? memberTodoEligible(r) : r.todoDriven)).map((r) => r.name),
+      .filter((r) => !isArchived(r, new Date()) && (member ? memberTodoEligible(r) : r.todoDriven)).map((r) => r.name),
     listOpenTodos: (createdBy) => listOpenTodos(db, createdBy),
     cancelTodo: (id, createdBy) => cancelPendingTodo(db, id, createdBy),
     backgroundWork: { file: db, stateFile: routineStateFile(dir), dispatches: (conversation) => conversationDispatches(db, transport, conversation) },

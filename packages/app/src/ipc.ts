@@ -283,7 +283,7 @@ export interface ShellIpcDeps extends ThemeHandlerDeps, UpdateHandlerDeps {
   getPendingPlan: () => RouteSuggestion | undefined;
   getPendingDroppedUrl: () => ChatDrop | undefined;
   getPendingDashboardTarget: () => DashboardTarget | undefined;
-  /** The chat window on today's Home (#961), and whether a mounting one should start there. */
+  /** The chat window on Home (#961), and whether a mounting one should start there. */
   openChatHome: () => void;
   getPendingChatHome: () => boolean;
   runInChat: (payload: ChatPromptPayload) => void;
@@ -520,6 +520,10 @@ export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   ipcMain.handle(IPC.sendToDestination, (e, proposalId: unknown, optionId: unknown) => {
     if (!deps.isChatClient(e.sender.id)) throw new Error("Sends are confirmed in the chat window.");
     return host.sends.send(proposalId, optionId);
+  });
+  ipcMain.handle(IPC.routineDraftSave, (e, id: unknown) => {
+    if (!deps.isChatClient(e.sender.id)) throw new Error("Sprout drafts are saved in the chat window.");
+    return host.routineDrafts.save(id);
   });
   ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
     destinations.retarget(alias, surface, conversationId));

@@ -2,8 +2,12 @@
 // machine can do, and the runtime guards every adapter runs a payload through before a handler sees it.
 // The per-channel table lives beside the channel names (app/src/channel-contract.ts).
 
-/** Bump on any breaking change to a channel's arguments, results or events. */
-export const CONTRACT_VERSION = 1;
+/** Bump on any breaking change to a channel's arguments, results or events.
+ * v2 (#975): `chat` history is the turns after the shell's rolling `summary`, and the reply may carry
+ * a new one — a v1 core would drop the summary's context, a v1 shell would re-summarize every turn.
+ * v3 (#976): Home is one fixed thread; `chatThreadGet("home")` no longer carries `home.until` — a v2
+ * shell would end Home's "day" the moment it opened. */
+export const CONTRACT_VERSION = 3;
 
 /** What the host machine offers beyond core: Mac system controls, a Terminal.app handoff, chat pty
  * terminals, and opening/picking paths on its desktop. Host-bound channels each need one. */

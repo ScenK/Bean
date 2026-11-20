@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { Project, Routine } from "@bean/core";
 import {
-  NEEDS_FIXING, SCRATCH, derivedSectionLabel, folderName, sproutSections, toggleListedUnder,
+  ARCHIVED, NEEDS_FIXING, SCRATCH, derivedSectionLabel, folderName, sproutSections, toggleListedUnder,
 } from "../src/renderer/components/routines/sprout-sections.js";
 
 const p = (name: string, path = `/w/${name}`): Project => ({ name, path });
@@ -34,6 +34,12 @@ test("a sprout under several projects gets one row per section with `also` namin
   const multi = r("multi", [], { projects: ["/w/a", "/w/b", "/w/c"] });
   const rows = sproutSections([multi], projects, new Set()).map((s) => [s.label, s.rows[0]?.also]);
   expect(rows).toEqual([["a", ["b", "c"]], ["b", ["a", "c"]], ["c", ["a", "b"]]]);
+});
+
+test("an archived sprout lists only under Archived, last, whatever its folders (#983)", () => {
+  const projects = [p("app")];
+  const sections = sproutSections([r("gone", ["/w/app"]), r("loose", ["/elsewhere"]), r("live", ["/w/app"])], projects, new Set(), new Set(["gone", "loose"]));
+  expect(sections.map((s) => [s.key, s.rows.map((row) => row.routine.name)])).toEqual([["/w/app", ["live"]], [ARCHIVED, ["gone", "loose"]]]);
 });
 
 test("a missing step skill is a row problem, not a section", () => {

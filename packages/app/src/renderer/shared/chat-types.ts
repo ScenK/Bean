@@ -1,4 +1,4 @@
-import type { CliName, ImageAttachment, LiveCli, Memory, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, SendCard, SproutRunPlan, TurnSource } from "@bean/core";
+import type { CliName, ImageAttachment, LiveCli, Memory, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, RoutineDraftCard, SendCard, SproutRunPlan, TurnSource } from "@bean/core";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Renderer copies of core's SUPPORTED_IMAGE_MIMES / MAX_IMAGES_PER_MESSAGE (converse.ts) —
@@ -57,13 +57,16 @@ export type ChatItem =
   // `pdf` = the PDF this turn attached (name + size only — the bytes live in ChatSession's pin).
   // `pending` = the LiveState.key of the agent session it was sent to, until that agent picks it up
   // ("Not read yet", #746). Transient: never saved.
-  | { kind: "user"; id: string; text: string; display?: string; images?: string[]; pdf?: { name: string; size: number }; source?: TurnSource; pending?: string }
+  // `at` (ISO, user and reply items, #977) = when it was made — drives the chat's time dividers; older
+  // items have none. `marker` = the core's gap line this turn went to Bean under, kept so its history
+  // turn reads the same once it is history.
+  | { kind: "user"; id: string; text: string; display?: string; images?: string[]; pdf?: { name: string; size: number }; source?: TurnSource; pending?: string; at?: string; marker?: string }
   // Same `display`/`text` split as above, in the other direction: an interrupted-run notice
   // needs its full instruction in `text` so a later "retry" has context (it drives history the
   // same as any other reply), but shows a short `display` instead of dumping that wall of text.
   // A live agent's turn (`agent` + `session`) streams in: `tail` = its tool progress, `streaming`
   // until the turn's result lands in `text`, then `footer` ("— turn done (12.3s, $0.04)").
-  | { kind: "reply"; id: string; text: string; display?: string; images?: Array<{ path: string; dataUrl: string }>; agent?: AgentId;
+  | { kind: "reply"; id: string; text: string; display?: string; images?: Array<{ path: string; dataUrl: string }>; agent?: AgentId; at?: string;
       session?: string; tail?: string[]; footer?: string; streaming?: boolean }
   | { kind: "working"; id: string; text: string; agent?: AgentId }
   | { kind: "proposal"; id: string; run: ProposedRun; state: "pending" | "confirmed" | "cancelled" | "expired" }
@@ -95,6 +98,8 @@ export type ChatItem =
   | { kind: "sprout"; id: string; plan: SproutRunPlan; state: "pending" | "running" | "done" | "dismissed" | "expired"; result?: string; jobId?: string; failed?: boolean }
   // A propose_send card: main holds the body and rows (`card.id`); Send hands back the picked option.
   | { kind: "send"; id: string; card: SendCard; state: "pending" | "sending" | "sent" | "dismissed" | "expired" }
+  // A propose_routine card (#982): main holds the draft (`card.id`); Save / Open in editor hand back the id.
+  | { kind: "routine"; id: string; card: RoutineDraftCard; state: "pending" | "sending" | "saved" | "dismissed" | "expired" }
   // `details` expand under the row (e.g. the messages handed over to an agent). `receipt`: an ended
   // live session's CLI session, offered as Continue live; `exiting` = Bean's id for that session
   // while its child is still stopping (the button waits for its `ended` event).
@@ -111,10 +116,14 @@ export type ChatItem =
   // Continue in Discord (#697): this chat moved to a Discord thread. A chat holding one is read-only
   // and offers Open thread (the thread's synced view) instead of a composer.
   | { kind: "continued"; id: string; surface: "discord"; conversationId: string; title: string }
-  // A sprout's Home post (#960), appended once per `postId` when today's Home is shown. Untrusted
+  // A sprout's Home post (#960), appended once per `postId` when Home is shown. Untrusted
   // sprout output: rendered as inert markdown, in history only as a fenced, non-typed user turn.
   // `batch` = drained together (2+ fold into one "While you were away · N" block); `at` = its ISO time.
-  | { kind: "post"; id: string; postId: string; sprout: string; at: string; text: string; batch?: string };
+  | { kind: "post"; id: string; postId: string; sprout: string; at: string; text: string; batch?: string }
+  // A rolling summary (#975), never rendered: it stands for every item before it in Bean's model
+  // history (the core made it, see core compactHistory). Only the latest one counts — history is it
+  // plus the items after it, by position (ids are remapped on restore).
+  | { kind: "summary"; id: string; text: string };
 
 /** The speaker of a reply/working bubble, or undefined for every other item. */
 export function itemAgent(it: ChatItem): AgentId | undefined {

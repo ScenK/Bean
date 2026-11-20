@@ -4,6 +4,11 @@
 // follow-up after a card knows the card exists (and doesn't propose the same action again).
 // Desktop builds it from the card item's current state; chatops appends one per post and outcome.
 
+/** The neutral line a card arrives under when nothing else introduced it (#978): the model proposed
+ * it without a sentence of its own, or a command added it without the model. Neutral because the
+ * card can still be refused or blocked after it is sent. */
+export const CARD_LEAD = "Here's what I'd do:";
+
 /** Every record line starts with this; the synced desktop view shows such a turn as a status row. */
 export const CARD_RECORD_PREFIX = "[card: ";
 

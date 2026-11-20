@@ -90,7 +90,7 @@ export function frameReader(onFrame: (msg: unknown) => void, onError: (why: stri
 const { str, num, bool, obj, arr, opt, oneOf, shape } = g;
 const turn = shape({ role: oneOf("user", "assistant", "system"), content: str, id: opt(str) });
 const chatRequest = shape({
-  history: arr(turn), message: str, source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
+  history: arr(turn), summary: opt(str), message: str, gap: opt(bool), source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
   linkedNote: opt(obj), images: opt(arr(shape({ data: str, mimeType: str }))), documents: opt(arr(() => true)), turnId: opt(str),
 });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
@@ -172,6 +172,11 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
     return h.saveProjects(projects);
   }, arr(project)),
   availableClis: op((h) => h.availableClis()),
+  // The Sprouts list, read-only (#983): its sections — Archived included — are the core's. Every
+  // sprout write stays local-only.
+  routinesList: op((h) => h.routines.list()),
+  routinesState: op((h) => h.routines.state()),
+  routinesBuilds: op((h) => h.routines.builds()),
   availableModels: op((h) => h.models()),
   // The core's self-update from a shell's About (#838).
   coreUpdateStatus: { args: [], run: (d) => updates(d).updateStatus() },

@@ -8,7 +8,7 @@ import type { DashboardTarget } from "../channels.js";
 // so a misclick can't lose data. A finished routine likewise: one click dismisses it and opens that
 // run in the Dashboard, whose card is the lasting record of a failure. A chat's delegate or live
 // session opens that chat (dismissing it once finished) — the chat shows its detail and output.
-// The Home bubble (#961) opens today's Home and never dismisses: only draining the posts clears it.
+// The Home bubble (#961) opens Home and never dismisses: only draining the posts clears it.
 // A running sprout's expanded detail carries the one control: Stop. It sits beside the bubble's
 // <button> (a button can't nest one), overlaid on room reserved in the detail.
 // While the pointer is over the stack, a change that adds, removes or reorders bubbles waits until

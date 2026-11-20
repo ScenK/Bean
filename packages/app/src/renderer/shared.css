@@ -265,7 +265,7 @@ button, input, textarea, select, a {
   border-radius: 999px;
   background: color-mix(in oklch, var(--bean-group-color) 22%, transparent);
 }
-/* Today's Home (#960): pinned above the list, never folds; no star, rename, group or delete. */
+/* Home (#960): pinned above the list, never folds; no star, rename, group or delete. */
 .bean-chat-sidebar-home {
   flex: none;
   display: flex;
@@ -863,6 +863,15 @@ button, input, textarea, select, a {
   font-size: 12px;
   cursor: pointer;
 }
+/* Where a chat resumed after 3 h+ (#977): the absolute time between two hairlines. */
+.bean-chat-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--bean-text-dim);
+  font-size: 11.5px;
+}
+.bean-chat-divider::before, .bean-chat-divider::after { content: ""; flex: 1; border-top: 1px solid var(--bean-border); }
 .bean-status-detail {
   max-width: 420px;
   margin-top: 4px;
@@ -1027,6 +1036,11 @@ button, input, textarea, select, a {
 }
 .bean-send-target { display: flex; flex-direction: column; gap: 2px; color: var(--bean-text); font-size: 13px; }
 .bean-send-body { min-height: 0; resize: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* RoutineDraftCard (propose_routine, #982): label → lines rows. */
+.bean-routine-draft-rows { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.bean-routine-draft-row { display: flex; flex-direction: column; gap: 2px; }
+.bean-routine-draft-row dt { color: var(--bean-text-dim); font-size: 11px; }
+.bean-routine-draft-row dd { margin: 0; color: var(--bean-text); font-size: 12px; overflow-wrap: anywhere; }
 .bean-btn {
   font: 600 12px sans-serif;
   line-height: 14px; /* fixed, so an emoji glyph (💬) can't grow the button past its text-only siblings */
@@ -1748,6 +1762,7 @@ button, input, textarea, select, a {
   border-radius: 4px;
   background: var(--bean-accent);
 }
+.bean-plan-lead { font-size: 14px; color: var(--bean-text); }
 /* Roomier than the inline chat card — the plan window is dedicated to this one prompt. */
 .bean-plan .bean-card-prompt { min-height: 260px; }
 
@@ -3057,6 +3072,8 @@ button, input, textarea, select, a {
   border-top: 1px solid var(--bean-border);
 }
 .bean-dash-spine-row:first-child .bean-dash-run-head { margin-top: 0; padding-top: 0; border-top: none; }
+/* A quiet run's one-line reason, on its own line under the head. */
+.bean-dash-quiet { flex-basis: 100%; }
 .bean-dash-run-time {
   font-size: 15px;
   font-weight: 700;
