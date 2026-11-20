@@ -175,6 +175,8 @@ export interface ChatSessionApi {
   threadId: () => string | undefined;
   /** It holds today's Home (#960). */
   home: () => boolean;
+  /** A new Home post landed (#961): a shown Home appends it now; a hidden one at its next show. */
+  homePost: () => void;
   /** Its thread was renamed in the sidebar: the stored title, for Continue in Discord. */
   renamed: (title: string) => void;
   /** A per-turn "Memory updated" receipt for this chat (the shell routes by mount and thread). */
@@ -499,15 +501,16 @@ export function ChatSession({
   // A hidden Home doesn't drain. Shown (again), it asks main for the pending posts first: that list
   // replaces the held one, so a post that expired or landed meanwhile is right. A failed read appends
   // nothing; the next show asks again.
-  useEffect(() => {
-    if (hidden || !homeRef.current) return;
+  const pullPosts = (): void => {
+    if (hiddenRef.current || !homeRef.current) return;
     window.bean.chatThreadGet("home", mountId).then((t) => {
       if (goneRef.current || hiddenRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
       for (const p of t.home.posts) undrainedRef.current.add(p.id);
       waitingPostsRef.current = t.home.posts;
       if (appendPosts()) setItems(itemsRef.current);
     }, () => {});
-  }, [hidden]);
+  };
+  useEffect(() => { if (!hidden) pullPosts(); }, [hidden]);
   // Midnight with Home open: this thread stays (now plain history); the next post starts the new day's Home.
   const endHomeDay = (): void => {
     homeRef.current = false;
@@ -1554,7 +1557,9 @@ export function ChatSession({
   // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
     if (evictingRef.current || leavingRef.current) return;
-    if (target === "new" ? untouched() : target === threadRef.current?.id || (target === "home" && homeRef.current)) return;
+    // A mount still restoring Home counts as Home: a loading window gets both the pull and the push (#961).
+    const onHome = homeRef.current || (restoreId === "home" && threadRef.current === undefined);
+    if (target === "new" ? untouched() : target === threadRef.current?.id || (target === "home" && onHome)) return;
     // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
     // sidebar row to come back to — kept hidden, it would be unreachable).
     if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {
@@ -1612,6 +1617,7 @@ export function ChatSession({
     liveEvent: onLiveEvent,
     threadId: () => threadRef.current?.id,
     home: () => homeRef.current,
+    homePost: pullPosts,
     renamed: (title) => { if (threadRef.current) threadRef.current = { ...threadRef.current, title }; },
     memoryUpdated: (saved) => setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]),
     // generate_image started inside the current turn — flip the working bubble so the

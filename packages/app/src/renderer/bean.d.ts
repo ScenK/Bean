@@ -97,6 +97,15 @@ declare global {
       /** Focus the chat window and show the chat (mount) that owns a bubble's task. */
       openChatMount(mountId: string): void;
       onShowChatMount(cb: (mountId: string) => void): void;
+      /** A new post for today's Home, sent to the chat (mount) holding it (#961). */
+      onHomePost(cb: (mountId: string) => void): void;
+      /** Open the chat window on today's Home (the Home bubble's click). */
+      openChatHome(): void;
+      /** How many Home posts are pending (the job feed keeps it current after this first read). */
+      homePending(): Promise<number>;
+      onChatShowHome(cb: () => void): void;
+      /** Whether this (just opened) chat window should start on Home; consumed by the call. */
+      getPendingChatHome(): Promise<boolean>;
       /** The plan for a URL dropped on a skill tile (show it with proposeRun). */
       planDrop(skillName: string, droppedUrl: string): Promise<RouteSuggestion>;
       runInChat(prompt: string, label: string, noteSlug?: string, here?: boolean): void;

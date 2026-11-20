@@ -309,6 +309,42 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
 
 export type RemoteCore = ReturnType<typeof createRemoteCore>;
 
+/** How often an attached remote shell re-reads the core's pending Home posts (#961). */
+export const HOME_POLL_MS = 60_000;
+
+/** A remote shell's Home count (#961): the core sends it no job feed, so the shell asks `homePending`
+ * on every attach, on a bounded poll while attached, and when something may have changed it (a post's
+ * nudge, a transcript save). A reply from an earlier connection is discarded. */
+export function createRemoteHomePoll(deps: {
+  call: (op: string, args: unknown[]) => Promise<unknown>;
+  onCount: (n: number) => void;
+  pollMs?: number;
+}) {
+  let conn = 0;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const check = (): void => {
+    if (timer === undefined) return; // not attached
+    const mine = conn;
+    deps.call("homePending", []).then((n) => {
+      if (mine === conn && typeof n === "number" && Number.isInteger(n) && n >= 0) deps.onCount(n);
+    }, () => {});
+  };
+  return {
+    attached: (): void => {
+      conn++;
+      clearInterval(timer);
+      timer = setInterval(check, deps.pollMs ?? HOME_POLL_MS);
+      check();
+    },
+    detached: (): void => {
+      conn++;
+      clearInterval(timer);
+      timer = undefined;
+    },
+    check,
+  };
+}
+
 /** The IPC adapter for a remote core: the remote-safe core channels go over the wire, with the chat
  * mounts' windows tracked here so the core's pushes reach the window that holds each chat. Every other
  * core or host-bound channel rejects; the renderer hides host-bound controls (`useCapabilities`, #812). Each call passes the contract
@@ -320,6 +356,8 @@ export function registerRemoteIpc(electronIpc: IpcLike, deps: {
   mounts: Map<string, number>;
   /** A Settings save went through on the core. */
   onConfigSaved?: () => void;
+  /** A transcript save went through: it may have drained Home posts (#961). */
+  onThreadSaved?: () => void;
 }) {
   const ipc = guardIpc(electronIpc, []);
   const call = (key: string, sender: number, args: unknown[]): Promise<unknown> => {
@@ -328,7 +366,8 @@ export function registerRemoteIpc(electronIpc: IpcLike, deps: {
     if (key === "chatAttach" && typeof mountId === "string") deps.mounts.set(mountId, sender);
     if (key === "chatRelease" && typeof mountId === "string" && deps.mounts.get(mountId) === sender) deps.mounts.delete(mountId);
     const done = deps.core.call(key, args);
-    return key === "saveConfig" ? done.then((v) => { deps.onConfigSaved?.(); return v; }) : done;
+    const after = key === "saveConfig" ? deps.onConfigSaved : key === "chatThreadSave" ? deps.onThreadSaved : undefined;
+    return after ? done.then((v) => { after(); return v; }) : done;
   };
   for (const [key, c] of Object.entries(CHANNEL_CONTRACT)) {
     if (c.owner === "shell") continue;

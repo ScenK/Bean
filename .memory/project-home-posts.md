@@ -1,7 +1,7 @@
 # Home posts (`home_posts`, `sinks.home`)
 
-Epic #958 (Home chat). Story #959 is the core half; #960 the Home thread and its drain; live arrival
-and the sprout-editor controls come later.
+Epic #958 (Home chat). Story #959 is the core half; #960 the Home thread and its drain; #961 live
+arrival, the unread dot and the avatar bubble; the sprout-editor controls come later.
 
 - `sinks.home: { ttlMinutes? }` on a sprout → `deliverDigest` inserts **one** `home_posts` row per
   delivered run (core `home-posts.ts`). The body is the chat brief (`chatSinkBody`), built even when
@@ -42,3 +42,25 @@ and the sprout-editor controls come later.
 - Midnight with Home open: the chat stays on that thread (now plain history) with a status row. The
   chat window re-reads the listing's `home` flag on focus and every 10 minutes (it can't know the
   core's date), so yesterday's row drops into history.
+
+## Unread dot, avatar bubble, live arrival (#961)
+
+- The bubble is one job `home:posts` (kind `home`, state `done` — never `running`, so no spinner,
+  Stop, keep-awake or update block; `count` = pending posts), built by `homeJob()` in
+  `task-status.ts`. Host `home-bubble.ts` recounts it on insert (`RoutineHostDeps.onHomePost`), on
+  a draining save (`onDrained`), at boot and at the soonest pending expiry — the count is the only
+  state. Its click opens the chat window on Home and never dismisses it.
+- A new post pushes `homePost` (mount kind `home`) to the chat holding today's Home, which re-asks
+  `chatThreadGet("home")` only while shown. The host can't see visibility, so the bubble waits
+  `HOME_ARRIVAL_GRACE_MS` when a chat holds Home (a shown one drains within it); the e2e
+  `home-arrival.e2e.ts` waits past it.
+- The chat window's Home-row dot reads the job feed (`taskStatus` has the `home` job) after one
+  `homePending` read on mount. Only the lease holder inserts, so a second host on the same data dir
+  learns of a post only at its next drain/boot/expiry recount.
+- Remote shell: no job feed, so `createRemoteHomePoll` (remote-core.ts) reads `homePending` on
+  attach, every `HOME_POLL_MS`, on a `home` push and after a `chatThreadSave`, drops replies from an
+  earlier connection, and main broadcasts `[homeJob(n)]` as the whole job list.
+- "Open on Home": main's `openChatHome` (bubble, a sprout banner with `meta.open: "home"`, and the
+  avatar's plain open-chat while posts are pending) pushes `chatShowHome` to an open window and
+  leaves `getPendingChatHome` for one still loading. Main also replays the job list once the avatar
+  has loaded — boot jobs were otherwise pushed to nobody.

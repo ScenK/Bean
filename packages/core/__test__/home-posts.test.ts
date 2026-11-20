@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   countPendingHomePosts, HOME_PENDING_CAP, HOME_POST_MAX_CHARS, homeThreadId, insertHomePost, listPendingHomePosts, markHomePostsDrained,
-  nextHomeDay, saveDesktopChatDraining,
+  nextHomeDay, nextHomePostExpiry, saveDesktopChatDraining,
 } from "../src/home-posts.js";
 import { DESKTOP_CHAT_MAX_BYTES, getDesktopChat } from "../src/desktop-chats.js";
 
@@ -19,6 +19,18 @@ let n = 0;
 const id = () => `p${n++}`;
 
 describe("home posts", () => {
+  it("names the soonest pending expiry (#961): none without a TTL, none once expired or drained", () => {
+    n = 0;
+    insertHomePost(file, { sprout: "a", body: "forever" }, id, at(0));
+    expect(nextHomePostExpiry(file, at(0))).toBeUndefined();
+    insertHomePost(file, { sprout: "b", body: "later", ttlMinutes: 10 }, id, at(0));
+    insertHomePost(file, { sprout: "c", body: "soon", ttlMinutes: 5 }, id, at(0));
+    expect(nextHomePostExpiry(file, at(1))).toBe(at(5)().toISOString());
+    expect(nextHomePostExpiry(file, at(5))).toBe(at(10)().toISOString());
+    markHomePostsDrained(file, ["p1"], at(6));
+    expect(nextHomePostExpiry(file, at(6))).toBeUndefined();
+  });
+
   it("lists pending posts oldest first; an expired post is neither listed nor counted", () => {
     n = 0;
     insertHomePost(file, { sprout: "a", body: "one" }, id, at(0));

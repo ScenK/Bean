@@ -68,6 +68,8 @@ interface Props {
   overlay: boolean;
   /** The shown chat is today's Home (#960). */
   homeActive: boolean;
+  /** Home posts are waiting (#961): the Home row's unread dot. */
+  homePending?: boolean;
   onNew: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
@@ -165,7 +167,7 @@ export function rowTime(iso: string, now: Date): string {
   return agoText(iso, now).replace("just now", "now").replace(" ago", "");
 }
 
-export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, homeActive, onNew, onOpen, onDelete, onStar, onRename, onGroup, onRenameGroup }: Props) {
+export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, homeActive, homePending = false, onNew, onOpen, onDelete, onStar, onRename, onGroup, onRenameGroup }: Props) {
   const now = new Date();
   // Today's Home is the pinned row, never a dated one (earlier days' Home threads are plain history).
   // Filtered here, not into `threads`: effects key on that prop's identity.
@@ -355,7 +357,9 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
         >
           <span class="bean-chat-sidebar-line">
             <span class="bean-chat-sidebar-home-title">🏠 Home</span>
-            {homeId !== undefined ? marker(homeId) : null}
+            {homeId !== undefined && working.has(homeId) ? marker(homeId)
+              : homePending || (homeId !== undefined && unread.has(homeId))
+                ? <span class="bean-chat-sidebar-dot" role="img" aria-label={homePending ? "New posts" : "New reply"} /> : null}
           </span>
         </button>
       </div>

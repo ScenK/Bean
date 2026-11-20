@@ -71,6 +71,14 @@ export function countPendingHomePosts(file: string, now: () => Date = () => new 
   return (openDb(file).prepare(`SELECT COUNT(*) AS n FROM home_posts WHERE ${PENDING}`).get(now().toISOString()) as { n: number }).n;
 }
 
+/** When the soonest pending post expires (ISO), or undefined when none will: the host's bubble
+ * recounts then, so the last post expiring clears it with no other event (#961). */
+export function nextHomePostExpiry(file: string, now: () => Date = () => new Date()): string | undefined {
+  const r = openDb(file).prepare(`SELECT MIN(expires_at) AS at FROM home_posts WHERE ${PENDING} AND expires_at IS NOT NULL`)
+    .get(now().toISOString()) as { at: string | null };
+  return r.at ?? undefined;
+}
+
 /** Marks `ids` drained. Idempotent: an already-drained or unknown id changes nothing. Returns how
  * many rows this call drained. */
 export function markHomePostsDrained(file: string, ids: readonly string[], now: () => Date = () => new Date()): number {
