@@ -9,17 +9,20 @@ const str = (v: unknown): v is string => typeof v === "string";
 
 export const ROUTE_LABEL_RE = /^[a-z0-9-]+$/;
 
-/** A route target that ends the run ok with nothing delivered — "nothing worth saying". Like
- * "end", it's a sentinel even if a step has that id (not reserved: a saved sprout with such an id
- * must keep loading). Route-only: `next` and gate gotos can't point at it. */
+/** A route target that ends the run ok with nothing delivered — "nothing worth saying". Route-only:
+ * `next` and gate gotos can't point at it. Not reserved: a step that already has the id "quiet"
+ * wins, so a saved sprout routing to it keeps reaching that step (`isQuietEnd`). */
 export const QUIET = "quiet";
+
+/** Whether a route target means the quiet ending rather than a step. */
+export const isQuietEnd = (goto: unknown, ids: { has(id: string): boolean }): boolean => goto === QUIET && !ids.has(QUIET);
 
 /** Route checks: ≥2 paths, unique labels, every target a later step, "end" or "quiet". */
 function describeRouteError(route: unknown, at: string, i: number, ids: Map<string, number>): string | null {
   const { paths, otherwise } = (typeof route === "object" && route !== null ? route : {}) as { paths?: unknown; otherwise?: unknown };
   if (!Array.isArray(paths) || paths.length < 2) return `${at}: a route needs at least 2 paths`;
   const forward = (v: unknown, what: string): string | null => {
-    if (v === "end" || v === QUIET) return null;
+    if (v === "end" || isQuietEnd(v, ids)) return null;
     if (!str(v)) return `${at}: ${what} needs a step id, "end" or "quiet"`;
     const target = ids.get(v);
     if (target === undefined) return `${at}: ${what} step "${v}" doesn't exist`;
@@ -110,7 +113,7 @@ export function describeGroupErrors(steps: readonly Record<string, unknown>[], i
     }
     // Only a group's first member may be a target: entering mid-group would skip its siblings.
     const into = (v: unknown, what: string): void => {
-      const t = str(v) && v !== "end" && v !== QUIET ? ids.get(v) : undefined;
+      const t = str(v) && v !== "end" ? ids.get(v) : undefined;
       const tg = t === undefined ? undefined : groupOf.get(t);
       if (tg && t !== tg.first) out[i] ??= `step ${i + 1}: ${what} can't point into a group — point it at step ${tg.first + 1}, where the group starts`;
     };
@@ -240,9 +243,9 @@ function walkRoutePaths(
     if (!s.route || !Array.isArray(s.route.paths)) return;
     // `?.`: the save check walks hand-edited JSON before any route shape is checked.
     const targets = [...s.route.paths.map((p) => [p?.when || "…", p?.goto] as const), ...(s.route.otherwise ? [["otherwise", s.route.otherwise] as const] : [])]
-      // "end"/"quiet" are sentinels even if a step happens to have that id; the key tells a path
-      // labeled "otherwise" apart from the fallback.
-      .flatMap(([label, goto], k) => { const entry = goto === "end" || goto === QUIET ? undefined : ids.get(goto); return entry !== undefined && entry > r ? [{ key: `${r}:${k}`, label, entry }] : []; });
+      // "end" is the sentinel even if a step happens to have that id ("quiet" only when none does,
+      // so `ids.get` already says which); the key tells a path labeled "otherwise" apart from the fallback.
+      .flatMap(([label, goto], k) => { const entry = goto === "end" ? undefined : ids.get(goto); return entry !== undefined && entry > r ? [{ key: `${r}:${k}`, label, entry }] : []; });
     // Entry step → the first path that starts there.
     const entries = new Map<number, string>();
     for (const t of targets) if (!entries.has(t.entry)) entries.set(t.entry, t.label);
@@ -329,7 +332,7 @@ export interface FlowNode { key: string; index: number; id?: string; kind: Routi
 export function stepFlow(steps: RoutineStep[]): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const ids = new Map<string, number>();
   steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
-  const at = (goto: string): number | "end" | "quiet" => (goto === "end" || goto === QUIET ? goto : ids.get(goto)!);
+  const at = (goto: string): number | "end" | "quiet" => (goto === "end" ? "end" : isQuietEnd(goto, ids) ? "quiet" : ids.get(goto)!);
   const broken = (s: unknown, i: number): boolean => describeEdgeError(s as Record<string, unknown>, i, ids) !== null;
   const problems = stepEdgeProblems(steps);
   const groupOf = new Map<number, StepGroup>();

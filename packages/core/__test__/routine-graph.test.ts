@@ -112,6 +112,16 @@ describe("stepFlow", () => {
     ]);
   });
 
+  it('a step named "quiet" is an ordinary target for next and routes; next: "quiet" with no such step is dropped', () => {
+    expect(edges([s("a", { next: "quiet" }), s("b"), s("quiet")])).toEqual([
+      { from: 0, to: 2, kind: "next" },
+      { from: 1, to: 2, kind: "flow" },
+      { from: 2, to: "end", kind: "flow" },
+    ]);
+    expect(edges([s("a", { next: "quiet" }), s("b")]).filter((e) => e.from === 0)).toEqual([]);
+    expect(stepEdgeProblems([s("a", { next: "quiet" }), s("b")])[0]).toMatch(/next step "quiet" doesn't exist/);
+  });
+
   it("follows a next skip and next: end", () => {
     expect(edges([s("a", { next: "c" }), s("b", { next: "end" }), s("c")])).toEqual([
       { from: 0, to: 2, kind: "next" },

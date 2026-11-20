@@ -11,7 +11,7 @@ import { selectRelevantMemories } from "./memory/store.js";
 import { quoteFence } from "./prompt.js";
 import { dropRouteLine, gateVerdict, lastLine, parseVerdict, routeLabel, type StepAttempt } from "./step-attempts.js";
 import { RETRO_SKILL, retroSession, type RetroDeps } from "./retro.js";
-import { QUIET, stepGroups, stepLanes } from "./routine-graph.js";
+import { isQuietEnd, stepGroups, stepLanes } from "./routine-graph.js";
 
 export interface DelegateStepRequest {
   skill?: Skill;
@@ -578,7 +578,7 @@ async function runSteps(
       if (goto === undefined) {
         return end(`no path matched at ${name(index)} (said: '${lastLine(said).slice(0, 120)}')`);
       }
-      if (goto === QUIET) {
+      if (isQuietEnd(goto, byId)) {
         // Quiet only when the pass ended clean: a failed member or an open gate FAIL still shows.
         const out = end(lastFail);
         return out.status === "ok" ? { ...out, quiet: gist(dropRouteLine(said)) } : out;

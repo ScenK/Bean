@@ -284,6 +284,8 @@ describe("route validation", () => {
     expect(err([s("d", { route: two({ otherwise: "quiet" }) }), s("x")])).toBeNull();
     expect(err([s("d", { route: { paths: [{ when: "a", goto: "quiet" }, { when: "b", goto: "x" }] } }), s("x")])).toBeNull();
     expect(err([s("quiet")])).toBeNull();
+    // A step named "quiet" is a step: a backward route to it is still rejected as one.
+    expect(err([s("quiet"), s("d", { route: { paths: [{ when: "a", goto: "quiet" }, { when: "b", goto: "end" }] } })])).toMatch(/route "a" must point to a later step/);
     expect(err([s("a", { next: "quiet" })])).toMatch(/next step "quiet" doesn't exist/);
   });
 
@@ -425,6 +427,20 @@ describe("routed runs", () => {
       expect(res.digest).toBe("Checked · nothing new — Only a typo fix landed.");
       expect(res.record.steps).toHaveLength(1);
       expect(res.results).toEqual([]);
+    });
+
+    it('a saved sprout with a step named "quiet" still routes to that step and delivers', async () => {
+      const f = fakeDelegate({ d: ["ROUTE: b"], quiet: ["the quiet step ran"] });
+      const r = routine([
+        step("d", { route: { paths: [{ when: "a", goto: "end" }, { when: "b", goto: "quiet" }], otherwise: "quiet" } }), step("quiet"),
+      ]);
+      expect(describeRoutineError(r)).toBeNull();
+      const res = await runRoutine(r, deps(f.delegate));
+      expect(f.ids).toEqual(["d", "quiet"]);
+      expect(res.record.quiet).toBeUndefined();
+      const other = fakeDelegate({ d: ["ROUTE: nope"] });
+      await runRoutine(r, deps(other.delegate));
+      expect(other.ids).toEqual(["d", "quiet"]);
     });
 
     it("a gate FAIL earlier in the pass outranks quiet: needs attention, not flagged", async () => {
