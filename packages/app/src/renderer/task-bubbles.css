@@ -198,7 +198,9 @@
 .bean-bubble-more:focus-visible { outline: 2px solid var(--bean-accent); outline-offset: 2px; }
 
 /* A running sprout's Stop: beside the bubble's <button> (a button can't nest one), laid over the
-   room the expanded detail reserves (.bean-bubble-stop-room). */
+   room the expanded detail reserves (.bean-bubble-stop-room). Fixed width (#965): the label tracks
+   the live run count, and a pill growing leftward under a held pointer could take a bubble click —
+   16ch fits "Stop all NN runs". */
 .bean-bubble-item { position: relative; }
 .bean-bubble-stop-room { height: 22px; }
 .bean-bubble-stop {
@@ -206,6 +208,9 @@
   position: absolute;
   right: 12px;
   bottom: 11px;
+  box-sizing: content-box;
+  min-width: 16ch;
+  text-align: center;
   padding: 3px 10px;
   border-radius: 999px;
   border: 1px solid var(--bean-control-border);

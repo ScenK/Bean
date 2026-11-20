@@ -150,3 +150,46 @@ test("a finished routine bubble opens its run in the Dashboard", async () => {
     await expect(dash.getByRole("status")).toHaveText("That run wasn't recorded — showing the latest recorded one.");
   } finally { await app.close(); await home.cleanup(); }
 });
+
+// #965: Stop's label follows the live run count, so its pill keeps one width — a second run under a
+// held pointer mustn't grow it leftward over the bubble.
+test("an expanded sprout's Stop keeps its width as the run count changes", async () => {
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const page = await app.firstWindow();
+    await expect(page.locator(".bean-orb-body")).toBeAttached();
+    const push = (jobs: unknown[]) => app.evaluate(({ BrowserWindow }, jobs) => {
+      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!
+        .webContents.send("bean:task-status", jobs);
+    }, jobs);
+    const now = Date.now();
+    const run = (id: string, line = "Run test suites") => ({ id, kind: "routine", routine: "nightly", name: "nightly", line,
+      detail: "", steps: ["Pull repos", "Run test suites"], step: 1, startedAt: now, state: "running" });
+    await push([run("routine:nightly:1")]);
+    await page.locator('.bean-bubble[data-id="routine:nightly:1"]').click();
+    // Hold the stack as a resting pointer would (the window regrows under a real one, so it's flaky).
+    await page.locator(".bean-bubble-stack").dispatchEvent("pointerenter");
+    const stop = page.locator(".bean-bubble-stop");
+    const bubble = page.locator('.bean-bubble[data-id="routine:nightly:1"]');
+    await expect(stop).toHaveText("Stop");
+    // The stack re-renders its markup, so read each box in one evaluate rather than a stale handle.
+    const box = (l: typeof stop) => l.evaluate((e) => { const r = e.getBoundingClientRect(); return { x: r.x, width: r.width }; });
+    const { width } = await box(stop);
+    const inside = async () => {
+      const s = await box(stop), b = await box(bubble);
+      expect(s.x).toBeGreaterThan(b.x);
+      expect(s.x + s.width).toBeLessThan(b.x + b.width);
+    };
+    await inside();
+    for (const [n, label] of [[2, "Stop all 2 runs"], [12, "Stop all 12 runs"]] as const) {
+      await push(Array.from({ length: n }, (_, i) => run(`routine:nightly:${i + 1}`)));
+      await expect(stop).toHaveText(label);
+      expect((await box(stop)).width).toBeCloseTo(width, 0);
+    }
+    await push([run("routine:nightly:1", "Stopping…")]);
+    await expect(stop).toHaveText("Stopping…");
+    expect((await box(stop)).width).toBeCloseTo(width, 0);
+    await inside();
+  } finally { await app.close(); await home.cleanup(); }
+});
