@@ -26,13 +26,16 @@ and the sprout-editor controls come later.
   the core's date — and gets an empty thread before the first save, plus `home: { posts, until }`.
   Earlier days' Home threads are plain history (deletable, never drain); the listing flags only
   today's with `home: true`, which the sidebar pins instead of dating.
-- Drain = the save that holds the posts: `chatThreadSave` carries `drainedPostIds`, and the host
-  calls `saveDesktopChatDraining` (save + mark drained in one `BEGIN IMMEDIATE`) for ids it handed
-  **to that mount with that thread** only. A failed save leaves them pending; the renderer appends by
-  post id, so a re-hand never doubles. The host never appends to `items_json`.
+- Drain = the save that holds the posts: the host reads the `post` items in the saved transcript
+  (no id list from the shell) and drains those it handed **to that mount with that thread**, via
+  `saveDesktopChatDraining` (save + mark drained in one `BEGIN IMMEDIATE`). A failed save leaves them
+  pending; the renderer appends by post id, so a re-hand never doubles. Past midnight a save of
+  yesterday's Home holding undrained posts is refused (today's Home owns them); the renderer drops
+  them at its day timer. A Home shown again re-asks for posts. The host never appends to `items_json`.
 - The renderer appends posts only while the chat is shown (a hidden Home waits), adds no model turn,
   and maps a `post` item into history as a `[sprout "<name>" posted]: <<<…>>>` user turn with source
   `loopback` (non-typed); it's left out of the close-time memory transcript.
 - Home is never deleted/starred/renamed/grouped (host throws) or taken off the record (host
   `setIncognito` ignores it; the shell's Off the record opens a separate incognito chat).
-- Midnight with Home open: the chat stays on that thread (now plain history) with a status row.
+- Midnight with Home open: the chat stays on that thread (now plain history) with a status row. The
+  chat window re-reads the listing's `home` flag on focus, so yesterday's row drops into history.

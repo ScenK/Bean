@@ -205,11 +205,7 @@ export function buildModelMemoryHandlers(deps: ModelMemoryHandlerDeps) {
 }
 
 /** A chat window's transcript save. `items` are the renderer's normalized ChatItems — opaque here. */
-export interface ChatThreadSaveRequest {
-  id: string; title: string; items: unknown[]; noteSlug?: string;
-  /** Home posts (#960) this transcript now holds: marked drained with the save, in one transaction. */
-  drainedPostIds?: string[];
-}
+export interface ChatThreadSaveRequest { id: string; title: string; items: unknown[]; noteSlug?: string }
 export interface ChatThreadAck { id: string; title: string; updatedAt: string; home?: true }
 /** What a chat restores: a saved thread, or `missing` when the picked one is gone (deleted or
  * pruned) — the chat opens empty with a status row. */
@@ -374,9 +370,6 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (!o || typeof o.id !== "string" || !THREAD_ID.test(o.id)) throw new Error("chat thread id must be a UUID");
       if (typeof o.title !== "string" || !Array.isArray(o.items)) throw new Error("malformed chat thread");
       if (o.noteSlug !== undefined && o.noteSlug !== null && typeof o.noteSlug !== "string") throw new Error("malformed chat thread");
-      if (o.drainedPostIds !== undefined && (!Array.isArray(o.drainedPostIds) || !o.drainedPostIds.every((x) => typeof x === "string"))) {
-        throw new Error("malformed chat thread");
-      }
       const pinned = threads.get(key);
       if (pinned !== undefined && pinned !== o.id) throw new Error("this chat saves a different chat thread");
       const other = holder(o.id);
@@ -385,9 +378,15 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (Buffer.byteLength(itemsJson, "utf8") > DESKTOP_CHAT_MAX_BYTES) throw new Error("desktop chat is too large to save");
       const at = now();
       const chat = { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null };
-      // Only ids handed to this chat with this thread drain — never another chat's, never a guess.
+      // Home posts (#960) drain with the save that holds them: the `post` items in this transcript
+      // whose ids were handed to this chat with this thread — never another chat's, never a guess.
       const mine = handed.get(key);
-      const drained = mine?.thread === o.id ? (o.drainedPostIds ?? []).filter((x) => mine.ids.has(x)) : [];
+      const drained = mine?.thread !== o.id ? [] : [...new Set(o.items.flatMap((it) => {
+        const p = it as { kind?: unknown; postId?: unknown } | null;
+        return p?.kind === "post" && typeof p.postId === "string" && mine.ids.has(p.postId) ? [p.postId] : [];
+      }))];
+      // Past midnight they belong to today's Home (which may hold them already): yesterday's can't keep them.
+      if (drained.length > 0 && !isHome(o.id)) throw new Error("Home's day ended — its new posts go to today's Home");
       // The stored title, not the renderer's: a rename since the first save wins over the open chat's copy.
       const title = drained.length > 0 && deps.saveDesktopChatDraining
         ? deps.saveDesktopChatDraining(deps.dbFile, chat, drained, at)

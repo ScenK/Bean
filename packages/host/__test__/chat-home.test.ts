@@ -22,6 +22,7 @@ function setup(at = new Date(2026, 10, 19, 12)) {
   const pending = (): string[] => listPendingHomePosts(dbFile, () => clock.now).map((p) => p.id);
   return { dbFile, threads, clock, post, pending, home: homeThreadId(at) };
 }
+const posts = (...ids: string[]) => ids.map((postId) => ({ kind: "post", id: `i-${postId}`, postId, sprout: "digest", at: "x", text: "t" }));
 
 describe("Home thread", () => {
   it("opens as an empty thread with the pending posts, and the save holding them drains them", () => {
@@ -29,22 +30,35 @@ describe("Home thread", () => {
     const p1 = post("one");
     const t = threads.get("a", HOME_TARGET);
     expect(t).toMatchObject({ id: home, items: [], noteSlug: null, home: { posts: [{ id: p1, body: "one" }] } });
-    // A save without the ids drains nothing; one with them drains them.
+    // A save that doesn't hold the post drains nothing; one that holds it drains it.
     threads.save("a", { id: home, title: "Home", items: [] });
     expect(pending()).toEqual([p1]);
-    const ack = threads.save("a", { id: home, title: "Home", items: [{ kind: "post" }], drainedPostIds: [p1] });
+    const ack = threads.save("a", { id: home, title: "Home", items: posts(p1) });
     expect(ack).toMatchObject({ id: home, home: true });
     expect(pending()).toEqual([]);
     expect(threads.list()).toEqual([expect.objectContaining({ id: home, home: true })]);
   });
 
-  it("drains only ids handed to that chat — never a post handed out later or a guessed id", () => {
+  it("drains only posts the saved transcript holds and that were handed to that chat", () => {
     const { threads, post, pending, home } = setup();
     const p1 = post("one");
+    const p0 = post("zero");
     threads.get("a", HOME_TARGET);
     const p2 = post("two"); // landed after the open: not this chat's to drain
-    threads.save("a", { id: home, title: "Home", items: [], drainedPostIds: [p1, p2, "made-up"] });
-    expect(pending()).toEqual([p2]);
+    threads.save("a", { id: home, title: "Home", items: [...posts(p1, p2, "made-up"), { kind: "status", postId: p0 }] });
+    expect(pending()).toEqual([p0, p2]);
+  });
+
+  it("after midnight yesterday's Home can't keep posts it never saved; today's Home gets them", () => {
+    const { threads, clock, post, pending, home } = setup(new Date(2026, 10, 19, 23, 59));
+    const p1 = post("one");
+    threads.get("a", HOME_TARGET);
+    clock.now = new Date(2026, 10, 20, 0, 1);
+    expect(() => threads.save("a", { id: home, title: "Home", items: posts(p1) })).toThrow(/day ended/);
+    expect(threads.exists(home)).toBe(false);
+    expect(threads.save("a", { id: home, title: "Home", items: [] })).toBeDefined();
+    expect(threads.get("b", HOME_TARGET)).toMatchObject({ id: homeThreadId(clock.now), home: { posts: [{ id: p1 }] } });
+    expect(pending()).toEqual([p1]);
   });
 
   it("a hidden chat can't drain: another mount is refused while one holds Home", () => {
@@ -52,7 +66,7 @@ describe("Home thread", () => {
     post("one");
     threads.get("a", HOME_TARGET);
     expect(() => threads.get("b", HOME_TARGET)).toThrow(/already open/);
-    expect(() => threads.save("b", { id: home, title: "Home", items: [], drainedPostIds: pending() })).toThrow(/another open chat/);
+    expect(() => threads.save("b", { id: home, title: "Home", items: posts(...pending()) })).toThrow(/another open chat/);
     expect(pending()).toHaveLength(1);
   });
 
@@ -60,7 +74,7 @@ describe("Home thread", () => {
     const { threads, post, home } = setup();
     const p1 = post("one");
     threads.get("a", HOME_TARGET);
-    expect(() => threads.save("a", { id: home, title: "Home", items: [{ text: "x".repeat(3 * 1024 * 1024) }], drainedPostIds: [p1] })).toThrow(/too large/);
+    expect(() => threads.save("a", { id: home, title: "Home", items: [...posts(p1), { text: "x".repeat(3 * 1024 * 1024) }] })).toThrow(/too large/);
     threads.release("a");
     expect(threads.get("b", HOME_TARGET)).toMatchObject({ home: { posts: [{ id: p1 }] } });
   });

@@ -461,12 +461,11 @@ export function ChatSession({
     if (snap === savedRef.current) return savingRef.current;
     savedRef.current = snap;
     const [items, noteSlug] = JSON.parse(snap) as [ChatItem[], string | null];
-    // Home posts this save holds: drained with it (one transaction in main), so a failed save leaves them pending.
+    // Home posts this save holds are drained by it (main reads them from `items`, one transaction), so
+    // a failed save leaves them pending.
     const drained = [...undrainedRef.current].filter((id) => items.some((it) => it.kind === "post" && it.postId === id));
     savingRef.current = savingRef.current
-      .then(() => window.bean.chatThreadSave({
-        id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}), ...(drained.length > 0 ? { drainedPostIds: drained } : {}),
-      }, mountId))
+      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}) }, mountId))
       .then((ack) => {
         for (const id of drained) undrainedRef.current.delete(id);
         if (ack) setThreads((prev) => withSaveAck(prev, ack, items));
@@ -497,14 +496,31 @@ export function ChatSession({
     flushRef.current = true;
     return true;
   };
-  // A hidden Home doesn't drain: its posts wait until it's shown.
+  // A hidden Home doesn't drain: its posts wait until it's shown, and a Home shown again (it stayed
+  // mounted) asks main for posts that landed meanwhile.
   useEffect(() => {
-    if (!hidden && waitingPostsRef.current.length > 0 && appendPosts()) setItems(itemsRef.current);
+    if (hidden) return;
+    if (waitingPostsRef.current.length > 0 && appendPosts()) setItems(itemsRef.current);
+    if (!homeRef.current) return;
+    window.bean.chatThreadGet("home", mountId).then((t) => {
+      if (goneRef.current || hiddenRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
+      for (const p of t.home.posts) undrainedRef.current.add(p.id);
+      waitingPostsRef.current = t.home.posts;
+      if (appendPosts()) setItems(itemsRef.current);
+    }, () => {});
   }, [hidden]);
   // Midnight with Home open: this thread stays (now plain history); the next post starts the new day's Home.
   const endHomeDay = (): void => {
     homeRef.current = false;
     setHome(false);
+    // Posts not yet saved here now belong to today's Home (main refuses them in this thread) — once
+    // a save in flight settles, so one that drained them before midnight keeps them.
+    waitingPostsRef.current = [];
+    void savingRef.current.then(() => {
+      const late = undrainedRef.current;
+      undrainedRef.current = new Set();
+      if (late.size > 0 && !goneRef.current) setItems((prev) => prev.filter((it) => it.kind !== "post" || !late.has(it.postId)));
+    });
     const id = threadRef.current?.id;
     setThreads((prev) => prev.map((t) => {
       if (t.id !== id) return t;

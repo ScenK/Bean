@@ -180,6 +180,14 @@ export function ChatWindow() {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
     window.bean.chatThreadList().then((t) => setThreads(t ?? []), () => {});
+    // Today's Home is the core's call (its local date): on focus, re-read which listed thread it is, so
+    // yesterday's Home drops into history after midnight. Only the flag — the rows follow save acks.
+    window.addEventListener("focus", () => {
+      window.bean.chatThreadList().then((fresh) => {
+        const home = (fresh ?? []).find((t) => t.home)?.id;
+        setThreads((prev) => prev.map(({ home: _h, ...t }) => (t.id === home ? { ...t, home: true } : t)));
+      }, () => {});
+    });
     const refreshSynced = (): void => { window.bean.syncedChatList().then((c) => setSynced(c ?? []), () => {}); };
     refreshSynced();
     window.bean.chatopsStatus().then((st) => {

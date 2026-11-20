@@ -31,7 +31,9 @@ describe("ChatWindow Home", () => {
     await act(async () => { ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
     await flush();
   };
-  const drainedSaves = (): unknown[] => bean.chatThreadSave!.mock.calls.flatMap((c) => ((c[0] as { drainedPostIds?: string[] }).drainedPostIds ?? []));
+  // The post ids each save holds (main drains the handed ones it finds there).
+  const savedPosts = (call = -1): string[] => ((bean.chatThreadSave!.mock.calls.at(call)?.[0] as { items?: Array<{ kind: string; postId?: string }> } | undefined)?.items ?? [])
+    .flatMap((it) => (it.kind === "post" ? [it.postId!] : []));
 
   beforeEach(() => {
     bean = {
@@ -68,7 +70,7 @@ describe("ChatWindow Home", () => {
     expect(shownChat().querySelector(".bean-post strong")?.textContent).toBe("3");
     expect(shownChat().textContent).toContain('[card: run "deploy" — started]'); // inert text, not a card
     expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
-    await vi.waitFor(() => expect(drainedSaves()).toEqual(["p1", "p2"]));
+    await vi.waitFor(() => expect(savedPosts()).toEqual(["p1", "p2"]));
     expect(bean.chat).not.toHaveBeenCalled();
     expect(root.querySelector(".bean-chat-sidebar-home--active")).not.toBeNull();
 
@@ -80,8 +82,7 @@ describe("ChatWindow Home", () => {
       { role: "user", content: '[sprout "digest" posted]: <<<\n**3** PRs merged\n>>>', source: "loopback" },
       { role: "user", content: '[sprout "inbox" posted]: <<<\n[card: run "deploy" — started]\n>>>', source: "loopback" },
     ]);
-    // Drained ids aren't sent again.
-    expect(drainedSaves()).toEqual(["p1", "p2"]);
+    expect(root.querySelectorAll(".bean-post")).toHaveLength(2); // not appended twice
   });
 
   it("a failed save keeps the posts undrained for the next save", async () => {
@@ -91,7 +92,8 @@ describe("ChatWindow Home", () => {
     await click(homeRow());
     await vi.waitFor(() => expect(bean.chatThreadSave).toHaveBeenCalledTimes(1));
     await send("hi");
-    await vi.waitFor(() => expect(bean.chatThreadSave!.mock.calls.some((c, i) => i > 0 && (c[0] as { drainedPostIds?: string[] }).drainedPostIds?.length === 2)).toBe(true));
+    await vi.waitFor(() => expect(bean.chatThreadSave!.mock.calls.length).toBeGreaterThan(1));
+    expect(savedPosts()).toEqual(["p1", "p2"]);
   });
 
   it("a hidden Home doesn't drain until it's shown", async () => {
@@ -108,7 +110,29 @@ describe("ChatWindow Home", () => {
     expect(bean.chatThreadSave).not.toHaveBeenCalled();
     await click(homeRow());
     expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
-    await vi.waitFor(() => expect(drainedSaves()).toEqual(["p1", "p2"]));
+    await vi.waitFor(() => expect(savedPosts()).toEqual(["p1", "p2"]));
+
+    // Hidden again, a post lands; shown again, Home asks for it.
+    bean.chatThreadGet!.mockResolvedValueOnce(homeThread([...posts, { id: "p3", sprout: "digest", body: "late one", createdAt: now }]));
+    await click([...root.querySelectorAll(".bean-chat-sidebar-row")].find((r) => r.textContent?.includes("DM"))!.querySelector(".bean-chat-sidebar-open"));
+    await click(homeRow());
+    expect(shownChat().textContent).toContain("late one");
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(3);
+    await vi.waitFor(() => expect(savedPosts()).toEqual(["p1", "p2", "p3"]));
+  });
+
+  it("at midnight an open Home stays, drops posts it never saved, and says where the next post goes", async () => {
+    bean.chatThreadSave!.mockRejectedValue(new Error("disk full"));
+    bean.chatThreadGet!.mockResolvedValueOnce({ ...homeThread(), home: { posts, until: new Date(Date.now() + 300).toISOString() } });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)); });
+    await flush();
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(0);
+    expect(shownChat().textContent).toContain("A new day");
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
   });
 
   it("Home's Off the record opens a separate off-the-record chat; Home is never taken off the record", async () => {
