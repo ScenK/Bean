@@ -45,9 +45,9 @@ brief re-appends it — a new code-owned digest line needs the same treatment.
 The brief also gets the sprout's `description` (#981) as its own fenced user-role message ("what
 this sprout is for") before the report, so a commitment's post follows up on the owner's ask —
 never in the system message ([safety-saved-text-never-system](safety-saved-text-never-system.md)).
-The system message only gains one code-written rule saying the ask may supply names/dates for the
-follow-up while the outcome must come from the report — without it the "everything must be in the
-report" rule makes the model drop the ask's details. No description = the prompt is unchanged. Its numbers and links count as known to the guard (the
+In the system message, code-written rules widen "every number, name, id, link, date must be in the
+report" to "…or in what the sprout is for" and say the ask may identify the subject while the
+outcome must come from the report — without that the model drops which PR/company it was about. No description = the prompt is unchanged. Its numbers and links count as known to the guard (the
 ask's date is the owner's own words). No new field: chat-drafted commitments write the ask and its
 date into `description`.
 

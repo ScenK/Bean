@@ -114,7 +114,10 @@ describe("composeChatBrief", () => {
     const plain = String(without.mock.calls[0]![0].messages[0]!.content);
     expect(plain).not.toContain("the user's own ask");
     expect(sys).toMatchObject({ role: "system" });
-    expect(sys!.content).toContain("Its names, dates and links may be used for that; the outcome itself must come from the report.");
+    expect(plain).toContain("must be in the report, exactly as written.");
+    expect(sys!.content).toContain("must be in the report or in what the sprout is for, exactly as written.");
+    expect(sys!.content).not.toContain("must be in the report, exactly as written.");
+    expect(sys!.content).toContain("The ask may identify the subject (its numbers, names, ids, links and dates); the outcome itself must come from the report.");
     expect(sys!.content).not.toContain("Acme"); // the system message never carries the text itself
     expect(String(sys!.content).trimEnd().endsWith("On facts and length, these fidelity rules outrank the persona.")).toBe(true);
     expect(ask).toMatchObject({ role: "user" });
