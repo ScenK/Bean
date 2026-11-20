@@ -286,6 +286,7 @@ export interface ShellIpcDeps extends ThemeHandlerDeps, UpdateHandlerDeps {
   /** The chat window on today's Home (#961), and whether a mounting one should start there. */
   openChatHome: () => void;
   getPendingChatHome: () => boolean;
+  setChatHomeSeen: (seen: boolean) => void;
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
   getPendingInterruptedRunNotices: () => InterruptedRunNotice[] | undefined;
@@ -588,6 +589,7 @@ export function registerShellIpc(electronIpc: IpcLike, deps: ShellIpcDeps): void
   ipcMain.handle(IPC.getPendingDashboardTarget, () => deps.getPendingDashboardTarget());
   ipcMain.on(IPC.openChatHome, () => deps.openChatHome());
   ipcMain.handle(IPC.getPendingChatHome, () => deps.getPendingChatHome());
+  ipcMain.on(IPC.chatHomeSeen, (_e, seen: unknown) => { if (typeof seen === "boolean") deps.setChatHomeSeen(seen); });
   ipcMain.on(IPC.runInChat, (_e, payload: ChatPromptPayload) => deps.runInChat(payload));
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
   ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());

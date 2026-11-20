@@ -147,6 +147,7 @@ export const CHANNEL_CONTRACT = {
   chatShowHome: shell,
   getPendingChatHome: shell,
   chatWindowVisible: shell,
+  chatHomeSeen: shell,
   planDrop: core(str, str),
   getConfig: core(),
   saveConfig: core(configUpdate),

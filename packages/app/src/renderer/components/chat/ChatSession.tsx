@@ -1568,7 +1568,10 @@ export function ChatSession({
     if (evictingRef.current || leavingRef.current) return;
     // A mount still restoring Home counts as Home: a loading window gets both the pull and the push (#961).
     const onHome = homeRef.current || (restoreId === "home" && restoringRef.current);
-    if (target === "new" ? untouched() : target === threadRef.current?.id || (target === "home" && onHome)) return;
+    // Home picked again (its bubble, a banner): already here, so just catch up on its posts — after a
+    // remote core's restart this also pins it there again (#961).
+    if (target === "home" && onHome) { pullPosts(true); return; }
+    if (target === "new" ? untouched() : target === threadRef.current?.id) return;
     // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
     // sidebar row to come back to — kept hidden, it would be unreachable).
     if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {

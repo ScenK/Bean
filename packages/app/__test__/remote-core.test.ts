@@ -411,29 +411,18 @@ describe("a chat sprout start whose reply a drop lost (#922)", () => {
 });
 
 describe("remote Home count (#961)", () => {
-  it("a post's nudge re-reads only after the grace, so a shown Home's drain lands first", async () => {
-    vi.useFakeTimers();
-    try {
-      let pending = 1;
-      const call = vi.fn(async () => pending);
-      const onCount = vi.fn();
-      const poll = createRemoteHomePoll({ call, onCount, graceMs: 5_000 });
-      pending = 0;
-      poll.attached();
-      await Promise.resolve();
-      pending = 1; // a post lands; the shown Home will drain it
-      poll.arrived();
-      poll.check(); // e.g. a save during the grace: deferred to the grace's own read
-      expect(call).toHaveBeenCalledTimes(1);
-      pending = 0;
-      vi.advanceTimersByTime(5_000);
-      await Promise.resolve();
-      expect(call).toHaveBeenCalledTimes(2);
-      expect(onCount.mock.calls).toEqual([[0], [0]]); // never a positive count
-      poll.detached();
-    } finally {
-      vi.useRealTimers();
-    }
+  it("only the latest read counts: an older reply that lands after a newer one is dropped", async () => {
+    const replies: Array<(n: unknown) => void> = [];
+    const call = vi.fn(() => new Promise<unknown>((r) => { replies.push(r); }));
+    const onCount = vi.fn();
+    const poll = createRemoteHomePoll({ call, onCount });
+    poll.attached(); // read 1
+    poll.check(); // read 2 (a post's nudge)
+    replies[1]!(0); // the drained count lands first
+    replies[0]!(1); // the stale count
+    await Promise.resolve();
+    expect(onCount.mock.calls).toEqual([[0]]);
+    poll.detached();
   });
 
   it("asks on attach and on a bounded poll while attached; a reply from an earlier connection is discarded", async () => {

@@ -1,19 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createHomeBubble, HOME_ARRIVAL_GRACE_MS, HOME_RECONCILE_MS } from "../src/home-bubble.js";
+import { createHomeBubble, HOME_RECONCILE_MS } from "../src/home-bubble.js";
 import { createTaskStatus, HOME_JOB_ID, type TaskJob } from "../src/task-status.js";
 
-// The avatar's Home bubble (#961): recounted on insert, drain, boot and expiry; a post for an open Home
-// nudges it first and waits out the grace before the bubble shows.
+// The avatar's Home bubble (#961): recounted on insert, drain, boot and expiry; a post nudges the chat
+// holding Home; a bounded reconcile catches posts another process inserted.
 function setup(over: { mount?: string } = {}) {
   const pushes: TaskJob[][] = [];
   const status = createTaskStatus((jobs) => pushes.push(jobs));
-  const db = { count: 0, expiry: undefined as string | undefined };
+  const db = { count: 0, newest: undefined as { id: string; createdAt: string } | undefined, expiry: undefined as string | undefined };
   const nudge = vi.fn();
   const bubble = createHomeBubble({
-    count: () => db.count, nextExpiry: () => db.expiry, status, homeMount: () => over.mount, nudge,
+    count: () => db.count, newest: () => db.newest, nextExpiry: () => db.expiry, status, homeMount: () => over.mount, nudge,
   });
+  const add = (id: string, createdAt = new Date().toISOString(), count = db.count + 1): void => { db.count = count; db.newest = { id, createdAt }; };
   const home = (): TaskJob | undefined => status.list().find((j) => j.id === HOME_JOB_ID);
-  return { status, db, nudge, bubble, home, pushes };
+  return { status, db, add, nudge, bubble, home, pushes };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -21,73 +22,63 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe("Home bubble", () => {
   it("shows the pending count, never running, and leaves at zero (boot / drain recount)", () => {
-    const { db, bubble, home } = setup();
+    const { db, add, bubble, home } = setup();
     bubble.refresh();
     expect(home()).toBeUndefined();
-    db.count = 2;
+    add("a");
+    add("b");
     bubble.refresh(); // boot with posts left pending
     expect(home()).toMatchObject({ kind: "home", state: "done", count: 2, line: "Bean has 2 posts for you" });
     db.count = 0;
+    db.newest = undefined;
     bubble.refresh(); // a drain
     expect(home()).toBeUndefined();
+    bubble.stop();
   });
 
-  it("a new post moves the bubble to the newest slot; a recount alone keeps its place", () => {
-    const { status, db, bubble } = setup();
-    db.count = 1;
+  it("a new post moves the bubble to the newest slot and nudges the chat holding Home; a recount keeps its place", () => {
+    const { status, add, bubble, nudge } = setup({ mount: "m1" });
+    add("a");
     bubble.refresh();
     status.upsert("d1", { kind: "delegate", name: "fix" });
     bubble.refresh();
     expect(status.list().map((j) => j.id)).toEqual([HOME_JOB_ID, "d1"]);
-    db.count = 2;
-    bubble.posted();
-    expect(status.list().map((j) => j.id)).toEqual(["d1", HOME_JOB_ID]);
-  });
-
-  it("a post for an open Home nudges it and shows the bubble only if it's still pending after the grace", () => {
-    const { db, nudge, bubble, home } = setup({ mount: "m1" });
-    db.count = 1;
+    expect(nudge).not.toHaveBeenCalled();
+    add("b");
     bubble.posted();
     expect(nudge).toHaveBeenCalledWith("m1");
-    expect(home()).toBeUndefined();
-    db.count = 0; // the shown Home drained it
-    vi.advanceTimersByTime(HOME_ARRIVAL_GRACE_MS);
-    expect(home()).toBeUndefined();
-    db.count = 1; // a hidden Home doesn't
-    bubble.posted();
-    vi.advanceTimersByTime(HOME_ARRIVAL_GRACE_MS);
-    expect(home()).toMatchObject({ count: 1 });
+    expect(status.list().map((j) => j.id)).toEqual(["d1", HOME_JOB_ID]);
+    bubble.stop();
   });
 
   it("the last pending post expiring removes the bubble with no other event", () => {
-    const { db, bubble, home } = setup();
-    db.count = 1;
+    const { db, add, bubble, home } = setup();
+    add("a");
     db.expiry = new Date(Date.now() + 60_000).toISOString();
     bubble.refresh();
     expect(home()).toBeDefined();
     db.count = 0;
+    db.newest = undefined;
     db.expiry = undefined;
     vi.advanceTimersByTime(60_000 + 100);
     expect(home()).toBeUndefined();
+    bubble.stop();
   });
 
-  it("reconciles posts another process inserted (bean-core holding the lease): bubble, or a nudge to an open Home", () => {
-    const { db, bubble, home, nudge } = setup();
+  it("reconciles posts another process inserted (bean-core holding the lease), also a same-count replacement at the cap", () => {
+    const { status, add, bubble, home, nudge } = setup({ mount: "m1" });
+    add("a", "2026-11-19T10:00:00.000Z");
     bubble.refresh();
-    db.count = 1; // inserted elsewhere: no hook fires here
-    vi.advanceTimersByTime(HOME_RECONCILE_MS);
-    expect(home()).toMatchObject({ count: 1 });
+    status.upsert("d1", { kind: "delegate", name: "fix" });
+    vi.advanceTimersByTime(HOME_RECONCILE_MS); // nothing new
     expect(nudge).not.toHaveBeenCalled();
-    const open = setup({ mount: "m1" });
-    open.bubble.refresh();
-    open.db.count = 2;
+    expect(status.list().map((j) => j.id)).toEqual([HOME_JOB_ID, "d1"]);
+    add("b", "2026-11-19T10:05:00.000Z", 1); // the cap dropped "a": same count
     vi.advanceTimersByTime(HOME_RECONCILE_MS);
-    expect(open.nudge).toHaveBeenCalledWith("m1");
-    open.db.count = 0; // the shown Home drained them
-    vi.advanceTimersByTime(HOME_ARRIVAL_GRACE_MS);
-    expect(open.home()).toBeUndefined();
+    expect(nudge).toHaveBeenCalledWith("m1");
+    expect(status.list().map((j) => j.id)).toEqual(["d1", HOME_JOB_ID]);
+    expect(home()).toMatchObject({ count: 1 });
     bubble.stop();
-    open.bubble.stop();
   });
 
   it("a failed count leaves the bubble as it was", () => {
@@ -95,10 +86,13 @@ describe("Home bubble", () => {
     const status = createTaskStatus((jobs) => pushes.push(jobs));
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const bubble = createHomeBubble({
-      count: () => { throw new Error("db locked"); }, nextExpiry: () => undefined, status, homeMount: () => undefined, nudge: () => {},
+      count: () => { throw new Error("db locked"); }, newest: () => undefined, nextExpiry: () => undefined, status,
+      homeMount: () => undefined, nudge: () => {},
     });
     bubble.refresh();
+    bubble.posted();
     expect(pushes).toEqual([]);
+    bubble.stop();
     err.mockRestore();
   });
 });

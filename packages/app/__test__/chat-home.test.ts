@@ -52,6 +52,7 @@ describe("ChatWindow Home", () => {
       chatRelease: vi.fn(),
       setChatIncognito: vi.fn(),
       rememberOnClose: vi.fn(),
+      setChatHomeSeen: vi.fn(),
     };
     (window as unknown as { bean: unknown }).bean = new Proxy(bean, {
       get: (t, k: string) => t[k] ?? (k.startsWith("on") ? (cb: (...a: unknown[]) => void) => { listeners[k] = cb; } : async () => undefined),
@@ -172,6 +173,26 @@ describe("ChatWindow Home", () => {
     await act(async () => { listeners.onChatWindowVisible!(true); });
     await flush();
     expect(bean.chatThreadGet).toHaveBeenCalledWith("home", mount);
+  });
+
+  it("#961: tells main while a Home is seen; picking Home again (bubble, banner) catches up on its posts", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    expect(bean.setChatHomeSeen!.mock.calls.at(-1)).toEqual([false]);
+    await click(homeRow());
+    expect(bean.setChatHomeSeen!.mock.calls.at(-1)).toEqual([true]);
+    const gets = bean.chatThreadGet!.mock.calls.length;
+    await act(async () => { listeners.onChatShowHome!(); });
+    await flush();
+    expect(bean.chatThreadGet!.mock.calls.length).toBe(gets + 1);
+    await act(async () => { listeners.onChatWindowVisible!(false); });
+    await flush();
+    expect(bean.setChatHomeSeen!.mock.calls.at(-1)).toEqual([false]);
+    await act(async () => { listeners.onChatWindowVisible!(true); });
+    await flush();
+    expect(bean.setChatHomeSeen!.mock.calls.at(-1)).toEqual([true]);
+    await click(root.querySelector(".bean-chat-sidebar-new"));
+    expect(bean.setChatHomeSeen!.mock.calls.at(-1)).toEqual([false]);
   });
 
   it("Home's Off the record opens a separate off-the-record chat; Home is never taken off the record", async () => {

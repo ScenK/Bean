@@ -154,7 +154,7 @@ app.whenReady().then(async () => {
   const avatarControls = installAvatarControls(avatar, {
     log: (event, fields) => avatarLog(event, event === "bring-back" ? { ...fields, version: pkg.version, os: release() } : fields),
     // Only runs after a reload, long after the host exists.
-    replay: () => push.broadcast(IPC.taskStatus, host?.taskStatus.list() ?? remoteJobs),
+    replay: () => broadcastJobs(),
     // Non-blocking: main keeps streaming delegates/sessions while this is open.
     fail: () => void dialog.showMessageBox({
       type: "warning",
@@ -180,6 +180,17 @@ app.whenReady().then(async () => {
   // shell's whole job list is that bubble (the core sends it no job feed).
   let homeCount = 0;
   let remoteJobs: TaskJob[] = [];
+  // A seen Home (its tab shown, the chat window up) is draining its posts as they land: the bubble and
+  // the Home row's dot would only flash over what's already on screen, so they're left out meanwhile.
+  let homeSeen = false;
+  const broadcastJobs = (jobs: TaskJob[] = host?.taskStatus.list() ?? remoteJobs): void => {
+    push.broadcast(IPC.taskStatus, homeSeen ? jobs.filter((j) => j.id !== HOME_JOB_ID) : jobs);
+  };
+  const setHomeSeen = (seen: boolean): void => {
+    if (seen === homeSeen) return;
+    homeSeen = seen;
+    if (!avatarControls.reloading()) broadcastJobs();
+  };
   const push = createPush({
     clientOfMount: (mountId) => host?.handlers.chat.clientOf(mountId) ?? remoteMounts.get(mountId),
     client: (id) => webContents.fromId(id),
@@ -508,6 +519,7 @@ app.whenReady().then(async () => {
       // Captured now: the webContents is destroyed by the time `closed` fires.
       const clientId = win.webContents.id;
       win.on("closed", () => {
+        setHomeSeen(false);
         host?.delegateTasks.cancelAll();
         host?.liveTasks.stopClient(clientId);
         host?.handlers.chat.releaseClient(clientId);
@@ -633,7 +645,7 @@ app.whenReady().then(async () => {
           homeCount = jobs.find((j) => j.id === HOME_JOB_ID)?.count ?? 0;
           keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
           // Mid-reload the old document is gone; the finished reload replays the current list.
-          if (!avatarControls.reloading()) push.broadcast(IPC.taskStatus, jobs);
+          if (!avatarControls.reloading()) broadcastJobs(jobs);
         },
         notification: notificationTransport,
         isChatClient,
@@ -729,7 +741,7 @@ app.whenReady().then(async () => {
         cli: coreCli(remoteTarget),
         onPush: (mountId, kind, payload) => {
           if (Object.hasOwn(HOST_PUSH_CHANNELS, kind)) push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
-          if (kind === "home") homePoll.arrived();
+          if (kind === "home") homePoll.check();
         },
         onStatus: (status) => {
           push.broadcast(IPC.coreStatusChanged, status);
@@ -748,7 +760,7 @@ app.whenReady().then(async () => {
         onCount: (n) => {
           homeCount = n;
           remoteJobs = n > 0 ? [homeJob(n, remoteJobs[0]?.startedAt)] : [];
-          if (!avatarControls.reloading()) push.broadcast(IPC.taskStatus, remoteJobs);
+          if (!avatarControls.reloading()) broadcastJobs(remoteJobs);
         },
       });
       remoteIpc = registerRemoteIpc(ipcMain, {
@@ -802,7 +814,13 @@ app.whenReady().then(async () => {
       openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },
       getCurrentTheme, setCurrentTheme, proposeRun,
       // Opening chat (the avatar) lands on Home while posts are pending (#961); a drop still opens its chat.
-      openComponent: (kind, payload) => (kind === "chat" && payload === undefined && homeCount > 0 ? openChatHome() : openComponent(kind, payload)),
+      // The count is read now, not the last published one: a post may still be on its way to the bubble.
+      openComponent: (kind, payload) => {
+        if (kind !== "chat" || payload !== undefined) return openComponent(kind, payload);
+        const now: Promise<unknown> = host ? Promise.resolve(host.handlers.homePending()) : remote ? remote.call("homePending", []) : Promise.resolve(0);
+        void now.catch(() => homeCount).then((n) => (typeof n === "number" && n > 0 ? openChatHome() : openComponent("chat")));
+      },
+      setChatHomeSeen: (seen) => setHomeSeen(seen),
       openChatHome,
       getPendingChatHome: () => { const h = pendingHome; pendingHome = false; return h; },
       getPendingPlan: planStore.get,
@@ -845,7 +863,7 @@ app.whenReady().then(async () => {
     avatarReady = true;
     // Jobs the host raised while the avatar was still loading (the Home bubble at boot, #961) were
     // pushed to nobody: hand it the current list once it listens.
-    push.broadcast(IPC.taskStatus, host?.taskStatus.list() ?? remoteJobs);
+    broadcastJobs();
     if (localCore) {
       refreshAway();
       setInterval(refreshAway, 5_000);

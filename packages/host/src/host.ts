@@ -13,7 +13,7 @@ import {
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
   listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
   isWatchSeeded, clearWatch, watchSourceKey, briefMessages, parseBrief, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat,
-  deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, detectTools,
+  deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, newestPendingHomePost, nextHomePostExpiry, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
   saveModelMemory, resolveDelegateSelection, liveRuns,
@@ -489,6 +489,7 @@ export async function createHost(deps: HostDeps) {
   });
   homeBubble = createHomeBubble({
     count: () => countPendingHomePosts(db),
+    newest: () => newestPendingHomePost(db),
     nextExpiry: () => nextHomePostExpiry(db),
     status: taskStatus,
     homeMount: threads.homeHolder,

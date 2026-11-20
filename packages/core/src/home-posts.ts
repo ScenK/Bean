@@ -71,6 +71,14 @@ export function countPendingHomePosts(file: string, now: () => Date = () => new 
   return (openDb(file).prepare(`SELECT COUNT(*) AS n FROM home_posts WHERE ${PENDING}`).get(now().toISOString()) as { n: number }).n;
 }
 
+/** The newest pending post's id and insert time (#961): a reconcile spots a post another process
+ * inserted even when the cap kept the count the same. */
+export function newestPendingHomePost(file: string, now: () => Date = () => new Date()): { id: string; createdAt: string } | undefined {
+  const r = openDb(file).prepare(`SELECT id, created_at FROM home_posts WHERE ${PENDING} ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+    .get(now().toISOString()) as { id: string; created_at: string } | undefined;
+  return r ? { id: r.id, createdAt: r.created_at } : undefined;
+}
+
 /** When the soonest pending post expires (ISO), or undefined when none will: the host's bubble
  * recounts then, so the last post expiring clears it with no other event (#961). */
 export function nextHomePostExpiry(file: string, now: () => Date = () => new Date()): string | undefined {

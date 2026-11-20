@@ -1,19 +1,21 @@
 import { HOME_JOB_ID, homeJob, type TaskStatus } from "./task-status.js";
 
-/** How long a new post waits for an open Home to drain it before the bubble shows (#961). */
-export const HOME_ARRIVAL_GRACE_MS = 5_000;
-/** How often the count is re-read regardless (#961): posts another process inserted — `bean-core`
- * holding the scheduler lease on this data dir — reach no hook here. */
+/** How often the pending posts are re-read regardless (#961): posts another process inserted —
+ * `bean-core` holding the scheduler lease on this data dir — reach no hook here. */
 export const HOME_RECONCILE_MS = 60_000;
 /** setTimeout's ceiling; a later expiry just recounts early and re-arms. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
+type Newest = { id: string; createdAt: string } | undefined;
+
 /** The avatar's Home bubble on the local host (#961): recounted from the pending posts on insert, on
- * drain, at boot and when the soonest pending post expires — the count is the only state. A new post
- * nudges the chat holding today's Home (a shown Home drains it at once) and moves the bubble to the
- * newest slot. A bounded reconcile catches posts another process inserted. */
+ * drain, at boot and when the soonest pending post expires — the posts are the only state. A new post
+ * nudges the chat holding today's Home (a seen Home drains it; the shell hides the bubble meanwhile)
+ * and moves the bubble to the newest slot. A bounded reconcile catches posts another process
+ * inserted: a newer newest post is an arrival, even when the cap kept the count the same. */
 export function createHomeBubble(deps: {
   count: () => number;
+  newest: () => Newest;
   nextExpiry: () => string | undefined;
   status: Pick<TaskStatus, "upsert" | "dismiss">;
   /** The chat mount holding today's Home, if any. */
@@ -23,49 +25,50 @@ export function createHomeBubble(deps: {
 }) {
   const timers = deps.timers ?? { set: setTimeout, clear: clearTimeout };
   let expiry: ReturnType<typeof setTimeout> | undefined;
-  let grace: ReturnType<typeof setTimeout> | undefined;
-  let last = 0;
-  const refresh = (newest = false): void => {
-    let n: number;
-    let next: string | undefined;
+  let last = { count: 0, newest: undefined as Newest };
+  const read = (): { count: number; newest: Newest; next: string | undefined } | undefined => {
     try {
-      n = deps.count();
-      next = deps.nextExpiry();
+      return { count: deps.count(), newest: deps.newest(), next: deps.nextExpiry() };
     } catch (err) {
       console.error("bean: counting Home posts failed", err);
-      return;
+      return undefined;
     }
-    last = n;
-    if (n === 0) deps.status.dismiss(HOME_JOB_ID);
-    else deps.status.upsert(HOME_JOB_ID, homeJob(n), newest);
+  };
+  const show = (r: NonNullable<ReturnType<typeof read>>, newest: boolean): void => {
+    last = { count: r.count, newest: r.newest };
+    if (r.count === 0) deps.status.dismiss(HOME_JOB_ID);
+    else deps.status.upsert(HOME_JOB_ID, homeJob(r.count), newest);
     if (expiry !== undefined) timers.clear(expiry);
-    expiry = next === undefined ? undefined
-      : timers.set(() => refresh(), Math.min(MAX_TIMER_MS, Math.max(0, Date.parse(next) - Date.now()) + 50));
+    expiry = r.next === undefined ? undefined
+      : timers.set(() => refresh(), Math.min(MAX_TIMER_MS, Math.max(0, Date.parse(r.next!) - Date.now()) + 50));
   };
-  /** A post was inserted. */
-  const posted = (): void => {
+  const refresh = (): void => {
+    const r = read();
+    if (r) show(r, false);
+  };
+  /** A post was inserted (here, or seen by the reconcile). */
+  const arrived = (r: NonNullable<ReturnType<typeof read>>): void => {
     const mount = deps.homeMount();
-    if (mount === undefined) return refresh(true);
-    deps.nudge(mount);
-    // ponytail: a grace period, not a "Home is shown" signal — the host can't see visibility; a shown
-    // Home drains within it (its save recounts to zero), a hidden one doesn't and the bubble shows.
-    if (grace !== undefined) timers.clear(grace);
-    grace = timers.set(() => { grace = undefined; refresh(true); }, HOME_ARRIVAL_GRACE_MS);
+    if (mount !== undefined) deps.nudge(mount);
+    show(r, true);
   };
+  const isNewer = (a: Newest, b: Newest): boolean =>
+    a !== undefined && (b === undefined || a.createdAt > b.createdAt || (a.createdAt === b.createdAt && a.id !== b.id));
   const reconcile = setInterval(() => {
-    if (grace !== undefined) return; // a post's own grace is running
-    let n: number;
-    try { n = deps.count(); } catch { return; }
-    if (n > last) posted(); // new posts from elsewhere: treated as an arrival
-    else if (n !== last) refresh();
+    const r = read();
+    if (!r) return;
+    if (isNewer(r.newest, last.newest)) arrived(r);
+    else if (r.count !== last.count) show(r, false);
   }, HOME_RECONCILE_MS);
   return {
-    refresh: (): void => refresh(),
-    posted,
+    refresh,
+    posted: (): void => {
+      const r = read();
+      if (r) arrived(r);
+    },
     stop: (): void => {
       clearInterval(reconcile);
       if (expiry !== undefined) timers.clear(expiry);
-      if (grace !== undefined) timers.clear(grace);
     },
   };
 }

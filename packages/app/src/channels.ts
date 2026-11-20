@@ -135,6 +135,8 @@ export const IPC = {
   getPendingChatHome: "bean:get-pending-chat-home",
   // The chat window itself shown or not (hidden / minimized): a Home drains only where it can be seen.
   chatWindowVisible: "bean:chat-window-visible",
+  // chat → main: a Home is seen (its tab shown in an unhidden window), so the bubble stays out.
+  chatHomeSeen: "bean:chat-home-seen",
   // avatar → main: the plan for a skill tile a URL was dropped on (shown via proposeRun).
   planDrop: "bean:plan-drop",
   getConfig: "bean:get-config",

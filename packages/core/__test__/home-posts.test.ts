@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   countPendingHomePosts, HOME_PENDING_CAP, HOME_POST_MAX_CHARS, homeThreadId, insertHomePost, listPendingHomePosts, markHomePostsDrained,
-  nextHomeDay, nextHomePostExpiry, saveDesktopChatDraining,
+  nextHomeDay, nextHomePostExpiry, newestPendingHomePost, saveDesktopChatDraining,
 } from "../src/home-posts.js";
 import { DESKTOP_CHAT_MAX_BYTES, getDesktopChat } from "../src/desktop-chats.js";
 
@@ -19,6 +19,16 @@ let n = 0;
 const id = () => `p${n++}`;
 
 describe("home posts", () => {
+  it("names the newest pending post, also when the cap replaced the oldest at the same count (#961)", () => {
+    n = 0;
+    expect(newestPendingHomePost(file, at(0))).toBeUndefined();
+    for (let i = 0; i < HOME_PENDING_CAP; i++) insertHomePost(file, { sprout: "a", body: `b${i}` }, id, at(0));
+    expect(newestPendingHomePost(file, at(0))).toEqual({ id: `p${HOME_PENDING_CAP - 1}`, createdAt: at(0)().toISOString() });
+    insertHomePost(file, { sprout: "a", body: "late" }, id, at(1));
+    expect(countPendingHomePosts(file, at(1))).toBe(HOME_PENDING_CAP);
+    expect(newestPendingHomePost(file, at(1))).toEqual({ id: `p${HOME_PENDING_CAP}`, createdAt: at(1)().toISOString() });
+  });
+
   it("names the soonest pending expiry (#961): none without a TTL, none once expired or drained", () => {
     n = 0;
     insertHomePost(file, { sprout: "a", body: "forever" }, id, at(0));

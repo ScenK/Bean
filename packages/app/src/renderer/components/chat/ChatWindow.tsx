@@ -108,6 +108,7 @@ export function ChatWindow() {
   // Home posts waiting (#961): the avatar's Home bubble, from the job feed every window gets.
   const [homePending, setHomePending] = useState(false);
   const windowHiddenRef = useRef(false);
+  const [windowHidden, setWindowHidden] = useState(false);
   const [busy, setBusy] = useState(false);
   // Synced chats (Discord/Teams, SyncedChat.tsx): shown over the current desktop chat, which stays
   // mounted (hidden) underneath — picking a desktop row or New chat goes back through it.
@@ -119,6 +120,13 @@ export function ChatWindow() {
   const [syncedWorking, setSyncedWorking] = useState<string | undefined>(undefined);
   const [bots, setBots] = useState<Record<string, boolean>>({});
   const syncedListing = synced.find((c) => syncedKey(c) === syncedShown);
+  // A Home on screen drains what lands, so main leaves the bubble out meanwhile (#961).
+  const homeSeen = homeActive && !syncedListing && !windowHidden;
+  useEffect(() => { window.bean.setChatHomeSeen(homeSeen); }, [homeSeen]);
+  // A remote core (re)attached — perhaps restarted, with no record that this chat holds Home: the
+  // shown Home asks again, which pins it there and catches up on posts (#961).
+  const attached = coreStatus.kind === "remote" && coreStatus.state === "attached";
+  useEffect(() => { if (attached) shownApi()?.homePost(); }, [attached]);
   const [narrow, setNarrow] = useState(() => window.innerWidth < SIDEBAR_INLINE_MIN);
   const [inlineOpen, setInlineOpen] = useState(() => localStorage.getItem(SIDEBAR_OPEN_KEY) !== "0");
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -244,6 +252,7 @@ export function ChatWindow() {
     // The window itself hidden or minimized: a shown Home doesn't drain; shown again, it pulls (#961).
     window.bean.onChatWindowVisible((v) => {
       windowHiddenRef.current = !v;
+      setWindowHidden(!v);
       if (v) shownApi()?.homePost();
     });
     // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.

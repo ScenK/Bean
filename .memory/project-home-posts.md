@@ -48,25 +48,25 @@ arrival, the unread dot and the avatar bubble; the sprout-editor controls come l
 - The bubble is one job `home:posts` (kind `home`, state `done` — never `running`, so no spinner,
   Stop, keep-awake or update block; `count` = pending posts), built by `homeJob()` in
   `task-status.ts`. Host `home-bubble.ts` recounts it on insert (`RoutineHostDeps.onHomePost`), on
-  a draining save (`onDrained`), at boot and at the soonest pending expiry — the count is the only
-  state. Its click opens the chat window on Home and never dismisses it.
-- A new post pushes `homePost` (mount kind `home`) to the chat holding today's Home, which re-asks
-  `chatThreadGet("home")` only while seen: its tab shown **and** the chat window not hidden or
-  minimized. That last bit comes from main's `chatWindowVisible` push (BrowserWindow show/restore/
-  hide/minimize), not `document.visibilityState` — that stays "visible" under Playwright, and macOS
-  emits `hide` a beat late (the e2e waits for the push). Restored, the window pulls again. A nudge
-  during Home's restore is queued and pulled once the restore lands. The host can't see visibility,
-  so the bubble waits `HOME_ARRIVAL_GRACE_MS` when a chat holds Home (a seen one drains within it);
-  the e2e `home-arrival.e2e.ts` waits past it.
-- The chat window's Home-row dot reads the job feed (`taskStatus` has the `home` job) after one
-  `homePending` read on mount. Only the lease holder inserts (and gets `onHomePost`), so every host
-  also re-reads the count every `HOME_RECONCILE_MS`: a rise from another process (`bean-core` holding
-  the lease) counts as an arrival.
+  a draining save (`onDrained`), at boot, at the soonest pending expiry, and every
+  `HOME_RECONCILE_MS` — only the lease holder gets `onHomePost`, so posts `bean-core` inserts on the
+  same data dir surface there: a newer newest pending post (`newestPendingHomePost`, not the count —
+  the cap can keep it flat) counts as an arrival. Its click opens Home and never dismisses it.
+- An arrival pushes `homePost` (mount kind `home`) to the chat holding today's Home and moves the
+  bubble to the newest slot. That chat re-asks `chatThreadGet("home")` only while **seen**: its tab
+  shown and the chat window not hidden/minimized — from main's `chatWindowVisible` push
+  (BrowserWindow show/restore/hide/minimize), not `document.visibilityState`, which stays "visible"
+  under Playwright; macOS emits `hide` a beat late (the e2e waits for the push). Shown again it pulls.
+  A nudge during Home's restore is pulled once the restore lands; picking Home when it's already
+  open pulls too (and re-pins it on a restarted remote core, as does every remote re-attach).
+- No timers decide the bubble: the chat window sends `chatHomeSeen` and main leaves the `home:posts`
+  job out of the `taskStatus` broadcast while a Home is seen (it's draining what lands), so neither
+  the bubble nor the Home-row dot flashes, local or remote, however slow the save.
+- The Home-row dot reads that feed (after one `homePending` read on mount).
 - Remote shell: no job feed, so `createRemoteHomePoll` (remote-core.ts) reads `homePending` on
-  attach, every `HOME_POLL_MS`, after a `chatThreadSave`, and `HOME_ARRIVAL_GRACE_MS` after a `home`
-  push (other reads wait for that one, so a seen Home's drain lands first), drops replies from an
-  earlier connection, and main broadcasts `[homeJob(n)]` as the whole job list.
+  attach, every `HOME_POLL_MS`, on a `home` push and after a `chatThreadSave`; only the latest read's
+  reply counts. Main broadcasts `[homeJob(n)]` as the whole job list.
 - "Open on Home": main's `openChatHome` (bubble, a sprout banner with `meta.open: "home"`, and the
-  avatar's plain open-chat while posts are pending) pushes `chatShowHome` to an open window and
-  leaves `getPendingChatHome` for one still loading. Main also replays the job list once the avatar
-  has loaded — boot jobs were otherwise pushed to nobody.
+  avatar's plain open-chat when a fresh `homePending` read is positive) pushes `chatShowHome` to an
+  open window and leaves `getPendingChatHome` for one still loading. Main also replays the job list
+  once the avatar has loaded — boot jobs were otherwise pushed to nobody.

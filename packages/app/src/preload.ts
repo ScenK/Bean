@@ -101,6 +101,7 @@ contextBridge.exposeInMainWorld("bean", {
   homePending: (): Promise<number> => ipcRenderer.invoke(IPC.homePending),
   onChatShowHome: (cb: () => void) => ipcRenderer.on(IPC.chatShowHome, () => cb()),
   onChatWindowVisible: (cb: (visible: boolean) => void) => ipcRenderer.on(IPC.chatWindowVisible, (_e, v: boolean) => cb(v)),
+  setChatHomeSeen: (seen: boolean): void => ipcRenderer.send(IPC.chatHomeSeen, seen),
   getPendingChatHome: (): Promise<boolean> => ipcRenderer.invoke(IPC.getPendingChatHome),
   planDrop: (skillName: string, droppedUrl: string): Promise<RouteSuggestion> =>
     ipcRenderer.invoke(IPC.planDrop, skillName, droppedUrl),

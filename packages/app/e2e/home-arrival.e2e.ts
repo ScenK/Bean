@@ -39,7 +39,7 @@ test("home: boot bubble, live arrival on a shown Home, and the dot while another
     await expect(chat.locator(".bean-post")).toHaveCount(2);
     await expect(chat.locator(".bean-post").last()).toContainText("fresh-post");
     await expect.poll(() => listPendingHomePosts(file).length).toBe(0);
-    await avatar.waitForTimeout(6_000); // past HOME_ARRIVAL_GRACE_MS
+    await avatar.waitForTimeout(2_000); // a seen Home keeps the bubble out: nothing shows meanwhile
     await expect(bubble).toHaveCount(0);
     await expect(chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).toHaveCount(0);
 

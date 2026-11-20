@@ -106,6 +106,8 @@ declare global {
       onChatShowHome(cb: () => void): void;
       /** The chat window was shown/restored (true) or hidden/minimized (false). */
       onChatWindowVisible(cb: (visible: boolean) => void): void;
+      /** A Home is on screen and draining (#961): main leaves the Home bubble out meanwhile. */
+      setChatHomeSeen(seen: boolean): void;
       /** Whether this (just opened) chat window should start on Home; consumed by the call. */
       getPendingChatHome(): Promise<boolean>;
       /** The plan for a URL dropped on a skill tile (show it with proposeRun). */
