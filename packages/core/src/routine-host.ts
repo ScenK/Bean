@@ -17,6 +17,7 @@ import { claimTodo, listTodos, updateTodoStatus, type TodoItem, type TodoStatus 
 import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine, type RoutineChatopsSink } from "./routine-store.js";
 import { listDestinations } from "./destinations.js";
 import { todoDispatchOrigins } from "./dispatch-store.js";
+import { insertHomePost } from "./home-posts.js";
 import type { RunOrigin } from "./routine-scheduler.js";
 import { stepGroups } from "./routine-graph.js";
 import {
@@ -66,6 +67,8 @@ export interface RoutineHostDeps {
    * click can open it (other hosts ignore it). */
   notify?: (msg: { title: string; body: string; target?: { routine: string; startedAt: string } }) => Promise<void>;
   newId?: () => string;
+  /** The scheduler lease: only its holder writes `sinks.home` posts. Absent = held. */
+  holdsLease?: () => boolean;
 }
 
 export interface RoutineHost {
@@ -267,7 +270,13 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     });
     const asked = targets.length > 0 ? askedFrom(result, origin) : [];
     const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
-    const chatBody = kept.length > 0 || brief ? await chatSinkBody(routine, result) : result.digest;
+    const home = routine.sinks.home !== undefined && (deps.holdsLease?.() ?? true) ? routine.sinks.home : undefined;
+    const chatBody = kept.length > 0 || brief || home ? await chatSinkBody(routine, result) : result.digest;
+    if (home) {
+      insertHomePost(dbFile(dir), {
+        sprout: routine.name, body: chatBody, ...(home.ttlMinutes !== undefined ? { ttlMinutes: home.ttlMinutes } : {}),
+      }, newId);
+    }
     for (const { sink, channel } of kept) {
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel, userId: sink.user,

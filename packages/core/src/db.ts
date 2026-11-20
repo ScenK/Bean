@@ -388,6 +388,18 @@ CREATE TABLE IF NOT EXISTS sprout_dispatches (
   delivered_at TEXT
 );
 CREATE INDEX IF NOT EXISTS sprout_dispatches_todo ON sprout_dispatches(todo_id);
+
+-- Sprout posts for the desktop's Home chat (home-posts.ts), written by sinks.home. drained_at NULL
+-- = still pending; expires_at NULL = never expires. Once drained a post is ordinary transcript.
+CREATE TABLE IF NOT EXISTS home_posts (
+  id         TEXT PRIMARY KEY,
+  sprout     TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  drained_at TEXT
+);
+CREATE INDEX IF NOT EXISTS home_posts_pending ON home_posts(drained_at, created_at);
 `;
 
 const cache = new Map<string, DatabaseSync>();

@@ -96,6 +96,7 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     // The owner's own automation: shared rows from every channel, never a private one.
     memories: () => loadMemories(db, null, { allSources: true }),
     getRoutineDigestContext: deps.getRoutineDigestContext,
+    holdsLease: deps.canSchedule,
     ...(deps.onStatus ? { onStatus: deps.onStatus } : {}),
     ...(deps.notify ? { notify: deps.notify } : {}),
   });

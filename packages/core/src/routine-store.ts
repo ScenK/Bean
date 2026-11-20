@@ -20,7 +20,12 @@ export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: 
  * `chatopsVerbatim`: chat sinks get the full digest as-is instead of the short brief in the
  * persona's voice an ok run gets by default (routine-chat-brief.ts) — for sprouts where fidelity
  * beats brevity. Note, notify and the record never get the brief. */
-export interface RoutineSinks { chatops?: RoutineChatopsSink[]; chatopsOnlyOnProblems?: boolean; chatopsVerbatim?: boolean; note?: boolean; notify?: boolean }
+/** `home`: each delivered run leaves one post (the chat brief) for the desktop's Home chat
+ * (home-posts.ts); `ttlMinutes` = drop it if still unread that long after the run, absent = keep. */
+export interface RoutineSinks {
+  chatops?: RoutineChatopsSink[]; chatopsOnlyOnProblems?: boolean; chatopsVerbatim?: boolean; note?: boolean; notify?: boolean;
+  home?: { ttlMinutes?: number };
+}
 
 /** A gated step ends its output with `VERDICT: PASS|FAIL`; FAIL either stops the run or jumps
  * to another step: forward = a branch, backward = a loop of at most `maxRounds` executions of
@@ -249,6 +254,11 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
   if (sinks.notify !== undefined && typeof sinks.notify !== "boolean") return "the notify sink must be true or false";
   if (sinks.chatopsOnlyOnProblems !== undefined && typeof sinks.chatopsOnlyOnProblems !== "boolean") return "chatopsOnlyOnProblems must be true or false";
   if (sinks.chatopsVerbatim !== undefined && typeof sinks.chatopsVerbatim !== "boolean") return "chatopsVerbatim must be true or false";
+  if (sinks.home !== undefined) {
+    if (typeof sinks.home !== "object" || sinks.home === null || Array.isArray(sinks.home)) return "the home sink must be an object";
+    const ttl = (sinks.home as Record<string, unknown>).ttlMinutes;
+    if (ttl !== undefined && (!Number.isInteger(ttl) || (ttl as number) < 1)) return "the home sink's ttlMinutes must be a whole number of minutes, at least 1";
+  }
   if (sinks.chatops !== undefined) {
     if (!Array.isArray(sinks.chatops)) return "the chatops sink must be a list";
     for (let i = 0; i < sinks.chatops.length; i++) {
