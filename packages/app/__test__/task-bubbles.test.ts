@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, test, vi } from "vitest";
-import { createTaskBubbles, liveBadgeAgent } from "../src/renderer/task-bubbles.js";
+import { HOLD_MS, createTaskBubbles, liveBadgeAgent } from "../src/renderer/task-bubbles.js";
 import type { TaskJob } from "@bean/host";
 
 beforeAll(() => {
@@ -92,6 +92,18 @@ test("a frozen stack's Stop counts runs that started under the pointer and still
   expect(box.querySelector(".bean-bubble-stop")!.textContent).toBe("Stop all 2 runs");
   b.update([job("routine:r:1", { routine: "r", line: "Stopping…" }), job("routine:r:2", { routine: "r", line: "Stopping…" })]);
   expect(box.querySelector<HTMLButtonElement>(".bean-bubble-stop")!.disabled).toBe(true);
+});
+
+test("a held bubble that's gone stops reading as running, and a still pointer releases the hold", () => {
+  vi.useFakeTimers();
+  try {
+    const { box, b } = mount([job("chat:1", { kind: "chat", line: "Thinking…", steps: undefined })]);
+    box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointerenter"));
+    b.update([]); // the reply arrived: main drops the turn's bubble
+    expect(box.querySelector(".bean-bubble-meta")!.textContent).toBe("done");
+    vi.advanceTimersByTime(HOLD_MS); // e.g. the avatar hid without a pointerleave
+    expect(box.querySelectorAll(".bean-bubble")).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
 });
 
 describe("liveBadgeAgent", () => {

@@ -105,6 +105,8 @@ function stopLabel(j: TaskJob, jobs: readonly TaskJob[]): string | undefined {
 // A busy Discord channel can stack many turns at once; past this, the oldest fold into a
 // "+N more" pill (which says how many of those failed, so a sticky error never hides silently).
 export const MAX_VISIBLE = 4;
+/** How long the stack stays held after the pointer's last move over it. */
+export const HOLD_MS = 10_000;
 
 export function createTaskBubbles(
   container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void, onOpenMemory: () => void = () => {},
@@ -168,13 +170,24 @@ export function createTaskBubbles(
     latest = latest.filter((j) => j.id !== id);
     jobs = latest;
   };
-  stack.addEventListener("pointerenter", () => { hovered = true; });
-  stack.addEventListener("pointerleave", () => {
+  let holdTimer: ReturnType<typeof setTimeout> | undefined;
+  const release = (): void => {
+    clearTimeout(holdTimer);
     hovered = false;
     if (jobs === latest) return;
     jobs = latest;
     render();
-  });
+  };
+  // Hiding the avatar (Cmd+W) doesn't always send pointerleave, and a stuck hold would hide new
+  // bubbles — so a still pointer releases it too. ponytail: fixed HOLD_MS, a hide IPC if 10s bites.
+  const hold = (): void => {
+    hovered = true;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(release, HOLD_MS);
+  };
+  stack.addEventListener("pointerenter", hold);
+  stack.addEventListener("pointermove", hold);
+  stack.addEventListener("pointerleave", release);
 
   stack.addEventListener("click", (e) => {
     const stop = (e.target as HTMLElement).closest<HTMLButtonElement>(".bean-bubble-stop");
@@ -230,7 +243,8 @@ export function createTaskBubbles(
       latest = next;
       if (hovered && !sameIds(jobs, next)) {
         const byId = new Map(next.map((j) => [j.id, j]));
-        jobs = jobs.map((j) => byId.get(j.id) ?? j); // same bubbles in the same spots, fresh content
+        // Same bubbles in the same spots, fresh content; one that's gone stops reading as running.
+        jobs = jobs.map((j) => byId.get(j.id) ?? (j.state === "running" ? { ...j, state: "done" as const } : j));
       } else jobs = next;
       render();
     },
