@@ -663,9 +663,12 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     // caller already knows which todo this is; `results`/the digest keep the labeled form.
     const rawOutput = last?.output.startsWith(labelPrefix) ? last.output.slice(labelPrefix.length) : last?.output ?? "";
     if (outcome.stoppedAt !== undefined) stoppedAt = outcome.stoppedAt;
+    // A done todo's summary is what its origin chat's dispatch carries (that chat's sink is skipped
+    // for it): keep the next-step question whole at its end.
+    const doneLine = outcome.done ? `\n\n${DONE_FOOTER}` : "";
     const summary = (outcome.stoppedAt !== undefined ? STOPPED_BY_YOU
       : outcome.attention ? `needs attention: ${outcome.attention}`
-      : outcome.quiet !== undefined ? `nothing new: ${outcome.quiet}` : rawOutput).slice(0, SUMMARY_CAP);
+      : outcome.quiet !== undefined ? `nothing new: ${outcome.quiet}` : rawOutput).slice(0, SUMMARY_CAP - doneLine.length) + doneLine;
     await setStatus(item.id, outcome.status === "ok" ? "done" : "failed", summary);
     worst(outcome.status);
     if (outcome.attention) attention.push(`${labelPrefix}${outcome.attention}`);

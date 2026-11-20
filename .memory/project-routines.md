@@ -87,19 +87,24 @@ first done result owns the ending (`claimEnding`, synchronous, before any await)
 sibling claims and admissions until the owner settles and the last slot frees; a sibling's later
 done result is delivered as an ordinary run (no footer). The owner pauses only after its delivery
 landed — `enabled: false, until: <done run's finishedAt>` + `dropPendingTodos`; a failed delivery
-keeps the sprout on and its queue, rewrites that record needs-attention (no `done`) and re-queues
-the done todo's text. Expiry: a tick (lease holder only) finds `isExpired` (on and past `until`),
+keeps the sprout on and its queue and rewrites that record needs-attention (no `done`) — never
+re-queue or re-run it (delegate/command steps have side effects); no run has redelivery. A done
+todo's summary ends with `DONE_FOOTER` (its origin chat's dispatch carries it; that chat's sink is
+skipped for it). Expiry: a tick (lease holder only) finds `isExpired` (on and past `until`),
 waits for live runs, and `expire()` — under the `expiring` guard and re-reading the definition
 (overlapping ticks) — posts `Nothing by <date> — extend?` via `deliverDigest`
 (`ending: "expired"`, never recorded), then pauses + drops the queue only if `until` is unchanged
-— post first (a crash may re-post); a failed post leaves it on to retry. Expiry runs before the
+and the lease is still held — post first (a crash may re-post); a failed post leaves it on to retry. Expiry runs before the
 tick's due list is started, and that list is re-read (enabled, not expired, not ended, lease) right
-before the slots are taken. Either ending is chatops `context: true` and ignores
+before the slots are taken. A poll whose results arrive after the sprout was paused, expired or
+ended hands nothing off. Either ending is chatops `context: true` and ignores
 `chatopsOnlyOnProblems`. `isArchived` = off and `ARCHIVE_GRACE_DAYS` past `until` — derived;
 refused by Run now / trigger / Check now / exact-todo runs / `resolveTodoRoutine` and
 filtered from the desktop + chatops run/todo catalogs and the `sprouts` / `enable` commands. A
 paused sprout within the grace stays visible. `enable` (chatops) refuses an ended one past its
-`until`; restore = `scheduler.enableWatch(name, false, later until)`, which refuses a passed end.
+`until`, and so does the desktop save handler (off → on with a passed `until`); todo Retry refuses
+an archived sprout; restore = `scheduler.enableWatch(name, false, later until)`, which refuses a
+passed end.
 "Why it ended" = `endReason()`: found when a `done` record's `finishedAt` equals the current `until`,
 else expired. A date-time `until` must name a real calendar date (no Feb 30 roll-over).
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and

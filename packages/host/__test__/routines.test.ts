@@ -80,3 +80,17 @@ it("buildRoutineHandlers.remove cascades to onRoutineDeleted", async () => {
   await h.remove("nightly");
   expect(deleted).toEqual(["nightly"]);
 });
+
+test("save refuses turning on a sprout whose end has passed; an already-on one still saves (#980)", async () => {
+  const saveRoutine = vi.fn(async () => {});
+  const ended: Routine = { ...routine, enabled: false, until: "2020-01-01" };
+  const h = (prior: Routine) => buildRoutineHandlers({
+    loadRoutines: async () => [prior], saveRoutine, deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0, runNow: async () => ({ started: true }),
+  });
+  await expect(h(ended).save({ ...ended, enabled: true })).rejects.toThrow(/later end date/);
+  expect(saveRoutine).not.toHaveBeenCalled();
+  await h(ended).save({ ...ended, enabled: true, until: "2999-01-01" });
+  await h({ ...ended, enabled: true }).save({ ...ended, enabled: true, description: "edited" });
+  expect(saveRoutine).toHaveBeenCalledTimes(2);
+});

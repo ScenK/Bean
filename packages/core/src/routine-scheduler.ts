@@ -196,10 +196,11 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
   /** Delivers the run that owns a done ending (#980) and pauses the sprout only once the
    * delivery landed, stamping `until` with the done run's finish time (`endReason` matches on it),
-   * and drops the queue. A failed delivery keeps the sprout on and its queue intact, marks the
-   * record needs-attention so it shows, and queues the done todo again so it's judged and
-   * delivered on a later run. */
-  async function deliverRun(routine: Routine, result: RoutineRunResult, run: RunOutcome, opts: RunOpts, todo?: TodoItem): Promise<void> {
+   * and drops the queue. A failed delivery keeps the sprout on and its queue intact and marks the
+   * record needs-attention, keeping the undelivered result readable in the Dashboard. Nothing is
+   * re-run or re-queued (that would repeat delegate/command steps), and like every other run's
+   * delivery there's no redelivery — the sprout simply keeps watching. */
+  async function deliverRun(routine: Routine, result: RoutineRunResult, run: RunOutcome, opts: RunOpts): Promise<void> {
     try {
       try {
         await deliver(deps, routine, result, run, opts);
@@ -207,15 +208,13 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         const why = err instanceof Error ? err.message : String(err);
         console.error(`bean: sprout "${routine.name}" done delivery failed — it keeps going`, err);
         run.status = "needs-attention";
-        const line = `⚠ couldn't deliver this (${why.slice(0, 200)}) — the sprout keeps going and tries again`;
+        const line = `⚠ couldn't deliver this (${why.slice(0, 200)}) — the sprout stays on and keeps watching`;
         const { done: _, ...rest } = result.record;
         await updateState(routine.name, (s) => ({
           ...(s ?? { history: [] }),
           history: (s?.history ?? []).map((h) => (h.startedAt === rest.startedAt && h.id === rest.id
             ? { ...rest, status: "needs-attention" as const, digest: `${rest.digest}\n\n${line}` } : h)),
         })).catch(() => {});
-        const text = todo?.text ?? result.results.at(-1)?.todo;
-        if (text !== undefined) await deps.addTodo?.(routine.name, text).catch(() => {});
         return;
       }
       const current = (await deps.loadRoutines()).find((r) => r.name === routine.name);
@@ -367,7 +366,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
             bump(routine.name, -1);
           }
           // A plain await on the ordinary path: no extra async hop, so sibling claim/prune ordering holds.
-          if (!result.stopped) await (owner ? deliverRun(routine, result, runs[at]!, opts, todo) : deliver(deps, routine, asOrdinary(result), runs[at]!, opts));
+          if (!result.stopped) await (owner ? deliverRun(routine, result, runs[at]!, opts) : deliver(deps, routine, asOrdinary(result), runs[at]!, opts));
         } catch (err) {
           console.error(`bean: routine "${routine.name}" todo run failed`, err);
         }
@@ -463,6 +462,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       // them rather than seeding/stamping the new one with them.
       const current = (await deps.loadRoutines()).find((r) => r.name === routine.name);
       if (!current?.watch || watchSourceKey(current.watch) !== watchSourceKey(watch)) return { newItems: 0 };
+      // Paused, past its end or just ended (#980) while the poll was in flight: hand nothing off —
+      // nothing marked seen, so a restore re-seeds from its own check.
+      if (!current.enabled || isExpired(current, now()) || ended.has(routine.name)) return { newItems: 0 };
       if (lost()) return { newItems: 0 };
       const unique = [...new Map(items.map((i) => [i.id, i])).values()];
       const ids = unique.map((i) => i.id);
@@ -602,9 +604,10 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         digest, results: [], ending: "expired",
         record: { startedAt: at, finishedAt: at, status: "ok", digest, steps: [] },
       });
-      // Pause only the deadline that was posted about: an edit during the post wins.
+      // Pause only the deadline that was posted about: an edit during the post wins. A lease lost
+      // meanwhile belongs to the new holder, which re-posts (at-least-once) and pauses itself.
       const after = (await deps.loadRoutines()).find((r) => r.name === name);
-      if (!after?.enabled || after.until !== found.until) return;
+      if (!after?.enabled || after.until !== found.until || !mayFire()) return;
       await deps.saveRoutine({ ...after, enabled: false });
       await deps.dropPendingTodos?.(name);
     } finally {

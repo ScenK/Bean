@@ -519,14 +519,18 @@ describe("routed runs", () => {
       const items = ["a", "b", "c"].map((id) => ({ id, routine: "r", text: `item ${id}`, status: "running", createdAt: "x" }) as TodoItem);
       const claim = claimFrom(items);
       let claims = 0;
-      const f = fakeDelegate({ d: ["Boring.\nROUTE: nothing", "It's out.\nROUTE: found", "never"] });
+      const f = fakeDelegate({ d: ["Boring.\nROUTE: nothing", `${"It's out. ".repeat(40)}\nROUTE: found`, "never"] });
+      const summaries: (string | undefined)[] = [];
       const res = await runRoutine(routine(found(), { todoDriven: true }), deps(f.delegate, {
-        todos: { claim: async (r) => { claims++; return claim(r); }, setStatus: async () => {} },
+        todos: { claim: async (r) => { claims++; return claim(r); }, setStatus: async (_id, _st, sum) => { summaries.push(sum); } },
       }));
+      // The done todo's summary (what its origin chat's dispatch carries) keeps the question whole.
+      expect(summaries[1]).toMatch(new RegExp(`\\n\\n${DONE_FOOTER.replace(/[?.]/g, "\\$&")}$`));
+      expect(summaries[1]!.length).toBeLessThanOrEqual(200);
       expect(claims).toBe(2);
       expect(f.ids).toEqual(["d", "d"]);
       expect(res.record.done).toBe(true);
-      expect(res.digest).toBe(`It's out.\n\n${DONE_FOOTER}`);
+      expect(res.digest).toBe(`${"It's out. ".repeat(40).trim()}\n\n${DONE_FOOTER}`);
     });
 
     it("a pass that didn't end clean isn't done", async () => {

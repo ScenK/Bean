@@ -1,3 +1,4 @@
+import { isExpired } from "@bean/core";
 import type {
   BuildStage, Routine, RoutineBrief, RoutineState, RoutineWatch, RunRecord, RunStatus, StepKind, WatchCheckResult, WatchItem,
 } from "@bean/core";
@@ -80,6 +81,12 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   return {
     list: (): Promise<Routine[]> => deps.loadRoutines(),
     save: async (routine: Routine): Promise<void> => {
+      // Turning on a sprout whose end has passed would only expire again on the next tick
+      // (another notice, the queue dropped): a later `until` comes first (#980).
+      if (routine.enabled && isExpired(routine, new Date())) {
+        const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
+        if (!prior?.enabled) throw new Error(`"${routine.name}" ended — give it a later end date to turn it back on`);
+      }
       await deps.saveRoutine(routine);
     },
     remove: async (name: string): Promise<void> => {

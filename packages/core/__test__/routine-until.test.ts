@@ -180,7 +180,7 @@ describe("the done ending (scheduler)", () => {
     expect(t.routine("w").enabled).toBe(true);
     expect(t.deps.saveRoutine).not.toHaveBeenCalled();
     expect(t.deps.dropPendingTodos).not.toHaveBeenCalled();
-    expect(t.deps.addTodo).toHaveBeenCalledWith("w", "item a");
+    expect(t.deps.addTodo).not.toHaveBeenCalled(); // never re-run: steps may have side effects
     const rec = t.states().w!.history[0]!;
     expect(rec.status).toBe("needs-attention");
     expect(rec.done).toBeUndefined();
@@ -254,6 +254,32 @@ describe("expiry (scheduler)", () => {
     releasePoll();
     await tick;
     expect(t.deps.runRoutine).not.toHaveBeenCalled();
+  });
+
+  it("a lease lost during the expiry post leaves the pause and the queue to the new holder", async () => {
+    let held = true;
+    const t = setup([watchQueue({ until: "2026-12-20" })], { canSchedule: () => held });
+    vi.mocked(t.deps.deliverDigest).mockImplementationOnce(async () => { held = false; });
+    t.setClock(at(2026, 12, 21, 9, 0));
+    await t.sched.tick();
+    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(1);
+    expect(t.routine("w").enabled).toBe(true);
+    expect(t.deps.saveRoutine).not.toHaveBeenCalled();
+    expect(t.deps.dropPendingTodos).not.toHaveBeenCalled();
+  });
+
+  it("a poll in flight when the sprout is paused hands nothing off", async () => {
+    let releasePoll: () => void = () => {};
+    const w = watchQueue();
+    const t = setup([w], {
+      pollWatch: vi.fn(async () => { await new Promise<void>((res) => { releasePoll = res; }); return [{ id: "new", text: "late item" }]; }),
+    });
+    const check = t.sched.checkNow("w");
+    await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
+    t.setRoutines([{ ...w, enabled: false, until: "2026-12-09" }]);
+    releasePoll();
+    expect(await check).toEqual({ newItems: 0 });
+    expect(t.deps.addTodo).not.toHaveBeenCalled();
   });
 
   it("only the lease holder expires; before until nothing happens", async () => {

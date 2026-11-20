@@ -1,5 +1,5 @@
 import {
-  foldDefaultSkills, listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash, resolveTodoRoutine, skillUsage,
+  foldDefaultSkills, listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash, resolveTodoRoutine, isArchived, skillUsage,
   type SkillProposal, type ProposalOutcome, type Project, type LegacyProject, type Skill, type Persona, type Routine, type TodoItem,
 } from "@bean/core";
 
@@ -145,6 +145,12 @@ export function buildTodoHandlers(deps: TodoHandlerDeps) {
     remove: (id: string): Promise<void> => deps.deleteTodo(deps.dbFile, id),
     reorder: (id: string, newOrder: number): Promise<void> => deps.reorderTodo(deps.dbFile, id, newOrder),
     clearFinished: (routine: string): Promise<void> => deps.clearFinishedTodos(deps.dbFile, routine),
-    retry: (id: string): Promise<void> => deps.retryTodo(deps.dbFile, id),
+    retry: async (id: string): Promise<void> => {
+      // Same admission rule as add: an archived sprout's queue stays closed (#980).
+      const todo = (await deps.listAllTodos(deps.dbFile)).find((t) => t.id === id);
+      const routine = todo ? (await deps.loadRoutines()).find((r) => r.name === todo.routine) : undefined;
+      if (routine && isArchived(routine, new Date())) throw new Error(`sprout "${routine.name}" is archived — restore it first`);
+      return deps.retryTodo(deps.dbFile, id);
+    },
   };
 }
