@@ -76,7 +76,7 @@ export interface RoutineHostDeps {
 export interface RoutineHost {
   /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. `signal` =
    * the run's Stop (see RoutineRunnerDeps.signal). */
-  runOneRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal) => Promise<RoutineRunResult>;
+  runOneRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal, claim?: (routine: string) => Promise<TodoItem | undefined>) => Promise<RoutineRunResult>;
   /** Resolves with the chat sinks' body when `brief` is set (computed even with no chat sink). */
   deliverDigest: (routine: Routine, result: RoutineRunResult, brief?: boolean, origin?: RunOrigin) => Promise<string | undefined>;
   /** Alias sinks that can't be delivered right now (unknown name, wrong platform). */
@@ -121,7 +121,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     },
   };
 
-  const runOneRoutine = async (routine: Routine, todo?: TodoItem, signal?: AbortSignal): Promise<RoutineRunResult> => {
+  const runOneRoutine = async (routine: Routine, todo?: TodoItem, signal?: AbortSignal, claim?: (routine: string) => Promise<TodoItem | undefined>): Promise<RoutineRunResult> => {
     const id = todo ? `routine:${routine.name}:${todo.id}` : `routine:${routine.name}`;
     const steps = routine.steps.map((st) => {
       const text = st.kind === "command" ? st.command : st.instruction;
@@ -191,7 +191,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
           },
           save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
         },
-        todos: { claim: (r) => claimTodo(dbFile(dir), r), setStatus },
+        // The scheduler's lane-admitted claim when it gives one (#980: stops at the deadline).
+        todos: { claim: claim ?? ((r) => claimTodo(dbFile(dir), r)), setStatus },
         ...(signal ? { signal } : {}),
       }, todo);
       // Before the scheduler saves the record and delivers it to sinks.

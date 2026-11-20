@@ -130,7 +130,8 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     },
     addTodo: async (r, text) => { await addTodo(db, r, text); },
     saveRoutine: (r) => saveRoutine(routinesDir(dir), r),
-    dropPendingTodos: async (r) => { await dropPendingTodos(db, r); },
+    // The dropped todos' chat receipts were just closed: hand them off now.
+    dropPendingTodos: async (r) => { await dropPendingTodos(db, r); void sweep(); },
     alarm: deps.alarm,
     ...(deps.onMissed ? { onMissed: deps.onMissed } : {}),
   });

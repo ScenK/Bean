@@ -23,8 +23,9 @@ export interface RoutineSchedulerDeps {
   loadStates: () => Promise<Record<string, RoutineState>>;
   saveStates: (states: Record<string, RoutineState>) => Promise<void>;
   /** `todo` set = a maxParallel worker's run of that one (already claimed) todo. `signal` =
-   * the run's Stop (`stopRuns`). */
-  runRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal) => Promise<RoutineRunResult>;
+   * the run's Stop (`stopRuns`). `claim` = how a draining run claims each todo (admitted in the
+   * sprout's lane); absent = the host claims directly. */
+  runRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal, claim?: (routine: string) => Promise<TodoItem | undefined>) => Promise<RoutineRunResult>;
   /** `brief` = the trigger asked for the run's brief: resolve with the chat sinks' body even when
    * the sprout has no chat sink. `origin` = the chat conversation that started this run, which
    * gets the result itself (#920). */
@@ -127,7 +128,11 @@ function asOrdinary(result: RoutineRunResult): RoutineRunResult {
   if (!result.ending) return result;
   const line = `\n\n${DONE_FOOTER}`;
   const { ending: _, ...rest } = result;
-  return { ...rest, digest: result.digest.replace(line, ""), ...(result.footer ? { footer: result.footer.replace(line, "") } : {}) };
+  const { done: __, ...record } = result.record;
+  return {
+    ...rest, digest: result.digest.replace(line, ""), record: { ...record, digest: record.digest.replace(line, "") },
+    ...(result.footer ? { footer: result.footer.replace(line, "") } : {}),
+  };
 }
 
 const TICK_MS = 30_000;
@@ -276,11 +281,15 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     let stoppedRun = false;
     try {
       await stamp(routine.name);
-      const result = checkSinks(routine, await deps.runRoutine(routine, undefined, ctl.signal));
+      const result = checkSinks(routine, await deps.runRoutine(routine, undefined, ctl.signal, deps.claimTodo ? laneClaim(routine, deps.claimTodo) : undefined));
       run = outcomeOf(result);
       stoppedRun = result.stopped === true;
-      await appendAndPrune(routine.name, result.record);
-      if (!stoppedRun) await (result.record.done ? settleDone(routine, result, run, opts) : deliver(deps, routine, result, run, opts));
+      const save = (record: RunRecord): Promise<void> => appendAndPrune(routine.name, record);
+      if (result.record.done && !stoppedRun) await settleDone(routine, result, run, opts, save);
+      else {
+        await save(result.record);
+        if (!stoppedRun) await deliver(deps, routine, result, run, opts);
+      }
     } catch (err) {
       console.error(`bean: routine "${routine.name}" run failed`, err);
     } finally {
@@ -313,10 +322,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     // goes to runRoutine, which fails it unrun (its signal is already aborted).
     // Each claim is admitted in the sprout's lane against the current definition: once a sibling's
     // done ended the sprout or a restore came in (either changes `until`), or it's archived, it stops.
-    const next = (): Promise<TodoItem | undefined> => (ctl.signal.aborted ? Promise.resolve(undefined) : withSprout(routine.name, async () => {
-      const c = await find(routine.name);
-      return c && !isArchived(c, now()) && c.until === routine.until ? claim(routine.name) : undefined;
-    }));
+    const admitted = laneClaim(routine, claim);
+    const next = (): Promise<TodoItem | undefined> => (ctl.signal.aborted ? Promise.resolve(undefined) : admitted(routine.name));
     try {
       for (let todo = await next(); todo; todo = await next()) {
         const at = runs.push({ status: "failed" }) - 1; // replaced by the record's once the run returns
@@ -324,8 +331,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
           const result = checkSinks(routine, await deps.runRoutine(routine, todo, ctl.signal));
           runs[at] = outcomeOf(result);
           if (result.stopped) stoppedRun = true;
-          await appendAndPrune(routine.name, result.record, undefined, true);
-          if (!result.stopped) await (result.record.done ? settleDone(routine, result, runs[at]!, opts) : deliver(deps, routine, result, runs[at]!, opts));
+          const save = (record: RunRecord): Promise<void> => appendAndPrune(routine.name, record, undefined, true);
+          if (result.record.done && !result.stopped) await settleDone(routine, result, runs[at]!, opts, save);
+          else {
+            await save(result.record);
+            if (!result.stopped) await deliver(deps, routine, result, runs[at]!, opts);
+          }
         } catch (err) {
           console.error(`bean: routine "${routine.name}" todo run failed`, err);
         }
@@ -345,13 +356,15 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
    * when the definition still carries the generation (`until`) it was admitted with and this host
    * holds the lease: deliver, then pause with `until` = the run's finish and drop the queue. A
    * sibling that got there first (its ending changed `until`) or a restore since → delivered as an
-   * ordinary run. A failed hand-off: the run turns needs-attention, the sprout is paused with its
-   * queue kept for the owner — no automatic re-delivery. */
-  async function settleDone(routine: Routine, result: RoutineRunResult, run: RunOutcome, opts: RunOpts): Promise<void> {
+   * ordinary run — recorded without `done` or the footer. A failed hand-off: the run turns
+   * needs-attention, the sprout is paused with its queue kept for the owner — no automatic
+   * re-delivery. `save` records the run (after the election, so only the winner's says done). */
+  async function settleDone(routine: Routine, result: RoutineRunResult, run: RunOutcome, opts: RunOpts, save: (record: RunRecord) => Promise<void>): Promise<void> {
     const name = routine.name;
     const won = await withSprout(name, async () => {
       const c = await find(name);
       if (!c || c.until !== routine.until || !mayFire()) return false;
+      await save(result.record);
       try {
         await deliver(deps, routine, result, run, opts);
       } catch (err) {
@@ -371,7 +384,22 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       await deps.dropPendingTodos?.(name);
       return true;
     });
-    if (!won) await deliver(deps, routine, asOrdinary(result), run, opts);
+    if (won) return;
+    const ordinary = asOrdinary(result);
+    await save(ordinary.record);
+    await deliver(deps, routine, ordinary, run, opts);
+  }
+
+  /** A drain's claim, admitted in the sprout's lane against the current definition: it stops once
+   * a sibling's done ended the sprout or a restore came in (either changes `until`), once it's
+   * archived, and once its deadline passes — unless the drain started on an already-ended sprout
+   * (by hand, within the grace). */
+  function laneClaim(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>): (name: string) => Promise<TodoItem | undefined> {
+    const endedAtStart = ended(routine);
+    return (name) => withSprout(name, async () => {
+      const c = await find(name);
+      return c && !isArchived(c, now()) && c.until === routine.until && (endedAtStart || !ended(c)) ? claim(name) : undefined;
+    });
   }
 
   /** Starts runs into the routine's free slots (maxParallel − live). The slots are taken

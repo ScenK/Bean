@@ -86,19 +86,22 @@ core-local day) or an ISO date-time (`untilTime`; no Feb 30 roll-over). Route ta
 **Concurrency = one serial lane per sprout** (`scheduler.withSprout(name, fn)`, a keyed promise
 chain; the host's save/restore and todo Retry use it too). Only two short phases run in it, each
 re-reading the definition: *admission* (Run now / trigger / exact todo / tick start take the slot;
-every worker claim) and *commit* (a done result's ending, expiry, a poll's hand-off, enableWatch's
+every drain claim — workers and the single-slot drain, via `runRoutine`'s `claim` arg) and *commit* (a done result's ending, expiry, a poll's hand-off, enableWatch's
 seed+save). Runs, poll fetches, `fill()`, `enableWatch()` stay outside — nothing in the lane may
 await something that takes it (deadlock). **Generation = `until`**: the admitted definition's
 `until` must still match at commit — a sibling's ending or a restore changes it, so a stale done is
-delivered as an ordinary run (no footer) and a stale poll's items are dropped; claims stop too.
+delivered and recorded as an ordinary run (no `done`, no footer — the record is saved after the
+election) and a stale poll's items are dropped; claims stop too, and also once the deadline passes
+(unless the drain started on an already-ended sprout, by hand in the grace).
 Don't answer a new race with per-race flags/markers — the previous attempt (`ended`/`ending`/
 `expiring` sets, a persisted pending-ending marker + replay) failed four review rounds.
 Done commit (winner, lease held): deliver, then pause with `until: <finishedAt>`, drop the queue. A
 failed hand-off: record → needs-attention with the error, sprout paused (`until` kept), queue kept
 for the owner — no re-delivery. Expiry (tick, lease holder, idle sprout only — a live run may
 still reach done): post `Nothing by <date> — extend?` (`ending: "expired"`, never recorded), then
-pause + drop; a failed post leaves it on for the next tick (a crash may re-post). One `mayFire()`
-at commit; lease handovers mid-commit are out of scope. Either ending is chatops `context: true`,
+pause + drop. Dropping closes the dropped todos' chat receipts (`failed`, `ENDED_BEFORE_RUN`) for
+the dispatch sweep — never delete them. A failed post leaves it on for the next tick (a crash may re-post). Known gap: the done commit holds the lane while `deliverDigest` composes the chat brief (a model
+call). One `mayFire()` at commit; lease handovers mid-commit are out of scope. Either ending is chatops `context: true`,
 ignores `chatopsOnlyOnProblems`, and isn't deduped against the asking chat (`askedFrom`): the
 dispatch carries the result, the sink the question. Workers prune step attempts only as the last
 worker out (`pendingKeep`) — lane claims add async hops, so "the last saver prunes" no longer held.

@@ -7,7 +7,7 @@ import { createRoutineScheduler, type RoutineSchedulerDeps } from "../src/routin
 import { DONE_FOOTER } from "../src/routine-runner.js";
 import {
   addTodo, describeRoutineError, dropPendingTodos, endReason, isArchived, isExpired, listTodos, resolveTodoRoutine,
-  untilLabel, untilTime, claimTodo, queueTodoDispatch,
+  untilLabel, untilTime, claimTodo, queueTodoDispatch, getDispatch, undeliveredDispatches, ENDED_BEFORE_RUN,
 } from "../src/index.js";
 import { closeDb, openDb } from "../src/db.js";
 import type { Routine, RoutineRunResult, RoutineState, TodoItem, WatchItem } from "../src/index.js";
@@ -58,7 +58,7 @@ describe("until and archived (store)", () => {
     expect(() => resolveTodoRoutine([base], "w", false, at(2027, 1, 5))).toThrow(/no sprout named "w"/);
   });
 
-  it("dropPendingTodos removes only the sprout's pending todos and their open dispatch rows", async () => {
+  it("dropPendingTodos removes only the sprout's pending todos and closes their chat receipts as not run", async () => {
     const dir = await mkdtemp(join(tmpdir(), "bean-until-"));
     const file = join(dir, "bean.db");
     try {
@@ -71,7 +71,9 @@ describe("until and archived (store)", () => {
       expect(await dropPendingTodos(file, "w")).toBe(2);
       expect((await listTodos(file, "w")).map((t) => [t.text, t.status])).toEqual([["running one", "running"]]);
       expect((await listTodos(file, "other")).length).toBe(1);
-      expect(openDb(file).prepare("SELECT count(*) AS n FROM sprout_dispatches WHERE id = ?").get(q.jobId)).toEqual({ n: 0 });
+      // Closed, not deleted: the sweep still owes the chat that queued it a receipt.
+      expect(getDispatch(file, q.jobId)).toMatchObject({ status: "failed", brief: ENDED_BEFORE_RUN });
+      expect(undeliveredDispatches(file).map((d) => d.id)).toEqual([q.jobId]);
     } finally {
       closeDb(file);
       await rm(dir, { recursive: true, force: true });
@@ -168,6 +170,32 @@ describe("the done ending (scheduler)", () => {
     expect(delivered).toEqual([[`found by b\n\n${DONE_FOOTER}`, "done"], ["found by a", undefined]]);
     expect(t.deps.saveRoutine).toHaveBeenCalledTimes(1);
     expect(t.deps.dropPendingTodos).toHaveBeenCalledTimes(1);
+    // Only the winner's record says done; the loser's is an ordinary run with no footer.
+    const hist = t.states().w!.history;
+    expect(hist.filter((h) => h.done).map((h) => h.digest)).toEqual([`found by b\n\n${DONE_FOOTER}`]);
+    expect(hist.find((h) => !h.done)).toMatchObject({ digest: "found by a" });
+  });
+
+  it("a drain started before the deadline claims nothing past it; one started by hand in the grace keeps draining", async () => {
+    const t = setup([watchQueue({ until: "2026-12-20" })]);
+    t.setClock(at(2026, 12, 20, 23, 0));
+    t.queue.push(todo("a"), todo("b"));
+    const claimed: string[] = [];
+    vi.mocked(t.deps.runRoutine).mockImplementation(async (_r, _todo, _signal, claim) => {
+      for (let item = await claim!("w"); item; item = await claim!("w")) {
+        claimed.push(item.id);
+        t.setClock(at(2026, 12, 21, 0, 30)); // the first item finishes after the deadline
+      }
+      return { record: { startedAt: "x", finishedAt: "x", status: "ok", digest: "ran", steps: [] }, digest: "ran", results: [] };
+    });
+    await t.sched.runNow("w");
+    expect(claimed).toEqual(["a"]);
+    expect(t.queue.map((q) => q.id)).toEqual(["b"]);
+
+    claimed.length = 0;
+    t.setRoutines([watchQueue({ enabled: false, until: "2026-12-20" })]); // ended, within the grace
+    await t.sched.runNow("w");
+    expect(claimed).toEqual(["b"]);
   });
 
   it("a failed done delivery: the run needs attention, the sprout pauses with its queue kept, nothing re-delivers", async () => {
