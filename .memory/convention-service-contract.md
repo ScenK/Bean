@@ -22,6 +22,7 @@ plan: `planDrop` (core, returns the plan) + the shell's `proposeRun` (shows it).
 
 The handshake (`IPC.handshake`, `@bean/host` `buildHandshake`/`checkHandshake`) carries
 `CONTRACT_VERSION`, the core version, platform and capabilities; bump `CONTRACT_VERSION` on any
-breaking argument/result/event change. `checkHandshake` reports a version mismatch as `reason:
+breaking argument/result/event change (v2 = #975's chat `summary`, see
+[project-desktop-chat-compaction](project-desktop-chat-compaction.md)). `checkHandshake` reports a version mismatch as `reason:
 "version"`, apart from a malformed reply, and drops capabilities it doesn't know (#838) — so a new
 capability is additive and needs no `CONTRACT_VERSION` bump. The renderer reads it through `useCapabilities()` ([convention-capability-gated-ui](convention-capability-gated-ui.md)).

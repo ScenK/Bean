@@ -136,6 +136,16 @@ describe("compactHistory (desktop rolling summary, #975)", () => {
     expect(seen[0]!.length).toBeLessThan(6 * (SUMMARY_TURN_CHARS + 10));
   });
 
+  test("one turn over the byte budget is summarized away, success or failure — no raw turn kept", async () => {
+    const huge: ChatTurn[] = [{ role: "user", content: "x".repeat(HISTORY_BYTE_BUDGET + 1) }];
+    const ok = await compactHistory(huge, undefined, summarizer);
+    expect(ok.summary?.covers).toBe(1);
+    expect(ok.history).toEqual([{ role: "user", content: formatSummaryBlock(ok.summary!.text) }]);
+    const tail = [{ role: "user" as const, content: "small" }, { role: "assistant" as const, content: "x".repeat(HISTORY_BYTE_BUDGET) }];
+    const failed = await compactHistory(tail, "earlier", { chat: async () => { throw new Error("down"); }, model: "m" });
+    expect(failed).toEqual({ history: [{ role: "user", content: formatSummaryBlock("earlier") }] });
+  });
+
   test("a failed summary call keeps the previous summary and sends only the tail", async () => {
     const failing = { chat: async () => { throw new Error("down"); }, model: "m" };
     const out = await compactHistory(turns(70), "earlier", failing);

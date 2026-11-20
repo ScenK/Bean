@@ -126,9 +126,11 @@ export async function compactHistory(
 ): Promise<CompactedHistory> {
   const prev = summary?.trim() ? summary.trim().slice(0, SUMMARY_MAX_CHARS) : undefined;
   const head = (s: string | undefined): ChatTurn[] => (s ? [{ role: "user", content: formatSummaryBlock(s) }] : []);
-  if (turns.length < 2 || (turns.length <= HISTORY_TURN_BUDGET && bytes(turns) <= HISTORY_BYTE_BUDGET)) return { history: [...head(prev), ...turns] };
+  if (turns.length <= HISTORY_TURN_BUDGET && bytes(turns) <= HISTORY_BYTE_BUDGET) return { history: [...head(prev), ...turns] };
+  // The kept tail fits half the byte budget — even when that keeps no raw turn at all (one huge
+  // turn): the latest message rides apart from history, so the summary alone still carries it.
   let keep = Math.max(1, turns.length - KEEP_TURNS);
-  while (keep < turns.length - 1 && bytes(turns.slice(keep)) > HISTORY_BYTE_BUDGET / 2) keep++;
+  while (keep < turns.length && bytes(turns.slice(keep)) > HISTORY_BYTE_BUDGET / 2) keep++;
   try {
     const text = (await summarize(turns.slice(0, keep), deps, prev, signal)).slice(0, SUMMARY_MAX_CHARS);
     return { history: [...head(text), ...turns.slice(keep)], summary: { text, covers: keep } };
