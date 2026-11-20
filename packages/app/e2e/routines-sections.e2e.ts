@@ -7,8 +7,8 @@ import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
 /** The Sprouts list is sectioned by project from the registry and each step's folder; Needs
- * fixing offers Register / Pick projects; the fold lives in localStorage — so this drives the
- * real app twice against one userData dir. */
+ * fixing offers Register / Pick projects; Archived is folded and offers Restore; the fold lives
+ * in localStorage — so this drives the real app twice against one userData dir. */
 test("sprouts window: project sections, Needs fixing, Listed under, fold survives a restart", async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
@@ -23,6 +23,11 @@ test("sprouts window: project sections, Needs fixing, Listed under, fold survive
   await sprout("loose-one", loose);
   // The temp dir holds the registered project: an ancestor folder is never offered for registering.
   await sprout("above", dirname(home.projectPath));
+  // Ended long ago (#983): archived — listed only under the folded Archived section.
+  await writeFile(join(beanDir, "routines", "old-ask.json"), JSON.stringify({
+    name: "old-ask", description: "ping me when the visa letter lands", enabled: false, until: "2020-01-02",
+    cron: "0 9 * * *", sinks: {}, steps: [{ kind: "chat", instruction: "check" }],
+  }), "utf8");
 
   const open = async (app: ElectronApplication): Promise<Page> => {
     const avatar = await app.firstWindow();
@@ -63,6 +68,22 @@ test("sprouts window: project sections, Needs fixing, Listed under, fold survive
 
       await section(win, home.projectPath).locator(".bean-notes-group").click();
       await expect(row(win, home.projectPath, "in-demo")).toHaveCount(0);
+
+      // Archived: folded by default; its row reads the ask and how it ended; Restore → Save turns it back on.
+      const archivedHead = section(win, "!archived").locator(".bean-notes-group");
+      await expect(archivedHead).toHaveAttribute("aria-expanded", "false");
+      await expect(row(win, "!archived", "old-ask")).toHaveCount(0);
+      await archivedHead.click();
+      await expect(row(win, "!archived", "old-ask")).toContainText("ping me when the visa letter lands");
+      await expect(row(win, "!archived", "old-ask")).toContainText("Nothing by Jan 2");
+      await row(win, "!archived", "old-ask").getByRole("button", { name: "Restore" }).click();
+      await expect(win.getByLabel("End date")).toHaveValue("");
+      await win.getByRole("button", { name: "Save sprout" }).click();
+      await expect(row(win, "", "old-ask")).toBeVisible();
+      await expect(section(win, "!archived")).toHaveCount(0);
+      const restored = JSON.parse(await readFile(join(beanDir, "routines", "old-ask.json"), "utf8")) as { enabled: boolean; until?: string };
+      expect(restored).toMatchObject({ enabled: true });
+      expect(restored.until).toBeUndefined();
     } finally {
       await app.close();
     }

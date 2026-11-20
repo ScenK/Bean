@@ -182,6 +182,23 @@ describe("buildTodoHandlers", () => {
     expect(added).toEqual([{ routine: "nightly", text: "do the thing" }]);
   });
 
+  it("retry refuses a todo of an archived sprout; an in-grace one retries (#980)", async () => {
+    const retried: string[] = [];
+    const todo = (id: string, routine: string) => ({ id, routine, text: "x", status: "failed" as const, createdAt: "", order: 1 });
+    const h = buildTodoHandlers({
+      ...makeDeps().deps,
+      loadRoutines: async () => [
+        { ...routines[0]!, name: "old", enabled: false, until: "2020-01-01" },
+        { ...routines[0]!, name: "recent", enabled: false, until: new Date(Date.now() - 60_000).toISOString() },
+      ],
+      listAllTodos: async () => [todo("a", "old"), todo("b", "recent")],
+      retryTodo: async (_f: string, id: string) => { retried.push(id); },
+    });
+    await expect(h.retry("a")).rejects.toThrow(/archived/);
+    await h.retry("b");
+    expect(retried).toEqual(["b"]);
+  });
+
   it("add rejects unknown and non-todo-driven routines", async () => {
     const { deps } = makeDeps();
     const h = buildTodoHandlers(deps);

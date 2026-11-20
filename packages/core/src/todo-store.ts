@@ -231,6 +231,29 @@ export async function renameTodosRoutine(file: string, from: string, to: string)
   openDb(file).prepare("UPDATE todos SET routine = ? WHERE routine = ?").run(to, from);
 }
 
+/** What a chat-queued todo's receipt says when its sprout ended before reaching it (#980). */
+export const ENDED_BEFORE_RUN = "Not run — the sprout ended before it got to this.";
+
+/** A sprout that ended (`done` or expiry, #980): its pending todos go. Their open dispatch rows are
+ * closed (failed, `ENDED_BEFORE_RUN`), not deleted, so the chat that queued each one still gets a
+ * receipt through the dispatch sweep. Running todos finish on their own. Returns how many dropped. */
+export async function dropPendingTodos(file: string, routine: string, now: () => Date = () => new Date()): Promise<number> {
+  const db = openDb(file);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(
+      "UPDATE sprout_dispatches SET status = 'failed', brief = CASE WHEN keep_brief = 1 THEN ? END, finished_at = ? " +
+      "WHERE status IS NULL AND todo_id IN (SELECT id FROM todos WHERE routine = ? AND status = 'pending')",
+    ).run(ENDED_BEFORE_RUN, now().toISOString(), routine);
+    const changed = db.prepare("DELETE FROM todos WHERE routine = ? AND status = 'pending'").run(routine);
+    db.exec("COMMIT");
+    return Number(changed.changes);
+  } catch (err) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
 export async function deleteTodosForRoutine(file: string, routine: string): Promise<void> {
   openDb(file).prepare("DELETE FROM sprout_dispatches WHERE status IS NULL AND todo_id IN (SELECT id FROM todos WHERE routine = ?)").run(routine);
   openDb(file).prepare("DELETE FROM todos WHERE routine = ?").run(routine);

@@ -76,7 +76,7 @@ export interface RoutineHostDeps {
 export interface RoutineHost {
   /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. `signal` =
    * the run's Stop (see RoutineRunnerDeps.signal). */
-  runOneRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal) => Promise<RoutineRunResult>;
+  runOneRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal, claim?: (routine: string) => Promise<TodoItem | undefined>) => Promise<RoutineRunResult>;
   /** Resolves with the chat sinks' body when `brief` is set (computed even with no chat sink). */
   deliverDigest: (routine: Routine, result: RoutineRunResult, brief?: boolean, origin?: RunOrigin) => Promise<string | undefined>;
   /** Alias sinks that can't be delivered right now (unknown name, wrong platform). */
@@ -121,7 +121,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     },
   };
 
-  const runOneRoutine = async (routine: Routine, todo?: TodoItem, signal?: AbortSignal): Promise<RoutineRunResult> => {
+  const runOneRoutine = async (routine: Routine, todo?: TodoItem, signal?: AbortSignal, claim?: (routine: string) => Promise<TodoItem | undefined>): Promise<RoutineRunResult> => {
     const id = todo ? `routine:${routine.name}:${todo.id}` : `routine:${routine.name}`;
     const steps = routine.steps.map((st) => {
       const text = st.kind === "command" ? st.command : st.instruction;
@@ -191,7 +191,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
           },
           save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
         },
-        todos: { claim: (r) => claimTodo(dbFile(dir), r), setStatus },
+        // The scheduler's lane-admitted claim when it gives one (#980: stops at the deadline).
+        todos: { claim: claim ?? ((r) => claimTodo(dbFile(dir), r)), setStatus },
         ...(signal ? { signal } : {}),
       }, todo);
       // Before the scheduler saves the record and delivers it to sinks.
@@ -243,7 +244,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     }
     const final = finalStepOutput(routine, result.results);
     const brief = await composeChatBrief({
-      input: chatBriefInput(result.results), final, persona, chat: deps.converse, model: deps.getBriefModel?.() || deps.getModel(),
+      input: chatBriefInput(result.results), final, purpose: routine.description, persona, chat: deps.converse, model: deps.getBriefModel?.() || deps.getModel(),
     });
     const body = brief ?? final;
     return body ? body + (result.footer ?? "") : result.digest;
@@ -264,8 +265,9 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         slug: `routine-${routine.name}`, // update-in-place: one living note per routine
       }, undefined, { upsert: true }); // the only upsert caller: the sink (re)creates its note
     }
-    // A notify-only watch fire is always "ok", so the rule would mute it entirely — it doesn't apply there.
-    const quiet = routine.sinks.chatopsOnlyOnProblems === true && result.record.status === "ok" && routine.steps.length > 0;
+    // A notify-only watch fire is always "ok", so the rule would mute it entirely — it doesn't apply
+    // there; nor to a sprout's ending (done / expiry), which asks the owner whether to go on.
+    const quiet = routine.sinks.chatopsOnlyOnProblems === true && result.record.status === "ok" && routine.steps.length > 0 && result.ending === undefined;
     const sinks = quiet ? [] : routine.sinks.chatops ?? [];
     // Read at enqueue, so a retarget in Settings applies to the next digest.
     const named = sinks.some((s) => s.alias !== undefined) ? listDestinations(dbFile(dir)) : [];
@@ -275,7 +277,9 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       // Unresolved: sinkProblems already marked the run; never fall back to the owner's DM.
       return "error" in resolved ? [] : [{ sink, channel: resolved.channel }];
     });
-    const asked = targets.length > 0 ? askedFrom(result, origin) : [];
+    // An ending's "keep watching?" goes to every chat sink, the asking chat's too: its dispatch
+    // notice carries only the result, and only the scheduler's elected owner delivers an ending.
+    const asked = targets.length > 0 && result.ending === undefined ? askedFrom(result, origin) : [];
     const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
     const holds = (): boolean => deps.holdsLease?.() ?? true;
     const home = routine.sinks.home !== undefined && holds() ? routine.sinks.home : undefined;
@@ -299,7 +303,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         title: `Sprout: ${routine.name}`,
         // A member DM says whose routine it is — they didn't set it up.
         body: sink.user ? `${chatBody}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : chatBody,
-        context: deps.getRoutineDigestContext(),
+        // An ending asks "keep watching?" / "extend?": a reply there must have the question in history.
+        context: result.ending !== undefined || deps.getRoutineDigestContext(),
       }, newId);
     }
     if (routine.sinks.notify && deps.notify) {

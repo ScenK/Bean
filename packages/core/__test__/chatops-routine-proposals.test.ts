@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
-  describeSchedule, describeStep, parseRoutineCommand, routineCardInput, RoutineProposalStore, routineListText,
+  describeSchedule, describeStep, draftReplaces, parseRoutineCommand, routineCardInput, routineDraftCard, RoutineProposalStore, routineListText,
 } from "../src/chatops/routine-proposals.js";
+import { draftNames } from "../src/routine-store.js";
 import type { Routine } from "../src/routine-store.js";
 import type { Project } from "../src/types.js";
 
@@ -141,5 +142,45 @@ describe("routineListText sections (#885)", () => {
     const lines = routineListText([{ ...base, enabled: false }, watch], [], skills, "UTC").split("\n");
     expect(lines[1]).toMatch(/^• \*\*r\*\* — on demand — /);
     expect(lines[2]).toMatch(/^• \*\*w\*\* — off — /);
+  });
+});
+
+describe("desktop drafts (#982)", () => {
+  const check = { kind: "chat" as const, id: "check", instruction: "Is the album out?",
+    route: { paths: [{ when: "found", goto: "done" }, { when: "nothing", goto: "quiet" }] } };
+  const draft: Routine = {
+    name: "album", description: "tell me when it's out", enabled: true, cron: "0 9 * * *", webSearch: true, until: "2026-12-20",
+    steps: [check], sinks: { home: {} },
+  };
+
+  test("the card says what it watches for, how, where it tells you and when it stops", () => {
+    const card = routineDraftCard("d1", { routine: draft, updating: false }, undefined);
+    expect(card).toMatchObject({
+      id: "d1", name: "album", ask: "tell me when it's out", commitment: true, tellYou: ["Home"],
+      stops: "Dec 20, 2026, or sooner if found",
+    });
+    expect(card.how[0]).toMatch(/^Every day at 9:00 AM/);
+    expect(card.how).toContain("Searches the public web");
+    expect(card.replaces).toBeUndefined();
+    expect(routineDraftCard("d2", { routine: draft, updating: true, problem: "bad" }, "live")).toMatchObject({ problem: "bad", how: [], replaces: "live" });
+  });
+
+  test("what a draft replaces follows the saved sprout's state", () => {
+    const now = new Date(2026, 10, 20);
+    const saved = (r: Partial<Routine>): Routine[] => [{ ...draft, ...r }];
+    expect(draftReplaces("album", [], now)).toBeUndefined();
+    expect(draftReplaces("album", saved({ enabled: true }), now)).toBe("live");
+    expect(draftReplaces("album", saved({ enabled: false, until: "2026-11-19" }), now)).toBe("paused");
+    expect(draftReplaces("album", saved({ enabled: false, until: "2026-10-01" }), now)).toBe("archived");
+  });
+
+  test("draftNames: every name, live sorted, and the 10 most recently archived sorted", () => {
+    const now = new Date(2026, 10, 20);
+    const archived = Array.from({ length: 12 }, (_, i): Routine => ({ ...draft, name: `old-${String(i).padStart(2, "0")}`, enabled: false, until: `2026-09-${String(i + 1).padStart(2, "0")}` }));
+    const names = draftNames([{ ...draft, name: "zeta" }, ...archived, { ...draft, name: "alpha" }], now);
+    expect(names.live).toEqual(["alpha", "zeta"]);
+    expect(names.archived).toEqual(archived.slice(2).map((r) => r.name));
+    expect(names.existing).toHaveLength(14);
+    expect(draftNames([...archived].reverse(), now)).toEqual(draftNames(archived, now));
   });
 });

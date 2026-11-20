@@ -1,7 +1,7 @@
 // packages/core/src/routine-runner.ts
 import { createHash, randomUUID } from "node:crypto";
 import type { ActionTool, ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
-import { DEFAULT_GATE_ROUNDS, MEMBER_TODO_REFUSAL, memberTodoEligible, parallelSlots, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
+import { ARCHIVE_GRACE_DAYS, DEFAULT_GATE_ROUNDS, MEMBER_TODO_REFUSAL, memberTodoEligible, parallelSlots, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
 import { STOPPED_BY_YOU, type CommandStepOutcome } from "./command-step.js";
 import type { Skill } from "./types.js";
 import type { CliName } from "./launcher.js";
@@ -11,7 +11,7 @@ import { selectRelevantMemories } from "./memory/store.js";
 import { quoteFence } from "./prompt.js";
 import { dropRouteLine, gateVerdict, lastLine, parseVerdict, routeLabel, type StepAttempt } from "./step-attempts.js";
 import { RETRO_SKILL, retroSession, type RetroDeps } from "./retro.js";
-import { isQuietEnd, stepGroups, stepLanes } from "./routine-graph.js";
+import { isDoneEnd, isQuietEnd, stepGroups, stepLanes } from "./routine-graph.js";
 
 export interface DelegateStepRequest {
   skill?: Skill;
@@ -117,7 +117,13 @@ export interface StepResult {
 /** `todoIds` = every todo this run took, in order (absent = it took none) — a delivered drain
  * leaves its quiet todos out, as `results` (what the digest was built from) does; `record.steps`
  * keeps every step. */
-export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true; footer?: string; todoIds?: string[] }
+/** `ending`: the sprout ends with this delivery — `done` (a route reached it, `record.done`) or
+ * `expired` (the scheduler's "Nothing by <date>" notice, never recorded). Chat sinks get it as chat
+ * context, and "only post when a run needs me" doesn't mute it: it asks the owner something. */
+export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true; footer?: string; todoIds?: string[]; ending?: "done" | "expired" }
+
+/** Ends a done run's delivery (#980): the recommended next step, with the archive grace spelled out. */
+export const DONE_FOOTER = `Want me to keep watching? Otherwise I'll file this away in ${ARCHIVE_GRACE_DAYS === 7 ? "a week" : `${ARCHIVE_GRACE_DAYS} days`}.`;
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
@@ -154,8 +160,9 @@ const gist = (output: string): string =>
 
 /** How one pass of the steps ended; `attention` says why when it needs attention; `stoppedAt`
  * = the step the user's Stop landed on; `quiet` = a route chose "quiet" on an otherwise ok pass
- * (the deciding step's one-line reason) — nothing of this pass is delivered. */
-interface PassOutcome { status: RunStatus; attention?: string; stoppedAt?: number; quiet?: string }
+ * (the deciding step's one-line reason) — nothing of this pass is delivered; `done` = a route reached
+ * "done" on an otherwise ok pass — the sprout ends after this run. */
+interface PassOutcome { status: RunStatus; attention?: string; stoppedAt?: number; quiet?: string; done?: true }
 
 /** `step 3 (review)` — the step's id, skill or the start of its text. */
 function stepLabel(steps: RoutineStep[], i: number): string {
@@ -583,6 +590,11 @@ async function runSteps(
         const out = end(lastFail);
         return out.status === "ok" ? { ...out, quiet: gist(dropRouteLine(said)) } : out;
       }
+      if (isDoneEnd(goto, byId)) {
+        // Same rule as quiet: a pass that didn't end clean isn't proof the goal was met.
+        const out = end(lastFail);
+        return out.status === "ok" ? { ...out, done: true } : out;
+      }
       pc = goto === "end" ? steps.length : byId.get(goto) ?? steps.length;
       continue;
     }
@@ -610,6 +622,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   const attention: string[] = [];
   let stoppedAt: number | undefined; // the step the user's Stop landed on
   const todoIds: string[] = [];
+  let done = false; // a pass reached "done": claim nothing more, end the sprout after delivery
   // Passes a route ended quiet: their results stay in the record but out of the digest and sinks.
   const quietResults = new Set<StepResult>();
   const quietLines: { label: string; reason: string }[] = [];
@@ -644,6 +657,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     );
     results.push(...scoped);
     if (outcome.quiet !== undefined) markQuiet(scoped, outcome.quiet, labelPrefix, item.id);
+    if (outcome.done) done = true;
     const last = scoped[scoped.length - 1];
     // Strip the label prefix for the setStatus summary — it's redundant there since the
     // caller already knows which todo this is; `results`/the digest keep the labeled form.
@@ -673,13 +687,14 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
         };
       }
       // A stopped drain claims nothing more; runTodo fails a todo claimed after the Stop unrun.
-      for (; item; item = stoppedAt === undefined && !deps.signal?.aborted ? await claim(routine.name) : undefined) {
+      for (; item; item = stoppedAt === undefined && !deps.signal?.aborted && !done ? await claim(routine.name) : undefined) {
         await runTodo(item, setStatus);
       }
     }
   } else {
     const outcome = await runSteps(routine, deps, timeoutMs, results, "", "", id);
     if (outcome.quiet !== undefined) markQuiet(results, outcome.quiet, "");
+    if (outcome.done) done = true;
     worst(outcome.status);
     if (outcome.attention) attention.push(outcome.attention);
     stoppedAt = outcome.stoppedAt;
@@ -718,7 +733,9 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   const body = unfence(only?.ok
     ? (label && only.output.startsWith(label) ? only.output.slice(label.length) : only.output)
     : await composeDigest(routine, delivered, deps, timeoutMs));
-  const digest = attention.length ? `${attention.map((a) => `Needs attention: ${a}`).join("\n")}\n\n${body}` : body;
+  // Done: the delivery ends with the recommended next step (re-appended to a chat brief via `footer`).
+  const footer = done ? `\n\n${DONE_FOOTER}` : "";
+  const digest = (attention.length ? `${attention.map((a) => `Needs attention: ${a}`).join("\n")}\n\n${body}` : body) + footer;
   const record: RunRecord = {
     id,
     startedAt,
@@ -726,8 +743,12 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     status,
     digest,
     steps: stepsOf(),
+    ...(done ? { done: true as const } : {}),
   };
   // Only the todos the digest covers: a quiet todo's origin chat mustn't decide where it goes.
   const covered = todoIds.filter((t) => !quietTodos.has(t));
-  return { record, digest, results: delivered, ...(covered.length ? { todoIds: covered } : {}) };
+  return {
+    record, digest, results: delivered, ...(covered.length ? { todoIds: covered } : {}),
+    ...(done ? { footer, ending: "done" as const } : {}),
+  };
 }

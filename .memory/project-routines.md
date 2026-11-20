@@ -79,6 +79,58 @@ todos; `record.steps` keeps all); the record is quiet only when every todo was. 
 `withSinkProblems` (nothing is delivered). "quiet" is NOT a reserved id (rejecting an id drops the
 whole saved sprout on load): a step already named `quiet` wins, so old routes keep reaching it —
 always test the target with `isQuietEnd(goto, ids)`, never `goto === "quiet"`.
+**Ending: `until`, `done`, expiry, Archived (#980).** `Routine.until` = `YYYY-MM-DD` (end of that
+core-local day) or an ISO date-time (`untilTime`; no Feb 30 roll-over). Route target `"done"`
+(route-only, not reserved — `isDoneEnd`, same rule as quiet) on a clean ok pass sets
+`RunRecord.done`, appends `DONE_FOOTER` ("a week" = `ARCHIVE_GRACE_DAYS`) and stops the drain claiming.
+**Concurrency = one serial lane per sprout** (`scheduler.withSprout(name, fn)`, a keyed promise
+chain; the host's save/restore and todo Retry use it too). Only two short phases run in it, each
+re-reading the definition: *admission* (Run now / trigger / exact todo / tick start take the slot;
+every drain claim — workers and the single-slot drain, via `runRoutine`'s `claim` arg) and *commit* (a done result's ending, expiry, a poll's hand-off, enableWatch's
+seed+save). Runs, poll fetches, `fill()`, `enableWatch()` stay outside — nothing in the lane may
+await something that takes it (deadlock). **Generation = `until`**: the admitted definition's
+`until` must still match at commit — a sibling's ending or a restore changes it, so a stale done is
+delivered and recorded as an ordinary run (no `done`, no footer — the record is saved after the
+election) and a stale poll's items are dropped; claims stop too, and also once the deadline passes
+(unless the run was admitted on an already-ended sprout — by hand in the grace; `grace` is read
+synchronously at admission, never after an await).
+Don't answer a new race with per-race flags/markers — the previous attempt (`ended`/`ending`/
+`expiring` sets, a persisted pending-ending marker + replay) failed four review rounds.
+Done commit (winner, lease held): deliver, then pause with `until: <finishedAt>`, drop the queue. A
+failed hand-off: record → needs-attention with the error, sprout paused (`until` kept), queue kept
+for the owner — no re-delivery. Expiry (tick, lease holder, idle sprout only — a live run may
+still reach done): post `Nothing by <date> — extend?` (`ending: "expired"`, never recorded), then
+pause + drop. Restoring an ended cron sprout (host save) calls `scheduler.rebase`: lastRun = now,
+missed cleared — no catch-up of a slot passed while ended, no stale startup `missed`. Dropping closes the dropped todos' chat receipts (`failed`, `ENDED_BEFORE_RUN`) for
+the dispatch sweep — never delete them. A failed post leaves it on for the next tick (a crash may re-post). Known gap: the done commit holds the lane while `deliverDigest` composes the chat brief (a model
+call). One `mayFire()` at commit; lease handovers mid-commit are out of scope. Either ending is chatops `context: true`,
+ignores `chatopsOnlyOnProblems`, and isn't deduped against the asking chat (`askedFrom`): the
+dispatch carries the result, the sink the question. Workers prune step attempts only as the last
+worker out (`pendingKeep`) — lane claims add async hops, so "the last saver prunes" no longer held.
+Past `until` (`hasEnded`) = never fired automatically and no poll hands off; by hand it still runs
+until `isArchived` (off and `ARCHIVE_GRACE_DAYS` past `until`, derived) — refused by every
+admission path and `resolveTodoRoutine`, filtered from desktop + chatops run/todo catalogs and the
+`sprouts`/`enable` commands. Turning an ended one back on needs a later (or cleared) `until`
+(desktop save handler, chatops `enable`); an ended watch restores via
+`scheduler.enableWatch(name, false, until | null)`, which re-seeds from now and commits the new
+end with `enabled` only after its check succeeds. "Why it ended" = `endReason()`: found when a
+`done` record's `finishedAt` equals the current `until`, else expired.
+**Chat drafts on every surface (#982).** `propose_routine` is offered to the chatops owner/admins
+and, via the host's `routineDrafts`, to a *local* desktop chat (a remote shell has no Sprouts panel).
+Tool text is per surface (`RoutineAuthoring.transport`, `"desktop"` adds `sinks.home`) and teaches
+feed watches, `webSearch`, `until` and the found→`done` / nothing→`quiet` route; it lists only
+sorted live names + the 10 most recently archived (`draftNames`) so the spec stays byte-stable —
+never the clock. `updating` matches every name, archived too. A draft routing to `done` with no
+`until` gets `COMMITMENT_DAYS` (30) from converse's clock (`withDefaultUntil`); plain schedules get
+none. Chatops strips any draft `sinks.home` before the card (Home is desktop-only). Desktop card
+authority = the send-card pattern: the host keeps the draft, the renderer returns only the id.
+Save re-checks `chatRoutineProblem(…, "desktop")`, the replace target (`draftReplaces` state AND the
+saved definition's JSON snapshot taken at card time — any edit in Sprouts meanwhile refuses) and
+`until`, then goes through the panel's own `routines.save` (lane/restore/rebase); a watch saves
+off, then `enableWatch` seeds it from now. No "Open in editor" button: selecting a sprout in an
+already-open Sprouts window needs a new open-target channel — cut, edit in Sprouts after saving.
+Chatops Save also refuses a draft whose `until` has passed, and an owner replacement refuses once
+the saved sprout changed since the card (`PendingRoutine.prior`, same JSON-snapshot rule).
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
 `stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
 never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.

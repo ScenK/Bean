@@ -374,6 +374,41 @@ test("chat handler offers propose_send only with proposeSend and turns the call 
   expect(out.proposedSend).toBeUndefined();
 });
 
+test("chat handler offers propose_routine only to a client that can save it, and turns the call into a draft card (#982)", async () => {
+  const base = {
+    loadSkills: async () => [] as Skill[],
+    loadProjects: async () => [] as Project[],
+    loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills", skillsDir: "/b/skills", projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json", projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [], dbFile: "/b/memory.json",
+    loadRoutines: async (): Promise<Routine[]> => [{ name: "old", enabled: false, until: "2020-01-01", cron: "0 9 * * *", steps: [], sinks: {} }],
+  };
+  const draft = { name: "album", enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: { home: {} } };
+  const offered: string[][] = [];
+  const converse: ChatHandlerDeps["converse"] = async ({ tools }) => {
+    offered.push(tools.map((t) => t.name));
+    return tools.some((t) => t.name === "propose_routine")
+      ? { content: "", toolCalls: [{ name: "propose_routine", args: { json: JSON.stringify(draft) } }] }
+      : { content: "ok", toolCalls: [] };
+  };
+  const seen: { names?: string[]; proposed?: unknown } = {};
+  const ops = {
+    authoring: (rs: Routine[]) => { seen.names = rs.map((r) => r.name); return { transport: "desktop" as const, existing: ["old"], recipients: [] }; },
+    propose: async (p: unknown) => { seen.proposed = p; return { id: "d1", name: "album", commitment: false, how: [], tellYou: [] }; },
+  };
+  const handler = buildChatHandler({ ...base, converse, routineDrafts: (c) => (c === 1 ? ops : undefined) } as ChatHandlerDeps);
+  await handler({ history: [], message: "watch it" }, 2);
+  expect(offered[0]).not.toContain("propose_routine");
+  const out = await handler({ history: [], message: "watch it" }, 1);
+  expect(offered[1]).toContain("propose_routine");
+  expect(seen.names).toEqual(["old"]); // archived names still reach the tool
+  expect(seen.proposed).toEqual({ routine: draft, updating: false });
+  expect(out.routineDraft).toMatchObject({ id: "d1" });
+  expect(out.proposedRoutine).toBeUndefined();
+});
+
 test("buildChatHandler passes todo-driven routine names into converse", async () => {
   const nightlyTodoDriven: Routine = {
     name: "nightly", enabled: true, cron: "0 2 * * *", todoDriven: true,
@@ -446,6 +481,26 @@ describe("chat handler sprout runs", () => {
     expect(off.reply).toBe("feed-watch is off — turn it on in Sprouts.");
     const review = await handlerFor([{ ...watch, enabled: false }], "feed-watch", { pending: 0, seeded: false }).run();
     expect(review.reply).toBe("feed-watch needs its first review in Bean's Sprouts panel.");
+  });
+
+  it("leaves archived sprouts out of the catalog; a paused one within the grace stays (#980)", async () => {
+    let spec = "";
+    const handler = buildChatHandler({
+      loadSkills: async () => [] as Skill[], loadProjects: async () => [] as Project[],
+      loadPersona: async () => ({ name: "Bean", tags: [] }) as unknown as Persona,
+      converse: async ({ tools }) => { spec = JSON.stringify(tools.find((t) => t.name === "propose_sprout_run")); return { content: "ok", toolCalls: [] }; },
+      getModel: () => "m",
+      projectSkillsDir: "/b/ps", skillsDir: "/b/s", projectsFile: "/b/p.json", personaFile: "/b/pe.json", projectPersonaFile: "/b/pp.json",
+      loadMemories: async () => [], dbFile: "/b/bean.db",
+      loadRoutines: async () => [
+        { ...daily, name: "old-watch", until: "2020-01-01" },
+        { ...daily, name: "just-ended", until: new Date(Date.now() - 24 * 60 * 60_000).toISOString() },
+      ],
+      sproutFacts: async () => ({ pending: 0, seeded: true }),
+    });
+    await handler({ history: [], message: "run it" });
+    expect(spec).toContain("just-ended");
+    expect(spec).not.toContain("old-watch");
   });
 
   it("isn't offered without sproutFacts", async () => {

@@ -121,6 +121,16 @@ describe("normalizeForSave", () => {
     expect(items.map((it) => it.state)).toEqual(["expired", "expired", "sent"]);
   });
 
+  it("restores a sprout draft card inert: pending and sending expire, a saved one stays saved (#982)", () => {
+    const card = { id: "d1", name: "album", commitment: true, how: [], tellYou: ["Home"] };
+    const items = restoreItems(JSON.parse(JSON.stringify([
+      { kind: "routine", id: "a", card, state: "pending" },
+      { kind: "routine", id: "b", card, state: "sending" },
+      { kind: "routine", id: "c", card, state: "saved" },
+    ]))) as Extract<ChatItem, { kind: "routine" }>[];
+    expect(items.map((it) => it.state)).toEqual(["expired", "expired", "saved"]);
+  });
+
   it("keeps a forget receipt's text only: kept without Undo (restored stays restored), no row snapshot", () => {
     expect(find("old-15")).toEqual({ kind: "forgot", id: "old-15", text: "lives in Seattle", state: "kept" });
     expect(find("old-16")).toEqual({ kind: "forgot", id: "old-16", text: "uses zed", state: "restored" });
