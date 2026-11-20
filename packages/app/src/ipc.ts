@@ -80,9 +80,11 @@ export function openComponentPayload(kind: ComponentKind, payload: unknown): Cha
 }
 
 /** Where a desktop notification's click lands, from its `meta`: a routine digest opens its run in
- * the Dashboard, a watch alarm the Routines panel, anything else (reminders) Chat. */
-export function notificationOpens(meta: Record<string, unknown> | undefined): { kind: ComponentKind; target?: DashboardTarget } {
+ * the Dashboard (or Home, when it also posted there — #961), a watch alarm the Routines panel,
+ * anything else (reminders) Chat. */
+export function notificationOpens(meta: Record<string, unknown> | undefined): { kind: ComponentKind; target?: DashboardTarget; home?: true } {
   if (meta?.open === "routines") return { kind: "routines" };
+  if (meta?.open === "home") return { kind: "chat", home: true };
   if (meta?.open === "dashboard") {
     const target = parseDashboardTarget(meta.target);
     return target ? { kind: "dashboard", target } : { kind: "dashboard" };
@@ -281,6 +283,9 @@ export interface ShellIpcDeps extends ThemeHandlerDeps, UpdateHandlerDeps {
   getPendingPlan: () => RouteSuggestion | undefined;
   getPendingDroppedUrl: () => ChatDrop | undefined;
   getPendingDashboardTarget: () => DashboardTarget | undefined;
+  /** The chat window on today's Home (#961), and whether a mounting one should start there. */
+  openChatHome: () => void;
+  getPendingChatHome: () => boolean;
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
   getPendingInterruptedRunNotices: () => InterruptedRunNotice[] | undefined;
@@ -341,6 +346,7 @@ export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   ipcMain.handle(IPC.chatStageImage, (e, data: unknown, mime: unknown, mountId: unknown) => chats.stageImage(e.sender.id, mountId, data, mime));
   ipcMain.handle(IPC.getModel, () => host.getModel());
   ipcMain.on(IPC.dismissTask, (_e, id: unknown) => { if (typeof id === "string") host.dismissTask(id); });
+  ipcMain.handle(IPC.homePending, () => host.homePending());
 
   ipcMain.handle(IPC.listSkills, () => host.listSkills());
   ipcMain.handle(IPC.listProjects, () => host.listProjects());
@@ -580,6 +586,8 @@ export function registerShellIpc(electronIpc: IpcLike, deps: ShellIpcDeps): void
   ipcMain.handle(IPC.getPendingPlan, () => deps.getPendingPlan());
   ipcMain.handle(IPC.getPendingDroppedUrl, () => deps.getPendingDroppedUrl());
   ipcMain.handle(IPC.getPendingDashboardTarget, () => deps.getPendingDashboardTarget());
+  ipcMain.on(IPC.openChatHome, () => deps.openChatHome());
+  ipcMain.handle(IPC.getPendingChatHome, () => deps.getPendingChatHome());
   ipcMain.on(IPC.runInChat, (_e, payload: ChatPromptPayload) => deps.runInChat(payload));
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
   ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());

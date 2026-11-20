@@ -5,7 +5,7 @@ import type { LiveCli, RoutineHostStatus } from "@bean/core";
 
 export interface TaskJob {
   id: string;
-  kind: "delegate" | "routine" | "chat" | "bot" | "reminder" | "memory" | "live";
+  kind: "delegate" | "routine" | "chat" | "bot" | "reminder" | "memory" | "live" | "home";
   /** A desktop live session's agent — the pet wears its badge while the job runs. */
   agent?: LiveCli;
   name: string;
@@ -18,7 +18,8 @@ export interface TaskJob {
   step?: number;
   startedAt: number;
   state: "running" | "done" | "failed";
-  /** Repeats merged into one error bubble (see `error()`); absent means 1. */
+  /** Repeats merged into one error bubble (see `error()`); absent means 1. The Home bubble: its
+   * pending post count. */
   count?: number;
   /** A finished routine's run record `startedAt` — what its click opens in the Dashboard. The id is
    * reused per routine, so `start` and `finish` always set it rather than inheriting the last run's. */
@@ -83,7 +84,16 @@ export function createTaskStatus(
   };
 }
 
-type TaskStatus = ReturnType<typeof createTaskStatus>;
+export type TaskStatus = ReturnType<typeof createTaskStatus>;
+
+/** The avatar's Home bubble (#961): one job while posts are pending. Never "running" — no spinner,
+ * Stop, keep-awake or update block — and never lingers: only a recount to zero removes it. The local
+ * host and a remote shell (which polls `homePending`) both build it here. */
+export const HOME_JOB_ID = "home:posts";
+export const homeJob = (count: number, startedAt = Date.now()): TaskJob => ({
+  id: HOME_JOB_ID, kind: "home", name: "Home", line: `Bean has ${count} post${count === 1 ? "" : "s"} for you`,
+  detail: "", startedAt, state: "done", count,
+});
 
 /** A stopping sprout bubble's line — the renderer disables its Stop on it. */
 export const STOPPING_LINE = "Stopping…";

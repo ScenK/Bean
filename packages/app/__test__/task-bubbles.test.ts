@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, test, vi } from "vitest";
 import { HOLD_MS, createTaskBubbles, liveBadgeAgent } from "../src/renderer/task-bubbles.js";
-import type { TaskJob } from "@bean/host";
+import { HOME_JOB_ID, homeJob, type TaskJob } from "@bean/host";
 
 beforeAll(() => {
   vi.stubGlobal("ResizeObserver", class { observe(): void {} disconnect(): void {} });
@@ -116,5 +116,46 @@ describe("liveBadgeAgent", () => {
 
   it("ignores chatops live sessions (reported as delegate jobs)", () => {
     expect(liveBadgeAgent([job({ kind: "delegate", name: "proj · live" })])).toBeUndefined();
+  });
+});
+
+describe("Home bubble (#961)", () => {
+  const home = (count: number): TaskJob => homeJob(count, 0);
+  const setup = (jobs: TaskJob[]) => {
+    const box = document.createElement("div");
+    document.body.append(box);
+    const onDismiss = vi.fn();
+    const onOpenHome = vi.fn();
+    const b = createTaskBubbles(box, () => {}, onDismiss, () => {}, () => {}, () => {}, () => {}, onOpenHome);
+    b.update(jobs);
+    return { box, b, onDismiss, onOpenHome };
+  };
+
+  it("reads the count with no spinner or clock; a click opens Home and dismisses nothing", () => {
+    const { box, b, onDismiss, onOpenHome } = setup([home(3)]);
+    const el = box.querySelector<HTMLElement>(`.bean-bubble[data-id="${HOME_JOB_ID}"]`)!;
+    expect(el.textContent).toContain("Bean has 3 posts for you");
+    expect(el.querySelector(".bean-bubble-meta")!.textContent).toBe("");
+    expect(el.querySelector(".bean-bubble-icon--home")).not.toBeNull();
+    expect(b.running()).toBe(false);
+    el.click();
+    el.click();
+    expect(onOpenHome).toHaveBeenCalledTimes(2);
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("with four other jobs, newest-slot Home stays visible; folded, the pill counts its posts and keeps the failure count", () => {
+    const failed = job("err", { kind: "chat", state: "failed" });
+    const others = [failed, job("a", {}), job("b", {}), job("c", {})];
+    const shown = setup([...others, home(2)]);
+    expect(shown.box.querySelector(`.bean-bubble[data-id="${HOME_JOB_ID}"]`)).not.toBeNull();
+    expect(shown.box.querySelector(".bean-bubble-more")!.textContent).toBe("+1 more · 1 failed");
+    document.body.innerHTML = "";
+    const folded = setup([home(2), ...others]);
+    expect(folded.box.querySelector(`.bean-bubble[data-id="${HOME_JOB_ID}"]`)).toBeNull();
+    expect(folded.box.querySelector(".bean-bubble-more")!.textContent).toBe("+1 more · 2 posts");
+    document.body.innerHTML = "";
+    const both = setup([failed, home(1), job("a", {}), job("b", {}), job("c", {}), job("d", {})]);
+    expect(both.box.querySelector(".bean-bubble-more")!.textContent).toBe("+2 more · 1 failed · 1 post");
   });
 });

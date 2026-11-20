@@ -65,10 +65,12 @@ export interface RoutineHostDeps {
   onStatus?: (e: RoutineHostStatus) => void;
   /** Desktop notification sink; absent = `sinks.notify` is skipped. `target` names the run, so a
    * click can open it (other hosts ignore it). */
-  notify?: (msg: { title: string; body: string; target?: { routine: string; startedAt: string } }) => Promise<void>;
+  notify?: (msg: { title: string; body: string; target?: { routine: string; startedAt: string }; home?: true }) => Promise<void>;
   newId?: () => string;
   /** The scheduler lease: only its holder writes `sinks.home` posts. Absent = held. */
   holdsLease?: () => boolean;
+  /** A `sinks.home` post was just inserted (#961): the host recounts its bubble. */
+  onHomePost?: () => void;
 }
 
 export interface RoutineHost {
@@ -273,6 +275,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
     const holds = (): boolean => deps.holdsLease?.() ?? true;
     const home = routine.sinks.home !== undefined && holds() ? routine.sinks.home : undefined;
+    let posted = false;
     const chatBody = kept.length > 0 || brief ? await chatSinkBody(routine, result) : result.digest;
     if (home) {
       // chatopsVerbatim is chatops' rule: Home still gets the brief (a second call only then).
@@ -282,6 +285,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         insertHomePost(dbFile(dir), {
           sprout: routine.name, body: homeBody, ...(home.ttlMinutes !== undefined ? { ttlMinutes: home.ttlMinutes } : {}),
         }, newId);
+        posted = true;
+        deps.onHomePost?.();
       }
     }
     for (const { sink, channel } of kept) {
@@ -297,6 +302,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       await deps.notify({
         title: `Sprout: ${routine.name}`, body: result.digest,
         target: { routine: routine.name, startedAt: result.record.startedAt },
+        // Posted to Home too: the banner opens Home (#961), where the post waits, not the Dashboard.
+        ...(posted ? { home: true as const } : {}),
       });
     }
     return brief ? chatBody : undefined;

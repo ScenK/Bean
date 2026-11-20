@@ -4,6 +4,7 @@ import type { CloseTurn } from "@bean/host";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";
 import { cardRecord, runEndState, type CardRecordState } from "@bean/core/card-record";
+import { quoteFence } from "@bean/core/prompt";
 import { pdfPlaceholder, SPROUT_UNKNOWN } from "./chat-thread.js";
 
 // Agent mode's pure pieces — slash parsing, the shared history mapper and the live-event reducer —
@@ -105,6 +106,9 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
       const text = it.images?.length ? `${it.text}\n[image attached]` : it.text;
       return [{ role: "user", content: it.pdf ? `${text}\n${pdfPlaceholder(it.pdf.name)}` : text, source: it.source }];
     }
+    // A Home post: sprout output, never the user's words — a fenced user-role turn the model reads as
+    // data, not typed (no memory evidence), and left out of the close-time memory transcript.
+    if (it.kind === "post") return opts.memory ? [] : [{ role: "user", content: postTurn(it), source: "loopback" }];
     if (it.kind !== "reply") {
       const record = opts.memory ? undefined : cardItemRecord(it);
       return record ? [{ role: "assistant", content: record }] : [];
@@ -117,6 +121,10 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     return [{ role: "assistant", content: `[${AGENT_NAMES[it.agent]}] ${capped}` }];
   });
 }
+
+/** A Home post's history turn: code-built header, the sprout's text fenced as data. */
+export const postTurn = (p: { sprout: string; text: string }): string =>
+  `[sprout "${quoteFence(p.sprout).replace(/["\n]/g, " ")}" posted]: <<<\n${quoteFence(p.text)}\n>>>`;
 
 /** A sprout/todo card's `done`, split by how it ended (its settled outcome line). */
 function doneState(result: string | undefined, started: boolean): CardRecordState {

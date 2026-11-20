@@ -5,7 +5,7 @@ import { release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { buildSyncedChatHandlers } from "./synced-chats.js";
-import { buildHandshake, createHost, shellClientId, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
+import { buildHandshake, createHost, HOME_JOB_ID, homeJob, shellClientId, type ChatopsBot, type ChatopsState, type Host, type TaskJob } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
 import { BOT_ORDER, awaySurfaces, botLabel, chatopsMenuRows, setTrayAway, trayAwayOn } from "./chatops-tray-menu.js";
 import { installAvatarControls } from "./avatar-window.js";
@@ -23,7 +23,7 @@ import { registerIpc, registerShellIpc, buildPlanStore, buildDroppedUrlStore, bu
 import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import { registerNoCore } from "./channel-contract.js";
 import { addCore, coreCli, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs, type CoreChoice } from "./core-store.js";
-import { createRemoteCore, registerRemoteIpc, type RemoteCore } from "./remote-core.js";
+import { createRemoteCore, createRemoteHomePoll, registerRemoteIpc, type RemoteCore } from "./remote-core.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
   hasRequestedNotificationPermission, markNotificationPermissionRequested, notificationPermissionFile,
@@ -154,7 +154,7 @@ app.whenReady().then(async () => {
   const avatarControls = installAvatarControls(avatar, {
     log: (event, fields) => avatarLog(event, event === "bring-back" ? { ...fields, version: pkg.version, os: release() } : fields),
     // Only runs after a reload, long after the host exists.
-    replay: () => push.broadcast(IPC.taskStatus, host?.taskStatus.list() ?? []),
+    replay: () => broadcastJobs(),
     // Non-blocking: main keeps streaming delegates/sessions while this is open.
     fail: () => void dialog.showMessageBox({
       type: "warning",
@@ -176,6 +176,11 @@ app.whenReady().then(async () => {
   // Remote core: chat mount id → the window (webContents id) holding it (remote-core.ts).
   const remoteMounts = new Map<string, number>();
   let remoteIpc: ReturnType<typeof registerRemoteIpc> | undefined;
+  // Pending Home posts (#961): the local host's Home bubble, or a remote core's polled count — a remote
+  // shell's whole job list is that bubble (the core sends it no job feed).
+  let homeCount = 0;
+  let remoteJobs: TaskJob[] = [];
+  const broadcastJobs = (jobs: TaskJob[] = host?.taskStatus.list() ?? remoteJobs): void => push.broadcast(IPC.taskStatus, jobs);
   const push = createPush({
     clientOfMount: (mountId) => host?.handlers.chat.clientOf(mountId) ?? remoteMounts.get(mountId),
     client: (id) => webContents.fromId(id),
@@ -515,6 +520,15 @@ app.whenReady().then(async () => {
     }
     if (target) pendingDashboardTarget = target;
   };
+  // The chat window on today's Home (#961): pushed to an open window, pulled by one still loading.
+  let pendingHome = false;
+  const openChatHome = (): void => {
+    openComponent("chat");
+    const chat = componentWindows.get("chat");
+    if (!chat || chat.isDestroyed()) return; // no core: Add a core opened instead
+    if (chat.webContents.isLoading()) pendingHome = true;
+    sendToWindow(chat, IPC.chatShowHome, undefined);
+  };
   // A live/delegate bubble's click: bring up the chat window on the chat that owns the task. A
   // freshly opened window has no such mount (its tasks died with the old one), so it just opens.
   ipcMain.on(IPC.openChatMount, (_e, mountId: unknown) => {
@@ -574,7 +588,7 @@ app.whenReady().then(async () => {
       const n = new Notification({ title: msg.title ?? "Bean", body: msg.body });
       const opens = notificationOpens(msg.meta);
       const release = (): void => { shownNotifications.delete(n); };
-      n.on("click", () => { release(); openComponent(opens.kind, opens.target); });
+      n.on("click", () => { release(); if (opens.home) openChatHome(); else openComponent(opens.kind, opens.target); });
       n.on("close", release);
       // Electron drops a garbage-collected Notification's click handler, so a click hours later
       // would do nothing. ponytail: keep the newest 20 (`close` isn't guaranteed to fire); an
@@ -613,9 +627,10 @@ app.whenReady().then(async () => {
         builtinDir: projectDir,
         push: hostPush(push),
         onJobs: (jobs) => {
+          homeCount = jobs.find((j) => j.id === HOME_JOB_ID)?.count ?? 0;
           keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
           // Mid-reload the old document is gone; the finished reload replays the current list.
-          if (!avatarControls.reloading()) push.broadcast(IPC.taskStatus, jobs);
+          if (!avatarControls.reloading()) broadcastJobs(jobs);
         },
         notification: notificationTransport,
         isChatClient,
@@ -714,6 +729,8 @@ app.whenReady().then(async () => {
         },
         onStatus: (status) => {
           push.broadcast(IPC.coreStatusChanged, status);
+          if (status.kind === "remote" && status.state === "attached") homePoll.attached();
+          else homePoll.detached();
           if (status.kind === "remote" && status.state === "attached") {
             remoteIpc?.reattach();
             // A window that asked for the CLI catalog before the core was reachable refetches it now.
@@ -722,8 +739,17 @@ app.whenReady().then(async () => {
         },
         onWorking: (working) => keepAwake.setWorking(working),
       });
+      const homePoll = createRemoteHomePoll({
+        call: (op, args) => r.call(op, args),
+        onCount: (n) => {
+          homeCount = n;
+          remoteJobs = n > 0 ? [homeJob(n, remoteJobs[0]?.startedAt)] : [];
+          if (!avatarControls.reloading()) broadcastJobs(remoteJobs);
+        },
+      });
       remoteIpc = registerRemoteIpc(ipcMain, {
         core: r, mounts: remoteMounts,
+        onThreadSaved: () => homePoll.check(),
         // As the local save does: a CLI switched off in Settings leaves every picker.
         onConfigSaved: () => push.broadcast(IPC.cliAvailabilityChanged, undefined),
       });
@@ -770,7 +796,19 @@ app.whenReady().then(async () => {
       pendingUpdateStore,
       cleanupExtractedBundle: (extractedAppPath: string) => cleanupExtractedBundle(extractedAppPath),
       openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },
-      getCurrentTheme, setCurrentTheme, openComponent, proposeRun,
+      getCurrentTheme, setCurrentTheme, proposeRun,
+      // Opening chat (the avatar) lands on Home while posts are pending (#961); a drop still opens its chat.
+      // The count is read now, not the last published one: a post may still be on its way to the bubble.
+      openComponent: (kind, payload) => {
+        if (kind !== "chat" || payload !== undefined) return openComponent(kind, payload);
+        // Inside the chain: a throwing local read falls back to the last count, and chat still opens.
+        void Promise.resolve()
+          .then((): unknown => (host ? host.handlers.homePending() : remote ? remote.call("homePending", []) : 0))
+          .catch(() => homeCount)
+          .then((n) => (typeof n === "number" && n > 0 ? openChatHome() : openComponent("chat")));
+      },
+      openChatHome,
+      getPendingChatHome: () => { const h = pendingHome; pendingHome = false; return h; },
       getPendingPlan: planStore.get,
       getPendingDroppedUrl: droppedUrlStore.get,
       getPendingDashboardTarget: () => { const t = pendingDashboardTarget; pendingDashboardTarget = undefined; return t; },
@@ -809,6 +847,9 @@ app.whenReady().then(async () => {
 
     await loadAvatarWindow(avatar);
     avatarReady = true;
+    // Jobs the host raised while the avatar was still loading (the Home bubble at boot, #961) were
+    // pushed to nobody: hand it the current list once it listens.
+    broadcastJobs();
     if (localCore) {
       refreshAway();
       setInterval(refreshAway, 5_000);

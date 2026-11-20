@@ -318,11 +318,14 @@ describe("createRoutineHost", () => {
     });
 
     it("a home sink inserts one post holding the brief, even with no chat sink; no home sink inserts nothing", async () => {
-      const { h, calls, notify } = briefHost();
+      const onHomePost = vi.fn();
+      const { h, calls, notify } = briefHost({ onHomePost });
       const res = await h.runOneRoutine(routine([{ kind: "chat", instruction: "check" }]));
       await h.deliverDigest(routine([{ kind: "chat", instruction: "check" }], { sinks: { note: true, notify: true } }), res);
       expect(listPendingHomePosts(dbFile(dir))).toEqual([]);
       expect(calls).toHaveLength(0);
+      expect(onHomePost).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenLastCalledWith(expect.not.objectContaining({ home: true }));
       await h.deliverDigest(routine([{ kind: "chat", instruction: "check" }], { sinks: { note: true, notify: true, home: { ttlMinutes: 30 } } }), res);
       const posts = listPendingHomePosts(dbFile(dir));
       expect(posts).toHaveLength(1);
@@ -331,7 +334,9 @@ describe("createRoutineHost", () => {
       expect(calls).toHaveLength(1);
       expect(await posted()).toEqual([]);
       expect((await loadNotes(dbFile(dir)))[0]?.body).toBe(REPORT);
-      expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ body: REPORT }));
+      // #961: the host recounts its bubble, and the banner opens Home, where the post waits.
+      expect(onHomePost).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ body: REPORT, home: true }));
     });
 
     it("chatopsVerbatim keeps the digest for chatops, but Home still gets the brief", async () => {

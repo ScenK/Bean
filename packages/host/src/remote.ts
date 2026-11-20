@@ -159,6 +159,8 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
   liveInterrupt: op((h, c, sessionId, mountId, turns) => h.chat.liveInterrupt(c, mountId, sessionId, turns), str, str, num),
   liveResume: op((h, c, sessionId, mountId) => h.chat.liveResume(c, mountId, sessionId), str, str),
   getModel: op((h) => h.getModel()),
+  // A count only (#961): the remote shell's Home bubble and dot.
+  homePending: op((h) => h.homePending()),
   // Never the key itself: `apiKeySet` says whether one is saved.
   getConfig: op((h) => ({ ...h.getConfig(), openaiApiKey: "" })),
   saveConfig: op((h, _c, patch) => h.applyConfig(patch), configPatch),

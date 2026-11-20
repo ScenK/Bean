@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { attachStdio, buildHandshake, createAttachments, encodeFrame, frameReader, listenRemote, type HostHandlers } from "@bean/host";
 import type { CoreStatus } from "../src/channels.js";
 import { IPC } from "../src/channels.js";
-import { createRemoteCore, ORPHAN_START_MS, registerRemoteIpc, type SshChild } from "../src/remote-core.js";
+import { createRemoteCore, createRemoteHomePoll, HOME_POLL_MS, ORPHAN_START_MS, registerRemoteIpc, type SshChild } from "../src/remote-core.js";
 
 const SHELL_A = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 const SHELL_B = "4a2d3c5b-6e7f-4a81-9bac-1d2e3f4a5b6c";
@@ -407,5 +407,51 @@ describe("a chat sprout start whose reply a drop lost (#922)", () => {
       await expect(start).rejects.toThrow(/never confirmed/);
       core.detach();
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("remote Home count (#961)", () => {
+  it("only the latest read counts: an older reply that lands after a newer one is dropped", async () => {
+    const replies: Array<(n: unknown) => void> = [];
+    const call = vi.fn(() => new Promise<unknown>((r) => { replies.push(r); }));
+    const onCount = vi.fn();
+    const poll = createRemoteHomePoll({ call, onCount });
+    poll.attached(); // read 1
+    poll.check(); // read 2 (a post's nudge)
+    replies[1]!(0); // the drained count lands first
+    replies[0]!(1); // the stale count
+    await Promise.resolve();
+    expect(onCount.mock.calls).toEqual([[0]]);
+    poll.detached();
+  });
+
+  it("asks on attach and on a bounded poll while attached; a reply from an earlier connection is discarded", async () => {
+    vi.useFakeTimers();
+    try {
+      const replies: Array<(n: unknown) => void> = [];
+      const call = vi.fn(() => new Promise<unknown>((r) => { replies.push(r); }));
+      const onCount = vi.fn();
+      const poll = createRemoteHomePoll({ call, onCount });
+      poll.check(); // not attached: no call
+      expect(call).not.toHaveBeenCalled();
+      poll.attached();
+      expect(call).toHaveBeenCalledWith("homePending", []);
+      poll.detached();
+      poll.attached(); // a reconnect: the first reply is stale
+      replies[0]!(4);
+      replies[1]!(2);
+      await Promise.resolve();
+      expect(onCount.mock.calls).toEqual([[2]]);
+      vi.advanceTimersByTime(HOME_POLL_MS);
+      expect(call).toHaveBeenCalledTimes(3);
+      replies[2]!("lots"); // malformed: ignored
+      await Promise.resolve();
+      expect(onCount).toHaveBeenCalledTimes(1);
+      poll.detached();
+      vi.advanceTimersByTime(HOME_POLL_MS * 3);
+      expect(call).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -28,6 +28,7 @@ export const PUSH_ROUTES = {
   [IPC.awayChanged]: "broadcast",
   [IPC.componentDroppedUrl]: "window",
   [IPC.dashboardTarget]: "window",
+  [IPC.chatShowHome]: "window",
   [IPC.proposeRun]: "window",
   [IPC.chatPrompt]: "window",
   [IPC.interruptedRunNotice]: "window",

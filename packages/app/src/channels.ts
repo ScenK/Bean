@@ -125,6 +125,12 @@ export const IPC = {
   dismissTask: "bean:dismiss-task",
   openChatMount: "bean:open-chat-mount",
   showChatMount: "bean:show-chat-mount",
+  // Home (#961): the pending count (a remote shell polls it), and "open the chat window on Home"
+  // (bubble, avatar, notification) — pushed to an open window, pulled by one still mounting.
+  homePending: "bean:home-pending",
+  openChatHome: "bean:open-chat-home",
+  chatShowHome: "bean:chat-show-home",
+  getPendingChatHome: "bean:get-pending-chat-home",
   // avatar → main: the plan for a skill tile a URL was dropped on (shown via proposeRun).
   planDrop: "bean:plan-drop",
   getConfig: "bean:get-config",

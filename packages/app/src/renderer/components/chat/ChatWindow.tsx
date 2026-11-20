@@ -52,6 +52,9 @@ export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
   return { title: `Closing stops ${count} tasks in ${busy.length} chat${busy.length === 1 ? "" : "s"}.`, stop: "Stop & close" };
 }
 
+/** How often the window re-reads which thread is today's Home (#960). */
+export const HOME_POLL_MS = 10 * 60_000;
+
 /** The chat window: the history sidebar plus the chat it shows. A switch or New chat shows the pick
  * — the BrowserWindow itself stays. The chat left behind is evicted when idle, otherwise it stays
  * mounted, hidden, until it's idle at a later switch (#517); a pick already mounted is just shown.
@@ -59,7 +62,7 @@ export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
  * event's mount id (or to the shown chat), along with the one-time pulled data. */
 export function ChatWindow() {
   const sessions = useRef(new Map<string, ChatSessionApi>()).current;
-  const [mounts, setMounts] = useState<Array<{ mountId: string; restoreId?: string; prompt?: ChatPrompt }>>(() => [{ mountId: crypto.randomUUID() }]);
+  const [mounts, setMounts] = useState<Array<{ mountId: string; restoreId?: string; prompt?: ChatPrompt; incognito?: true }>>(() => [{ mountId: crypto.randomUUID() }]);
   const [shown, setShownState] = useState(() => mounts[0]!.mountId);
   const shownRef = useRef(shown);
   const setShown = (id: string): void => { shownRef.current = id; setShownState(id); };
@@ -101,6 +104,9 @@ export function ChatWindow() {
   // shown chat's switch-away save.
   const [threads, setThreads] = useState<DesktopChatListing[]>([]);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
+  const [homeActive, setHomeActive] = useState(false);
+  // Home posts waiting (#961): the avatar's Home bubble, from the job feed every window gets.
+  const [homePending, setHomePending] = useState(false);
   const [busy, setBusy] = useState(false);
   // Synced chats (Discord/Teams, SyncedChat.tsx): shown over the current desktop chat, which stays
   // mounted (hidden) underneath — picking a desktop row or New chat goes back through it.
@@ -179,6 +185,19 @@ export function ChatWindow() {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
     window.bean.chatThreadList().then((t) => setThreads(t ?? []), () => {});
+    // Today's Home is the core's call (its local date): re-read which listed thread it is, so yesterday's
+    // Home drops into history after midnight. Only the flag — the rows follow save acks.
+    const refreshHome = (): void => {
+      window.bean.chatThreadList().then((fresh) => {
+        const home = (fresh ?? []).find((t) => t.home)?.id;
+        setThreads((prev) => (prev.find((t) => t.home)?.id === home ? prev
+          : prev.map(({ home: _h, ...t }) => (t.id === home ? { ...t, home: true } : t))));
+      }, () => {});
+    };
+    window.addEventListener("focus", refreshHome);
+    // ponytail: a 10-minute poll, not a midnight timer — the shell doesn't know the core's local date
+    // (a remote core's zone may differ), so yesterday's row can stay hidden that long past midnight.
+    const homePoll = setInterval(refreshHome, HOME_POLL_MS);
     const refreshSynced = (): void => { window.bean.syncedChatList().then((c) => setSynced(c ?? []), () => {}); };
     refreshSynced();
     window.bean.chatopsStatus().then((st) => {
@@ -214,6 +233,11 @@ export function ChatWindow() {
     window.bean.onMemoryUpdated((saved, from) => onMemoryUpdated(saved, from));
     // Progress for a chat that's gone is dropped, never shown in another one.
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
+    window.bean.homePending().then((n) => setHomePending(n > 0), () => {});
+    window.bean.onTaskStatus((jobs) => setHomePending(jobs.some((j) => j.kind === "home")));
+    // The Home bubble, the avatar with posts pending, or a sprout banner: show today's Home.
+    window.bean.getPendingChatHome().then((h) => { if (h) openThreadRef.current("home"); }, () => {});
+    window.bean.onChatShowHome(() => openThreadRef.current("home"));
     // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.
     window.bean.onShowChatMount((mountId) => {
       // An idle owner may be evicted by now (a finished task's bubble outlives it): its thread reopens.
@@ -223,6 +247,10 @@ export function ChatWindow() {
       if (thread !== undefined) openThreadRef.current(thread);
       else if (mountId === shownRef.current) { setOverlayOpen(false); setSyncedShown(undefined); } // not saved yet, but on screen
     });
+    return () => {
+      window.removeEventListener("focus", refreshHome);
+      clearInterval(homePoll);
+    };
   }, []);
 
   // ChatPanel's prefill effect fires on a change to `droppedUrl` — flipping it back to
@@ -261,16 +289,24 @@ export function ChatWindow() {
   };
   // The shown chat left for `target` (kept mounted, or evicted). A pick another mounted chat already
   // holds is shown as is; otherwise it mounts fresh (restoring the thread). Then every other hidden
-  // chat that's idle now evicts itself.
+  // chat that's idle now evicts itself. `home` = today's Home (#960); `incognito` = a new chat that
+  // starts off the record (Home's incognito control — Home itself never goes off the record).
   const switchTo = (from: string, target: string, keep: boolean): void => {
     if (!keep) dropMount(from);
+    const fresh = target === "new" || target === "incognito";
     const prompt = target === "new" ? pendingPromptRef.current : undefined;
     pendingPromptRef.current = undefined;
-    const held = target === "new" ? undefined : [...sessions.values()].find((s) => s.mountId !== from && s.threadId() === target);
+    const held = fresh ? undefined
+      : [...sessions.values()].find((s) => s.mountId !== from && (target === "home" ? s.home() : s.threadId() === target));
     const next = held?.mountId ?? crypto.randomUUID();
-    if (!held) setMounts((prev) => [...prev, { mountId: next, ...(target === "new" ? { prompt } : { restoreId: target }) }]);
+    if (!held) {
+      setMounts((prev) => [...prev, {
+        mountId: next, ...(target === "new" ? { prompt } : target === "incognito" ? { incognito: true as const } : { restoreId: target }),
+      }]);
+    }
     setShown(next);
-    setActiveId(target === "new" ? undefined : target);
+    setActiveId(fresh ? undefined : target === "home" ? held?.threadId() : target);
+    setHomeActive(target === "home" || held?.home() === true);
     setBusy(false);
     setUnread((prev) => { const u = new Set(prev); u.delete(target); return u; });
     for (const s of sessions.values()) if (s.mountId !== next && s.mountId !== from) s.sweep();
@@ -404,6 +440,8 @@ export function ChatWindow() {
           threads={threads}
           synced={synced}
           activeId={syncedListing ? syncedShown : activeId}
+          homeActive={homeActive && !syncedListing}
+          homePending={homePending}
           busy={busy}
           working={new Set([...Object.values(working), ...(syncedWorking ? [syncedWorking] : [])])}
           unread={unread}
@@ -419,19 +457,25 @@ export function ChatWindow() {
           onRenameGroup={renameGroup}
         />
       ) : null}
-      {mounts.map(({ mountId, restoreId, prompt }) => (
+      {mounts.map(({ mountId, restoreId, prompt, incognito }) => (
         <ChatSession
           key={mountId}
           mountId={mountId}
           restoreId={restoreId}
           prompt={prompt}
+          startIncognito={incognito === true}
           sessions={sessions}
           hidden={mountId !== shown || syncedListing !== undefined}
+          homePending={homePending}
           clis={clis}
           runModels={runModels}
           prefillUrl={mountId === shown ? droppedUrl : undefined}
           setThreads={setThreads}
-          onActive={(id) => { if (mountId === shownRef.current) setActiveId(id); }}
+          onActive={(id, home) => {
+            if (mountId !== shownRef.current) return;
+            setActiveId(id);
+            setHomeActive(home === true);
+          }}
           onBusy={(b) => { if (mountId === shownRef.current) setBusy(b); }}
           onWorking={(thread) => setWorking(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}
           onLive={(thread) => setLive(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}
