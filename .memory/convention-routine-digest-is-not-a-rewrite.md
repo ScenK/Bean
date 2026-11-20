@@ -42,6 +42,13 @@ fidelity beats brevity; `config.json` `briefModel` (no Settings UI, boot-time) p
 Code text appended to the digest (the retro footer) rides on `RoutineRunResult.footer` so the
 brief re-appends it — a new code-owned digest line needs the same treatment.
 
+The brief also gets the sprout's `description` (#981) as its own fenced user-role message ("what
+this sprout is for") before the report, so a commitment's post follows up on the owner's ask —
+never in the system message ([safety-saved-text-never-system](safety-saved-text-never-system.md));
+no description = the prompt is unchanged. Its numbers and links count as known to the guard (the
+ask's date is the owner's own words). No new field: chat-drafted commitments write the ask and its
+date into `description`.
+
 A trigger can ask for that same chat body back (`trigger`/`runNow` with `{ brief: true }`, #918):
 `deliverDigest(…, brief)` computes it even when the sprout has no chat sink and returns it, and
 each `RunOutcome` carries its own run's body capped at `RUN_BRIEF_MAX`. It is the chat copy, not a
