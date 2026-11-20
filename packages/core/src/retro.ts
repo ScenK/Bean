@@ -185,7 +185,7 @@ export function retroSession(
 export function withProposalFooter(result: RoutineRunResult, pending: number): RoutineRunResult {
   if (pending <= 0) return result;
   const footer = `\n\n${pending} skill proposal${pending === 1 ? "" : "s"} waiting in Bean → Skills`;
-  return { ...result, digest: result.digest + footer, footer, record: { ...result.record, digest: result.record.digest + footer } };
+  return { ...result, digest: result.digest + footer, footer: (result.footer ?? "") + footer, record: { ...result.record, digest: result.record.digest + footer } };
 }
 
 interface Row {

@@ -4,6 +4,7 @@ import { ProposalCard } from "../../shared/ProposalCard.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { Theme } from "../../../channels.js";
 import type { Project, RouteSuggestion } from "@bean/core";
+import { CARD_LEAD } from "@bean/core/card-record";
 
 export function PlanWindow() {
   const [theme, setTheme] = useState<Theme>("hearth");
@@ -56,6 +57,8 @@ export function PlanWindow() {
           <span class="bean-plan-dot" />
           <span>Bean's plan</span>
         </div>
+        {/* Run skill / a URL dropped on a skill tile reach this card without converse() (#978). */}
+        {run && <div class="bean-plan-lead">{CARD_LEAD}</div>}
         {run ? (
           <ProposalCard
             run={run}

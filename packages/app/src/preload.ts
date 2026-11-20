@@ -9,7 +9,7 @@ import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveRes
 import type { TerminalEvent, TerminalStartResult } from "./terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
 import type { InterruptedRunNotice } from "./ipc.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, RoutineBuildView, DestinationView, NameRawResult, SendResult } from "@bean/host";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, RoutineBuildView, DestinationView, NameRawResult, SendResult, RoutineDraftResult } from "@bean/host";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "./synced-chats.js";
 import type { DeskContinueReply, DeskContinueRequest } from "./desk-continue.js";
 import type { AliasResult } from "@bean/core";
@@ -228,6 +228,7 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.destinationsNameRaw, surface, conversationId, alias),
   sendToDestination: (proposalId: string, optionId: string): Promise<SendResult> =>
     ipcRenderer.invoke(IPC.sendToDestination, proposalId, optionId),
+  routineDraftSave: (id: string): Promise<RoutineDraftResult> => ipcRenderer.invoke(IPC.routineDraftSave, id),
   chatopsStart: (bot: ChatopsBot): void => ipcRenderer.send(IPC.chatopsStart, bot),
   chatopsStop: (bot: ChatopsBot): void => ipcRenderer.send(IPC.chatopsStop, bot),
   onChatopsEvent: (cb: (e: ChatopsEvent) => void) =>

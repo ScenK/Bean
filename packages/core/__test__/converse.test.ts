@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "vitest";
-import { checkPdfAttachment, converse, gapMarkerLine, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
+import { checkPdfAttachment, converse, gapMarkerLine, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type RoutineAuthoring, type ToolSpec } from "../src/converse.js";
+import { CARD_LEAD } from "../src/card-record.js";
 import { cardRecord } from "../src/card-record.js";
 import { composePersonaPrompt, DEFAULT_PERSONA, type Persona } from "../src/persona.js";
 import { availableModels } from "../src/models.js";
@@ -453,6 +454,50 @@ test("leading system message is byte-stable across turns (prompt-cache prefix)",
     memories, deps, actions: [action], now: () => new Date("2026-07-04T22:31:07.000Z"),
   });
   expect(systems[1]).toBe(systems[0]);
+});
+
+test("a proposal with no sentence gets CARD_LEAD; one with a sentence keeps it; the rule rides in the system message (#978)", async () => {
+  let content = "";
+  const systems: string[] = [];
+  const toolSets: string[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages, tools }) => {
+      systems.push(messages[0]!.content);
+      toolSets.push(JSON.stringify(tools));
+      return { content, toolCalls: [{ name: "propose_note", args: { title: "T", body: "B" } }] };
+    },
+  };
+  const bare = await conv({ latestUserText: "save this", deps, noteAvailable: true });
+  expect(bare.reply).toBe(CARD_LEAD);
+  expect(bare.proposedNote).toMatchObject({ title: "T" });
+  content = "  ";
+  expect((await conv({ latestUserText: "again", deps, noteAvailable: true })).reply).toBe(CARD_LEAD);
+  content = "I'll draft that note for you.";
+  const spoken = await conv({
+    history: [{ role: "user", content: "save this" }, { role: "assistant", content: CARD_LEAD }],
+    latestUserText: "and once more", deps, noteAvailable: true,
+  });
+  expect(spoken.reply).toBe("I'll draft that note for you.");
+  expect(systems[0]).toContain("one short, natural sentence leading into the card");
+  expect(new Set(systems).size).toBe(1);
+  expect(new Set(toolSets).size).toBe(1);
+});
+
+test("chatops leaves propose_run (an in-line chat skill) out of the lead-in rule; desktop never does", async () => {
+  const systems: string[] = [];
+  const deps: ConverseDeps = { model: "m", chat: async ({ messages }) => { systems.push(messages[0]!.content); return { content: "ok", toolCalls: [] }; } };
+  await conv({ latestUserText: "hi", deps, runAvailable: false });
+  await conv({ latestUserText: "hi", deps, runAvailable: true });
+  await conv({ latestUserText: "hi", deps, runAvailable: false, liveSessionHost: "desktop" }); // a remote desktop client
+  expect(systems[0]).toContain("Whenever you call a propose_* tool other than propose_run, also write");
+  expect(systems[1]).toContain("Whenever you call a propose_* tool, also write");
+  expect(systems[2]).toContain("Whenever you call a propose_* tool, also write");
+});
+
+test("a plain reply with no proposal is never given the card lead", async () => {
+  const deps: ConverseDeps = { model: "m", chat: async () => ({ content: "", toolCalls: [] }) };
+  expect((await conv({ latestUserText: "hi", deps })).reply).toBe("");
 });
 
 test("dated recall leaves the leading system message byte-identical with and without memories", async () => {
@@ -1169,6 +1214,68 @@ describe("propose_routine", () => {
   it("rejects unparseable JSON back to the model", async () => {
     const res = await conv({ latestUserText: "x", deps: call("{not json"), routineAuthoring: authoring });
     expect(res.proposedRoutine).toBeUndefined();
+  });
+
+  describe("watch commitments (#982)", () => {
+    const desktop = { transport: "desktop" as const, existing: [], recipients: [] };
+    const check = { kind: "chat", id: "check", instruction: "Is the album out?",
+      route: { paths: [{ when: "found", goto: "done" }, { when: "nothing", goto: "quiet" }] } };
+    const watch = {
+      name: "album-watch", description: '"tell me when the album is out" — asked Nov 20, 2026', enabled: true,
+      watch: { kind: "feed", url: "https://example.com/feed.xml" }, todoDriven: true, steps: [check], sinks: { home: {} },
+    };
+    const toolText = async (a: RoutineAuthoring): Promise<string> => {
+      let text = "";
+      await conv({ latestUserText: "x", routineAuthoring: a, deps: { model: "m", chat: async ({ tools }) => {
+        text = (tools ?? []).find((t) => t.name === "propose_routine")?.description ?? "";
+        return { content: "", toolCalls: [] };
+      } } });
+      return text;
+    };
+
+    it("teaches watches, web search, until and the quiet/done endings; Home only on the desktop", async () => {
+      const [desk, discord] = [await toolText(desktop), await toolText(authoring)];
+      for (const t of [desk, discord]) {
+        expect(t).toContain('"watch": {"kind": "feed"');
+        expect(t).toContain('"webSearch"?: true');
+        expect(t).toContain('"until"?: "YYYY-MM-DD"');
+        expect(t).toContain('{"when": "found", "goto": "done"}, {"when": "nothing", "goto": "quiet"}');
+        expect(t).toContain("stops after 30 days");
+        expect(t).not.toContain("ttlMinutes");
+        expect(t).not.toMatch(/"kind": "command"/);
+      }
+      expect(desk).toContain('"home"?: {}');
+      expect(discord).not.toContain("home");
+    });
+
+    it("lists live names and the archived set; the spec bytes change only when those do", async () => {
+      const a = { ...desktop, existing: ["a", "b", "old"], listed: { live: ["a", "b"], archived: ["old"] } };
+      const text = await toolText(a);
+      expect(text).toContain("Existing sprouts: a, b. ");
+      expect(text).toContain("Archived sprouts (reusing a name replaces it): old. ");
+      expect(await toolText({ ...a })).toBe(text);
+      expect(await toolText({ ...a, listed: { live: ["a", "b"], archived: [] } })).not.toBe(text);
+    });
+
+    it("dates a commitment with no end 30 days out; a plain schedule keeps running", async () => {
+      const now = () => new Date(2026, 10, 20, 15, 0);
+      const res = await conv({ latestUserText: "x", now, deps: call(JSON.stringify(watch)), routineAuthoring: desktop });
+      expect(res.proposedRoutine).toEqual({ routine: { ...watch, until: "2026-12-20" }, updating: false });
+      const named = await conv({ latestUserText: "x", now, deps: call(JSON.stringify({ ...watch, until: "2026-12-01" })), routineAuthoring: desktop });
+      expect(named.proposedRoutine?.routine.until).toBe("2026-12-01");
+      const plain = { ...routine, sinks: { home: {} } };
+      expect((await conv({ latestUserText: "x", now, deps: call(JSON.stringify(plain)), routineAuthoring: desktop })).proposedRoutine?.routine.until).toBeUndefined();
+    });
+
+    it("on the desktop, DMs only the owner or a named destination — never an id; command watches stay refused", async () => {
+      const problem = async (draft: object) =>
+        (await conv({ latestUserText: "x", deps: call(JSON.stringify(draft)), routineAuthoring: desktop })).proposedRoutine?.problem;
+      expect(await problem({ ...watch, sinks: { home: {}, chatops: [{ transport: "teams" }, { transport: "discord" }] } })).toBeUndefined();
+      expect(await problem({ ...watch, sinks: { chatops: [{ transport: "discord", user: "mia" }] } })).toMatch(/post to Home or DM you/);
+      expect(await problem({ ...watch, sinks: { chatops: [{ transport: "teams", channel: "19:x" }] } })).toMatch(/post to Home or DM you/);
+      expect(await problem({ ...watch, sinks: { chatops: [{ transport: "teams", alias: "nobody" }] } })).toMatch(/isn't known/);
+      expect(await problem({ ...watch, watch: { kind: "command", command: "true" } })).toMatch(/command watches/);
+    });
   });
 });
 

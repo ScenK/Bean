@@ -12,13 +12,13 @@ import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { makeBackgroundWorkTool } from "../background-work.js";
 import type { Dispatch } from "../dispatch-store.js";
-import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
+import { chatRoutineProblem, draftNames, hasEnded, isArchived, isExpired, todoRunHint, untilLabel, type Routine } from "../routine-store.js";
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
 import type { SproutTriggerClient } from "./sprout-bridge.js";
 import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
-import { cardRecord, type CardRecordKind, type CardRecordState } from "../card-record.js";
+import { CARD_LEAD, cardRecord, type CardRecordKind, type CardRecordState } from "../card-record.js";
 import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
 import type { SendProposalStore } from "./send-proposals.js";
 import { cancelReminder } from "../reminders.js";
@@ -905,6 +905,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if ("refusal" in found) return found.refusal;
     const { run } = found;
     if (!liveClis().includes(run.cli)) return `${run.cli} isn't installed on this Mac any more.`;
+    await fx.post(CARD_LEAD); // no converse() in this path, so no sentence of the model's (#978)
     await postLiveSessionProposal({
       // No opening turn: the session opens on the channel's first message.
       projectPath: run.projectPath, instruction: "", steering: "restricted",
@@ -1347,7 +1348,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
   async function runRoutineCommand(c: RoutineCommand): Promise<string> {
     const r = deps.routines!;
-    const all = await r.load();
+    const nowT = new Date();
+    // Archived sprouts read as gone here (#980); restoring one is a desktop job.
+    const all = (await r.load()).filter((x) => !isArchived(x, nowT));
     if (c.kind === "list") {
       const [projects, skills] = await Promise.all([deps.loadProjects(), deps.loadSkills()]);
       return routineListText(all, projects, new Set(skills.map((s) => s.name)), undefined, r.sprouts !== undefined);
@@ -1359,8 +1362,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const on = c.kind === "enable";
     if (target.enabled === on) return `"${target.name}" is already ${on ? "on" : "off"}.`;
     const next = { ...target, enabled: on };
+    // Past its end it would only expire again on the next tick: a later end is set on the desktop.
+    if (on && isExpired(next, nowT)) return `"${target.name}" ended ${untilLabel(target.until)} — give it a later end date on the desktop to turn it back on.`;
     await r.save(next);
-    return on ? `Turned "${target.name}" on. ${todoRunHint(next, new Date())}`.trim() : `Turned "${target.name}" off.`;
+    return on ? `Turned "${target.name}" on. ${todoRunHint(next, nowT)}`.trim() : `Turned "${target.name}" off.`;
   }
 
   async function handleRoutineAction(
@@ -1428,6 +1433,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fail(problem);
       return;
     }
+    if (hasEnded(routine, new Date())) {
+      await fail("its end date has passed — ask me again with a later one");
+      return;
+    }
     // An admin's draft never replaces a routine: case-insensitive check here (the filesystem may
     // be case-sensitive), then a create-only write for the race.
     const createOnly = !isOwner || !pending.byOwner;
@@ -1435,12 +1444,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fail(nameTaken(name));
       return;
     }
+    const saved = createOnly ? undefined : (await r.load()).find((x) => x.name === name);
+    if (!createOnly && (saved === undefined ? undefined : JSON.stringify(saved)) !== pending.prior) {
+      await fail(`"${name}" changed since this card — ask me again`);
+      return;
+    }
     try {
       if (createOnly) await r.create(routine);
       else {
         // Replacing a sprout keeps its display-only "Listed under", and its Home sink is always the
-        // saved one: Home is set only in the desktop's sprout editor, whatever the draft carries.
-        const saved = (await r.load()).find((x) => x.name === name);
+        // saved one: Home is set only on the desktop, whatever the draft carries.
         const next = saved?.projects && routine.projects === undefined ? { ...routine, projects: saved.projects } : routine;
         const { home: _draftHome, ...sinks } = next.sinks;
         await r.save({ ...next, sinks: saved?.sinks.home ? { ...sinks, home: saved.sinks.home } : sinks });
@@ -1534,6 +1547,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (!first) return "No projects are configured — add one first.";
     // Project/model are picked on the card; to the last started session's project, else the first (user can switch).
     const live: ProposedLiveSession = { projectPath: first.path, instruction: text };
+    await fx.post(CARD_LEAD); // no converse() in this path, so no sentence of the model's (#978)
     await postLiveSessionProposal(live, conversationId, proposedBy, fx, true);
     return "Proposed a live session — pick the project/model, edit the prompt if you want, then Start.";
   }
@@ -2060,11 +2074,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ]);
         // Owner only: who a routine may DM, and the existing names a draft would replace. A channel
         // sink targets the channel, never the session thread (threads archive).
+        const draftable = deps.routines && can(role, "routineDrafts") && isOwner ? draftNames(await deps.routines.load(), new Date()) : undefined;
         const routineAuthoring = deps.routines && can(role, "routineDrafts")
           ? {
               transport: deps.routines.transport,
               // Admins draft new routines only, so they never see (or target) the catalog.
-              existing: isOwner ? (await deps.routines.load()).map((r) => r.name) : [],
+              existing: draftable?.existing ?? [],
+              ...(draftable ? { listed: { live: draftable.live, archived: draftable.archived } } : {}),
               recipients: await deps.routines.recipients(),
               ...(msg.direct || !msg.scopeId ? {} : { channelId: msg.scopeId }),
               cliModels: deps.cliModels,
@@ -2073,7 +2089,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           : undefined;
         // Owner only, and only where this process runs the scheduler (headless).
         const sprouts = can(role, "runRoutines") ? deps.routines?.sprouts : undefined;
-        const sproutRoutines = sprouts && deps.routines ? await deps.routines.load() : [];
+        const sproutRoutines = sprouts && deps.routines ? (await deps.routines.load()).filter((r) => !isArchived(r, new Date())) : [];
         const detected = deps.detectClis();
         let history = deps.conversations.history(msg.conversationId);
         if (fx.fetchRecent) {
@@ -2199,10 +2215,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           role: "user",
           content: speakerLine(msg.fromName, msg.images?.length ? `${msg.text}\n[image attached]` : msg.text),
         });
-        if (result.reply) {
-          deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
+        // A chat-target run answers in-line here, with no card for converse()'s lead-in to introduce.
+        const reply = result.proposedRun?.target === "chat" && result.reply === CARD_LEAD ? "" : result.reply;
+        if (reply) {
+          deps.conversations.append(msg.conversationId, { role: "assistant", content: reply });
           // The owner talking to Bean while away here: a reminder, kept out of history.
-          await fx.reply(isOwner && deps.away?.get().on ? `${result.reply}\n\n${awayReminder(deps.away)}` : result.reply);
+          await fx.reply(isOwner && deps.away?.get().on ? `${reply}\n\n${awayReminder(deps.away)}` : reply);
         }
         // Drains (splices) the collector so a later pass — the chat-target follow-up below
         // shares this same tool instance — never re-sends already-delivered images.
@@ -2247,7 +2265,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             // except a send card, under the same owner-DM gate as the first hop.
             const sendCard = sendHere ? followup.proposedSend : undefined;
             // A pure tool-use second hop leaves reply empty; never answer with silence.
-            const text = followup.reply.trim() ||
+            // An ignored nested card's lead-in is no answer either.
+            const text = (sendCard || followup.reply !== CARD_LEAD ? followup.reply.trim() : "") ||
               (sendCard ? "" : `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`);
             if (text) {
               deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
@@ -2373,13 +2392,22 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           if (!(await permitted("routineDrafts", "set up sprouts"))) return;
           if (!deps.routines || !deps.cards.routineProposalCard) return;
           let proposal = result.proposedRoutine;
+          // Home is the desktop's: a chat draft never carries a Home sink, whoever drafts it (the
+          // owner's replacement keeps the saved one at Save).
+          const draftSinks = proposal.routine.sinks as unknown;
+          if (typeof draftSinks === "object" && draftSinks !== null && "home" in draftSinks) {
+            const { home: _home, ...sinks } = draftSinks as Routine["sinks"];
+            proposal = { ...proposal, routine: { ...proposal.routine, sinks } };
+          }
           if (!isOwner && !proposal.problem) {
             // An admin's draft starts off, and a name clash is shown up front ("Can't save").
             const name = String(proposal.routine.name);
             const taken = (await deps.routines.load()).some((x) => x.name.toLowerCase() === name.toLowerCase());
             proposal = { ...proposal, routine: { ...proposal.routine, enabled: false }, ...(taken ? { problem: nameTaken(name) } : {}) };
           }
+          const target = isOwner ? (await deps.routines.load()).find((x) => x.name === String(proposal.routine.name)) : undefined;
           const pending = deps.routines.proposals.add({
+            ...(target ? { prior: JSON.stringify(target) } : {}),
             proposal, conversationId: msg.conversationId, proposedBy: msg.fromName,
             proposedById: msg.fromId, byOwner: isOwner, ...(msg.channelName ? { where: msg.channelName } : {}),
             ...(routineAuthoring?.channelId ? { channelId: routineAuthoring.channelId } : {}),

@@ -22,6 +22,18 @@ test("routine handlers merge in-memory running state into the state view", async
   expect(state.r?.queue).toBeUndefined(); // not todo-driven
 });
 
+test("routine state carries the core's ended/archived view; a live sprout has none (#983)", async () => {
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [routine, { ...routine, name: "old", enabled: false, until: "2020-01-02" }],
+    saveRoutine: vi.fn(async () => {}), deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0,
+    runNow: async () => ({ started: true }),
+  });
+  const state = await h.state();
+  expect(state.old?.ended).toEqual({ archived: true, text: "Nothing by Jan 2" });
+  expect(state.r?.ended).toBeUndefined();
+});
+
 test("routine state fills the queue for every todo-driven sprout, cron included", async () => {
   const queueCounts = vi.fn(async () => ({ pending: 2, running: 3 }));
   const h = buildRoutineHandlers({
@@ -79,4 +91,47 @@ it("buildRoutineHandlers.remove cascades to onRoutineDeleted", async () => {
   });
   await h.remove("nightly");
   expect(deleted).toEqual(["nightly"]);
+});
+
+test("save refuses turning on a sprout whose end has passed; an already-on one still saves (#980)", async () => {
+  const saveRoutine = vi.fn(async () => {});
+  const rebase = vi.fn(async () => {});
+  const ended: Routine = { ...routine, enabled: false, until: "2020-01-01" };
+  const h = (prior: Routine) => buildRoutineHandlers({
+    loadRoutines: async () => [prior], saveRoutine, deleteRoutine: vi.fn(async () => {}), rebase,
+    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0, runNow: async () => ({ started: true }),
+  });
+  await expect(h(ended).save({ ...ended, enabled: true })).rejects.toThrow(/later end date/);
+  expect(saveRoutine).not.toHaveBeenCalled();
+  await h(ended).save({ ...ended, enabled: true, until: "2999-01-01" });
+  expect(rebase).toHaveBeenCalledWith(ended.name); // restored: its schedule restarts from now
+  await h({ ...ended, enabled: true }).save({ ...ended, enabled: true, description: "edited" });
+  expect(saveRoutine).toHaveBeenCalledTimes(2);
+  expect(rebase).toHaveBeenCalledTimes(1);
+  // #983: a later end saved while still off would let the next Enable skip the restore (no reseed).
+  const { until: _u, ...cleared } = ended;
+  await expect(h(ended).save(cleared)).rejects.toThrow(/Restore it/);
+  await expect(h(ended).save({ ...ended, until: "2999-01-01" })).rejects.toThrow(/Restore it/);
+  await h(ended).save({ ...ended, description: "still ended" }); // other edits while off still save
+  expect(saveRoutine).toHaveBeenCalledTimes(3);
+});
+
+test("turning an ended watch back on with a later until goes through enableWatch (re-seeded from now), outside the lane", async () => {
+  const saveRoutine = vi.fn(async () => {});
+  let inLane = false;
+  const enableWatch = vi.fn(async () => { expect(inLane).toBe(false); return { count: 0 }; });
+  const withSprout = async <T,>(_n: string, fn: () => Promise<T>): Promise<T> => { inLane = true; try { return await fn(); } finally { inLane = false; } };
+  const ended: Routine = { name: "w", enabled: false, until: "2020-01-01", watch: { kind: "feed", url: "https://f" }, todoDriven: true, steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [ended], saveRoutine, deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0, runNow: async () => ({ started: true }),
+    watch: { enableWatch } as never, withSprout,
+  });
+  await h.save({ ...ended, enabled: true, until: "2999-01-01" });
+  // Still ended until enableWatch's check succeeds and commits the new end with `enabled`.
+  expect(saveRoutine).toHaveBeenCalledWith({ ...ended, enabled: false });
+  expect(enableWatch).toHaveBeenCalledWith("w", false, "2999-01-01");
+  const { until: _, ...open } = ended;
+  await h.save({ ...open, enabled: true });
+  expect(enableWatch).toHaveBeenLastCalledWith("w", false, null); // the end date cleared
 });
