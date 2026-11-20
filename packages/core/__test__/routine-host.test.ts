@@ -334,6 +334,31 @@ describe("createRoutineHost", () => {
       expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ body: REPORT }));
     });
 
+    it("chatopsVerbatim keeps the digest for chatops, but Home still gets the brief", async () => {
+      const { h, calls } = briefHost();
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { chatops: [{ transport: "discord" }], chatopsVerbatim: true, home: {} } });
+      await h.deliverDigest(r, await h.runOneRoutine(r));
+      expect((await posted()).map((m) => m.body)).toEqual([REPORT]);
+      expect(listPendingHomePosts(dbFile(dir)).map((p) => p.body)).toEqual([BRIEF]);
+      expect(calls).toHaveLength(1);
+    });
+
+    it("a lease lost while the brief is written inserts no home post", async () => {
+      let held = true;
+      const { h } = briefHost({ holdsLease: () => held });
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { home: {} } });
+      const res = await h.runOneRoutine(r);
+      const { h: losing } = briefHost({
+        holdsLease: () => held,
+        converse: async () => { held = false; return { content: BRIEF, toolCalls: [] }; },
+      });
+      await losing.deliverDigest(r, res);
+      expect(listPendingHomePosts(dbFile(dir))).toEqual([]);
+      held = true;
+      await h.deliverDigest(r, res);
+      expect(listPendingHomePosts(dbFile(dir))).toHaveLength(1);
+    });
+
     it("a host without the scheduler lease writes no home post", async () => {
       const { h } = briefHost({ holdsLease: () => false });
       const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { home: {} } });
