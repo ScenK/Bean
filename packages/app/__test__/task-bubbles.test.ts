@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, test, vi } from "vitest";
-import { createTaskBubbles, liveBadgeAgent } from "../src/renderer/task-bubbles.js";
+import { HOLD_MS, createTaskBubbles, liveBadgeAgent } from "../src/renderer/task-bubbles.js";
 import type { TaskJob } from "@bean/host";
 
 beforeAll(() => {
@@ -54,6 +54,56 @@ test("Stop names every live run of the sprout, disables while stopping, and keep
   expect(stopping.disabled).toBe(true);
   expect(stopping.textContent).toBe("Stopping…");
   expect((document.activeElement as HTMLElement).dataset.id).toBe("routine:r:1");
+});
+
+test("the stack holds still under the pointer: a vanished memory bubble's click still opens Persona", () => {
+  const box = document.createElement("div");
+  document.body.append(box);
+  const onMemory = vi.fn(), onChat = vi.fn(), onDismiss = vi.fn();
+  const b = createTaskBubbles(box, () => {}, onDismiss, onMemory, () => {}, onChat);
+  const delegate = job("delegate:1", { kind: "delegate", mountId: "m1", steps: undefined });
+  const memory = job("memory:batch", { kind: "memory", state: "done", line: "🧠 Remembered 2 · click to review", steps: undefined });
+  b.update([delegate, memory]);
+  const stack = box.querySelector(".bean-bubble-stack")!;
+  const ids = (): string[] => [...box.querySelectorAll<HTMLElement>(".bean-bubble")].map((n) => n.dataset.id!);
+  stack.dispatchEvent(new Event("pointerenter"));
+  b.update([{ ...delegate, line: "new output" }]); // the memory bubble's linger ran out
+  expect(ids()).toEqual(["delegate:1", "memory:batch"]);
+  box.querySelector<HTMLElement>('.bean-bubble[data-id="memory:batch"]')!.click();
+  expect(onMemory).toHaveBeenCalledOnce();
+  expect(onChat).not.toHaveBeenCalled();
+  expect(onDismiss).toHaveBeenCalledWith("memory:batch");
+  expect(ids()).toEqual(["delegate:1"]); // the click catches up at once
+  // Same bubbles, new text: still renders under the pointer; a new bubble waits for pointerleave.
+  b.update([{ ...delegate, line: "more output" }]);
+  expect(box.textContent).toContain("more output");
+  b.update([{ ...delegate, line: "more output" }, memory]);
+  expect(ids()).toEqual(["delegate:1"]);
+  stack.dispatchEvent(new Event("pointerleave"));
+  expect(ids()).toEqual(["delegate:1", "memory:batch"]);
+});
+
+test("a frozen stack's Stop counts runs that started under the pointer and still shows Stopping", () => {
+  const { box, b, open } = mount([job("routine:r:1", { routine: "r" })]);
+  open("routine:r:1");
+  box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointerenter"));
+  b.update([job("routine:r:1", { routine: "r" }), job("routine:r:2", { routine: "r" })]);
+  expect(box.querySelectorAll(".bean-bubble")).toHaveLength(1); // held
+  expect(box.querySelector(".bean-bubble-stop")!.textContent).toBe("Stop all 2 runs");
+  b.update([job("routine:r:1", { routine: "r", line: "Stopping…" }), job("routine:r:2", { routine: "r", line: "Stopping…" })]);
+  expect(box.querySelector<HTMLButtonElement>(".bean-bubble-stop")!.disabled).toBe(true);
+});
+
+test("a held bubble that's gone stops reading as running, and a still pointer releases the hold", () => {
+  vi.useFakeTimers();
+  try {
+    const { box, b } = mount([job("chat:1", { kind: "chat", line: "Thinking…", steps: undefined })]);
+    box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointerenter"));
+    b.update([]); // the reply arrived: main drops the turn's bubble
+    expect(box.querySelector(".bean-bubble-meta")!.textContent).toBe("done");
+    vi.advanceTimersByTime(HOLD_MS); // e.g. the avatar hid without a pointerleave
+    expect(box.querySelectorAll(".bean-bubble")).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
 });
 
 describe("liveBadgeAgent", () => {

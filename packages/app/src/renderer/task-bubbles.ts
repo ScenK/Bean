@@ -10,6 +10,10 @@ import type { DashboardTarget } from "../channels.js";
 // session opens that chat (dismissing it once finished) — the chat shows its detail and output.
 // A running sprout's expanded detail carries the one control: Stop. It sits beside the bubble's
 // <button> (a button can't nest one), overlaid on room reserved in the detail.
+// While the pointer is over the stack, a change that adds, removes or reorders bubbles waits until
+// it leaves: a 10s-lingering bubble vanishing under the cursor would slide its neighbour into the
+// spot, and the click would land there (a memory bubble's click opening a delegate's chat). The
+// shown bubbles' content and the Stop count still follow the latest list, so Stop never undersells.
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
@@ -101,6 +105,8 @@ function stopLabel(j: TaskJob, jobs: readonly TaskJob[]): string | undefined {
 // A busy Discord channel can stack many turns at once; past this, the oldest fold into a
 // "+N more" pill (which says how many of those failed, so a sticky error never hides silently).
 export const MAX_VISIBLE = 4;
+/** How long the stack stays held after the pointer's last move over it. */
+export const HOLD_MS = 10_000;
 
 export function createTaskBubbles(
   container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void, onOpenMemory: () => void = () => {},
@@ -108,7 +114,9 @@ export function createTaskBubbles(
   onOpenChat: (mountId: string) => void = () => {},
   onStop: (routine: string) => void = () => {},
 ) {
-  let jobs: TaskJob[] = [];
+  let jobs: TaskJob[] = []; // what's rendered
+  let latest: TaskJob[] = []; // what main last sent
+  let hovered = false;
   let openId: string | undefined;
   let showAll = false;
   // Pop-in plays once per job — every streamed output line re-renders the stack.
@@ -137,7 +145,7 @@ export function createTaskBubbles(
     if (openId && !shown.some((j) => j.id === openId)) openId = undefined;
     const html = shown.map((j, i) =>
       bubble(j, j.id === openId, openId !== undefined && j.id !== openId, i === shown.length - 1, !seen.has(j.id), now,
-        j.id === openId ? stopLabel(j, jobs) : undefined));
+        j.id === openId ? stopLabel(j, latest) : undefined));
     const failed = hidden.filter((j) => j.state === "failed").length;
     // Oldest end of the stack (farthest from the bean), so it lands there in either direction.
     if (hidden.length) html.unshift(`<button type="button" class="bean-bubble-more" aria-expanded="false">+${hidden.length} more${failed ? ` · ${failed} failed` : ""}</button>`);
@@ -154,6 +162,33 @@ export function createTaskBubbles(
     }
   };
 
+  const sameIds = (a: readonly TaskJob[], b: readonly TaskJob[]): boolean =>
+    a.length === b.length && a.every((j, i) => j.id === b[i]?.id);
+  // A click is the user acting on what they see: drop the dismissed bubble and catch up at once.
+  const dismiss = (id: string): void => {
+    onDismiss(id);
+    latest = latest.filter((j) => j.id !== id);
+    jobs = latest;
+  };
+  let holdTimer: ReturnType<typeof setTimeout> | undefined;
+  const release = (): void => {
+    clearTimeout(holdTimer);
+    hovered = false;
+    if (jobs === latest) return;
+    jobs = latest;
+    render();
+  };
+  // Hiding the avatar (Cmd+W) doesn't always send pointerleave, and a stuck hold would hide new
+  // bubbles — so a still pointer releases it too. ponytail: fixed HOLD_MS, a hide IPC if 10s bites.
+  const hold = (): void => {
+    hovered = true;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(release, HOLD_MS);
+  };
+  stack.addEventListener("pointerenter", hold);
+  stack.addEventListener("pointermove", hold);
+  stack.addEventListener("pointerleave", release);
+
   stack.addEventListener("click", (e) => {
     const stop = (e.target as HTMLElement).closest<HTMLButtonElement>(".bean-bubble-stop");
     if (stop) {
@@ -169,21 +204,23 @@ export function createTaskBubbles(
     if (!id) return;
     const job = jobs.find((j) => j.id === id);
     if (job?.kind === "memory") {
-      onDismiss(id);
+      dismiss(id);
+      render();
       onOpenMemory();
       return;
     }
     if (job && opensRun(job)) {
-      onDismiss(id);
+      dismiss(id);
+      render();
       onOpenRun(job.runStartedAt ? { routine: job.name, startedAt: job.runStartedAt } : { routine: job.name });
       return;
     }
     if (job?.mountId && opensChat(job)) {
-      if (job.state !== "running") onDismiss(id); // finished: the chat holds the result now
+      if (job.state !== "running") { dismiss(id); render(); } // finished: the chat holds the result now
       onOpenChat(job.mountId);
       return;
     }
-    if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") onDismiss(id);
+    if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") dismiss(id);
     openId = openId === id ? undefined : id;
     render();
   });
@@ -203,10 +240,15 @@ export function createTaskBubbles(
 
   return {
     update(next: TaskJob[]): void {
-      jobs = next;
+      latest = next;
+      if (hovered && !sameIds(jobs, next)) {
+        const byId = new Map(next.map((j) => [j.id, j]));
+        // Same bubbles in the same spots, fresh content; one that's gone stops reading as running.
+        jobs = jobs.map((j) => byId.get(j.id) ?? (j.state === "running" ? { ...j, state: "done" as const } : j));
+      } else jobs = next;
       render();
     },
-    running: (): boolean => jobs.some((j) => j.state === "running"),
+    running: (): boolean => latest.some((j) => j.state === "running"),
     /** From main's layout: which side of the bean, and how tall the stack may get before it scrolls. */
     setLayout(nextBelow: boolean, stackMax: number | undefined): void {
       stack.style.maxHeight = stackMax ? `${stackMax}px` : "";

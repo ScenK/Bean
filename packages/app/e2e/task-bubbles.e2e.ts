@@ -17,10 +17,15 @@ test("status bubbles grow the avatar around a fixed bean and collapse when jobs 
       const r = await page.locator("#bean-orb").boundingBox();
       return { x: b.x + r!.x + r!.width / 2, y: b.y + r!.y + r!.height / 2 };
     };
-    const push = (jobs: unknown[]) => app.evaluate(({ BrowserWindow }, jobs) => {
-      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!
-        .webContents.send("bean:task-status", jobs);
-    }, jobs);
+    // The stack holds new/removed bubbles while hovered, and a click leaves the pointer on it, so
+    // each push steps the pointer off first (as a user moving on would).
+    const push = async (jobs: unknown[]) => {
+      await page.locator(".bean-bubble-stack").dispatchEvent("pointerleave");
+      await app.evaluate(({ BrowserWindow }, jobs) => {
+        BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!
+          .webContents.send("bean:task-status", jobs);
+      }, jobs);
+    };
 
     const idle = await avatarBounds();
     const before = await beanCenter();
@@ -111,10 +116,15 @@ test("a finished routine bubble opens its run in the Dashboard", async () => {
   try {
     const page = await app.firstWindow();
     await expect(page.locator(".bean-orb-body")).toBeAttached();
-    const push = (jobs: unknown[]) => app.evaluate(({ BrowserWindow }, jobs) => {
-      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!
-        .webContents.send("bean:task-status", jobs);
-    }, jobs);
+    // The stack holds new/removed bubbles while hovered, and a click leaves the pointer on it, so
+    // each push steps the pointer off first (as a user moving on would).
+    const push = async (jobs: unknown[]) => {
+      await page.locator(".bean-bubble-stack").dispatchEvent("pointerleave");
+      await app.evaluate(({ BrowserWindow }, jobs) => {
+        BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!
+          .webContents.send("bean:task-status", jobs);
+      }, jobs);
+    };
     await app.evaluate(({ ipcMain }) => {
       ipcMain.on("bean:dismiss-task", (_e, id) => { (globalThis as { dismissed?: string }).dismissed = id; });
     });
