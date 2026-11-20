@@ -9,8 +9,9 @@ const str = (v: unknown): v is string => typeof v === "string";
 
 export const ROUTE_LABEL_RE = /^[a-z0-9-]+$/;
 
-/** A route target that ends the run ok with nothing delivered — "nothing worth saying". Reserved:
- * no step may take it as its id. Route-only: `next` and gate gotos can't point at it. */
+/** A route target that ends the run ok with nothing delivered — "nothing worth saying". Like
+ * "end", it's a sentinel even if a step has that id (not reserved: a saved sprout with such an id
+ * must keep loading). Route-only: `next` and gate gotos can't point at it. */
 export const QUIET = "quiet";
 
 /** Route checks: ≥2 paths, unique labels, every target a later step, "end" or "quiet". */
@@ -42,7 +43,6 @@ function describeRouteError(route: unknown, at: string, i: number, ids: Map<stri
  * forward-only. */
 export function describeEdgeError(s: Record<string, unknown>, i: number, ids: Map<string, number>): string | null {
   const at = `step ${i + 1}`;
-  if (s.id === QUIET) return `${at}: "${QUIET}" is reserved for a route's quiet ending — pick another id`;
   if (s.route !== undefined) {
     if (s.gate !== undefined || s.next !== undefined) return `${at}: a route can't be combined with a gate or next`;
     return describeRouteError(s.route, at, i, ids);

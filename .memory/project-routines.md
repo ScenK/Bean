@@ -70,13 +70,14 @@ failure. Chat/delegate deciders get a ROUTE contract listing the labels; a comma
 its raw stdout (before `(exit N)`) and a non-zero exit is still a step error. `verdict` = the
 label. The ROUTE line is stripped from `StepResult.output` (digest, summary, lone-step
 deliverable) but kept in `routine_step_attempts`; the prior block header says `chose "<label>"`.
-**Quiet (#979).** A route target `"quiet"` (paths/otherwise only, never `next`; reserved as a
-step id) ends the pass ok with nothing to say: `RunRecord.quiet` = the decider's one-line gist,
+**Quiet (#979).** A route target `"quiet"` (paths/otherwise only, never `next`; a sentinel like
+"end", never a reserved id — rejecting an id drops the whole saved sprout on load) ends the pass ok with nothing to say: `RunRecord.quiet` = the decider's one-line gist,
 the digest is a fixed `Checked · nothing new — …` line (no model), and `deliverDigest` returns
 before note/Home/chatops/notify. Only a clean ok pass goes quiet — an open gate FAIL or failed
 member keeps its status. In a drain a quiet todo ends `done` and drops only its own results from
-the digest (`RoutineRunResult.results` = delivered; `record.steps` keeps all); the record is
-quiet only when every todo was.
+the digest (`RoutineRunResult.results`/`todoIds` = delivered, so origin-chat dedupe ignores quiet
+todos; `record.steps` keeps all); the record is quiet only when every todo was. A quiet run skips
+`withSinkProblems` (nothing is delivered).
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
 `stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
 never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.

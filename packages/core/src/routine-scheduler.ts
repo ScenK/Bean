@@ -100,7 +100,8 @@ export function triggerOutcome(perRun: RunOutcome[]): TriggerOutcome {
 
 /** Appends undeliverable-sink lines to a run and raises an ok run to needs-attention. */
 export function withSinkProblems(result: RoutineRunResult, problems: string[]): RoutineRunResult {
-  if (problems.length === 0) return result;
+  // A quiet run delivers nothing, so an undeliverable sink changes nothing about it.
+  if (problems.length === 0 || result.record.quiet !== undefined) return result;
   const digest = `${result.digest}\n\n${problems.map((p) => `⚠ ${p}`).join("\n")}`;
   const status: RunStatus = result.record.status === "ok" ? "needs-attention" : result.record.status;
   return { ...result, digest, record: { ...result.record, digest, status } };

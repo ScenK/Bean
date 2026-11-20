@@ -114,8 +114,9 @@ export interface StepResult {
 /** `stopped`: the user stopped it mid-run — status failed, a fixed digest, and no sink gets it.
  * `footer`: code-owned text already appended to `digest` (the retro proposal line), so a chat
  * brief built from `results` can re-append it. */
-/** `todoIds` = every todo this run took, in order (absent = it took none). `results` = what the
- * digest was built from: a drain's quiet todos are left out (`record.steps` keeps every step). */
+/** `todoIds` = every todo this run took, in order (absent = it took none) — a delivered drain
+ * leaves its quiet todos out, as `results` (what the digest was built from) does; `record.steps`
+ * keeps every step. */
 export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true; footer?: string; todoIds?: string[] }
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
@@ -612,9 +613,11 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   // Passes a route ended quiet: their results stay in the record but out of the digest and sinks.
   const quietResults = new Set<StepResult>();
   const quietLines: { label: string; reason: string }[] = [];
-  const markQuiet = (scoped: StepResult[], reason: string, label: string): void => {
+  const quietTodos = new Set<string>();
+  const markQuiet = (scoped: StepResult[], reason: string, label: string, todoId?: string): void => {
     for (const r of scoped) quietResults.add(r);
     quietLines.push({ label, reason });
+    if (todoId) quietTodos.add(todoId);
   };
 
   /** Runs the pipeline for one claimed (already `running`) todo and settles its status. */
@@ -640,7 +643,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
       { id: item.id, text: item.text, scratch: Boolean(routine.watch) || parallelSlots(routine) > 1 },
     );
     results.push(...scoped);
-    if (outcome.quiet !== undefined) markQuiet(scoped, outcome.quiet, labelPrefix);
+    if (outcome.quiet !== undefined) markQuiet(scoped, outcome.quiet, labelPrefix, item.id);
     const last = scoped[scoped.length - 1];
     // Strip the label prefix for the setStatus summary — it's redundant there since the
     // caller already knows which todo this is; `results`/the digest keep the labeled form.
@@ -724,5 +727,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     digest,
     steps: stepsOf(),
   };
-  return { record, digest, results: delivered, ...(todoIds.length ? { todoIds } : {}) };
+  // Only the todos the digest covers: a quiet todo's origin chat mustn't decide where it goes.
+  const covered = todoIds.filter((t) => !quietTodos.has(t));
+  return { record, digest, results: delivered, ...(covered.length ? { todoIds: covered } : {}) };
 }

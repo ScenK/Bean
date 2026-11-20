@@ -280,10 +280,10 @@ describe("route validation", () => {
     expect(err([s("d", { route: two() }), s("x")])).toBeNull();
   });
 
-  it('accepts "quiet" as a path or otherwise target; reserves it against step ids and keeps it off next', () => {
+  it('accepts "quiet" as a path or otherwise target, keeps it off next, and still loads a step with that id', () => {
     expect(err([s("d", { route: two({ otherwise: "quiet" }) }), s("x")])).toBeNull();
     expect(err([s("d", { route: { paths: [{ when: "a", goto: "quiet" }, { when: "b", goto: "x" }] } }), s("x")])).toBeNull();
-    expect(err([s("quiet")])).toMatch(/step 1: "quiet" is reserved/);
+    expect(err([s("quiet")])).toBeNull();
     expect(err([s("a", { next: "quiet" })])).toMatch(/next step "quiet" doesn't exist/);
   });
 
@@ -453,7 +453,8 @@ describe("routed runs", () => {
       expect(res.record.steps).toHaveLength(3);
       // Two delivered results → the digest model sees only todo b's.
       expect(res.results.map((r) => r.todo)).toEqual(["item b", "item b"]);
-      expect(res.todoIds).toEqual(["a", "b"]);
+      // Only the delivered todo decides which origin chat already has the result.
+      expect(res.todoIds).toEqual(["b"]);
 
       const allQuiet = fakeDelegate({ d: ["Boring.\nROUTE: nothing", "Still boring.\nROUTE: nothing"] });
       const quiet = await runRoutine(routine(quietSteps(), { todoDriven: true }), deps(allQuiet.delegate, {
