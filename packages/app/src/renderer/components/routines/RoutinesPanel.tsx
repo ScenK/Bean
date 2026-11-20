@@ -6,6 +6,7 @@ import { sproutTriggerAction } from "@bean/core/sprout-trigger";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
+import { useCapabilities } from "../../shared/capabilities.js";
 import type { RoutineStateView, RoutineBuildView, DestinationView } from "@bean/host";
 import { StepsEditor } from "./StepsEditor.js";
 import { chatTargets, cleanChatSinks, isDmSink } from "./chat-sinks.js";
@@ -242,6 +243,8 @@ export function RoutinesPanel() {
     setChatDestinations(await window.bean.destinationsList().catch(() => []));
   };
   const { clis, models } = useCliAvailability();
+  // A remote core lends this list read-only (its writes stay local), so no Restore there.
+  const remoteCore = useCapabilities().host !== undefined;
   const [triggering, setTriggering] = useState(false);
   // The sprout whose Stop was clicked; "Stopping…" until its runs are gone.
   const [stopping, setStopping] = useState<string | undefined>(undefined);
@@ -322,10 +325,10 @@ export function RoutinesPanel() {
   // Keyed on the selected routine's saved content, not the list's identity: a refresh for some
   // other routine (a build finishing) must not wipe unsaved edits here.
   const savedJson = JSON.stringify(routines.find((r) => r.name === selected) ?? null);
-  // The saved copy the draft was loaded from; `name: undefined` = take the next saved copy whole
-  // (set by this panel's own saves).
+  // The draft's baseline: the copy it was loaded from, or what this panel itself just saved — so the
+  // refresh after an own save takes the saved copy whole, while edits made since still count.
   const loaded = useRef<{ name?: string; json: string }>({ json: "" });
-  const adoptSaved = (): void => { loaded.current = { json: "" }; };
+  const markSaved = (d: Routine): void => { loaded.current = { name: d.name, json: JSON.stringify(d) }; };
   useEffect(() => {
     if (!selected) return;
     const saved = routines.find((r) => r.name === selected);
@@ -350,7 +353,8 @@ export function RoutinesPanel() {
     setRestoreFor(undefined);
     const saved = routines.find((r) => r.name === selected);
     if (!saved) return;
-    const { until: _until, ...rest } = saved;
+    // From this sprout's own editor: keep its unsaved edits. From another row: its saved copy.
+    const { until: _until, ...rest } = draft.name === selected ? draft : saved;
     setDraft({ ...rest, enabled: true });
   }, [restoreFor, selected, savedJson]);
   useEffect(() => { void refreshTodos(); }, [selected, draft.todoDriven]);
@@ -494,7 +498,7 @@ export function RoutinesPanel() {
     if (selected) {
       try {
         await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
-        adoptSaved();
+        markSaved(next);
       } catch (e) {
         setDraft(draft);
         setError(ipcErrorMessage(e) ?? "couldn't change it");
@@ -515,7 +519,7 @@ export function RoutinesPanel() {
     if (selected && !restoring) {
       try {
         await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
-        adoptSaved();
+        markSaved(next);
         await refresh();
       } catch (e) {
         setError(ipcErrorMessage(e) ?? "couldn't save the type change");
@@ -528,7 +532,7 @@ export function RoutinesPanel() {
     setSavedName(undefined);
     try {
       await window.bean.routinesSave({ ...draft, sinks: cleanChatSinks(draft.sinks) });
-      adoptSaved();
+      markSaved(draft);
       setError("");
       await refresh();
       setSelected(draft.name);
@@ -623,9 +627,11 @@ export function RoutinesPanel() {
         <div class="bean-skills-row-name">{r.name}</div>
         {r.description ? <div class="bean-routines-row-sub" title={r.description}>{r.description}</div> : null}
         <div class="bean-routines-row-sub">{states[r.name]?.ended?.text}</div>
-        <div class="bean-routines-fix">
-          <button type="button" class="bean-routines-todo-link bean-routines-fix-btn" onClick={(e) => { e.stopPropagation(); restore(r.name); }}>Restore</button>
-        </div>
+        {remoteCore ? null : (
+          <div class="bean-routines-fix">
+            <button type="button" class="bean-routines-todo-link bean-routines-fix-btn" onClick={(e) => { e.stopPropagation(); restore(r.name); }}>Restore</button>
+          </div>
+        )}
       </div>
     </div>
   ) : (
@@ -903,7 +909,7 @@ export function RoutinesPanel() {
                 {ended && savedRoutine && !draft.enabled ? (
                   <>
                     <span class="bean-routines-section-note">{ended.text}</span>
-                    <button type="button" class="bean-routines-todo-link bean-routines-fix-btn" onClick={() => restore(savedRoutine.name)}>Restore</button>
+                    {remoteCore ? null : <button type="button" class="bean-routines-todo-link bean-routines-fix-btn" onClick={() => restore(savedRoutine.name)}>Restore</button>}
                   </>
                 ) : (
                   <span class="bean-routines-section-note">

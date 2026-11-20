@@ -169,6 +169,7 @@ test("remote core: capability-gated chat and key-preserving Settings", async () 
     const archived = sprouts.locator('.bean-routines-section[data-section="!archived"]');
     await archived.locator(".bean-notes-group").click();
     await expect(archived.locator(".bean-routines-row", { hasText: "old-ask" })).toContainText("Nothing by Jan 2");
+    await expect(archived.getByRole("button", { name: "Restore" })).toHaveCount(0); // writes stay local
 
     const settings = await open("settings");
     const key = settings.locator('input[type="password"]');

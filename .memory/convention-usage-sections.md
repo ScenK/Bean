@@ -33,7 +33,9 @@ the optional `Routine.projects`.
   skip the restore and a watch would keep its old seen-set (chat-card replacements save off with
   the old end and let `enableWatch` commit the new one). The 5s poll re-reads definitions when the
   ended set changes; an edited draft keeps its edits and takes only `enabled`/`until`. A remote shell
-  gets the Sprouts list read-only (`routinesList`/`State`/`Builds` in `REMOTE_OPS`); every write stays local.
+  gets the Sprouts list read-only (`routinesList`/`State`/`Builds` in `REMOTE_OPS`, no Restore shown);
+  every write stays local. The draft's baseline after an own save is the draft that was saved
+  (`markSaved`), never a cleared one; Restore from the sprout's own editor keeps its edits.
 - Projects window (`ProjectsPanel.tsx` + `projects/project-members.ts`): row shows `n skills · m
   sprouts`; SKILLS edits the project's `skills` (re-reads `listProjects` before `saveProjects`, so it
   agrees with the Skills window's chips); SPROUTS is `sproutProjects()` membership, never written
