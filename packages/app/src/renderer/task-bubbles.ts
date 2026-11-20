@@ -194,7 +194,8 @@ export function createTaskBubbles(
     clearTimeout(holdTimer);
     holdTimer = setTimeout(release, HOLD_MS);
   };
-  stack.addEventListener("pointerenter", hold);
+  // Movement only, not pointerenter: a still pointer that the stack grew (or the window resized)
+  // under isn't reaching for a bubble, and holding then would keep new bubbles out (#970).
   stack.addEventListener("pointermove", hold);
   stack.addEventListener("pointerleave", release);
 
@@ -219,6 +220,9 @@ export function createTaskBubbles(
       return;
     }
     if (job?.kind === "home") {
+      // Only draining the posts clears it on main, so don't dismiss; just stop holding the stack so
+      // main's drop of the bubble (posts read) renders at once instead of HOLD_MS later (#970).
+      release();
       onOpenHome();
       return;
     }
