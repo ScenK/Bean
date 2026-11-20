@@ -508,7 +508,13 @@ export function ChatSession({
   const seen = (): boolean => !hiddenRef.current && !windowHidden();
   // A post nudged in while Home was still restoring: its snapshot predates the post, so pull once more.
   const pullAfterRestoreRef = useRef(false);
+  // Home's restore failed (a remote core unreachable): a later nudge — reconnect, the bubble — retries it.
+  const homeFailedRef = useRef(false);
   const pullPosts = (nudged = false): void => {
+    if (homeFailedRef.current) {
+      if (nudged && seen()) { homeFailedRef.current = false; open("home"); }
+      return;
+    }
     if (!homeRef.current && restoringRef.current && restoreId === "home") { if (nudged) pullAfterRestoreRef.current = true; return; }
     if (!seen() || !homeRef.current) return;
     window.bean.chatThreadGet("home", mountId).then((t) => {
@@ -609,6 +615,11 @@ export function ChatSession({
     }, (err: unknown) => {
       if (goneRef.current) return;
       restoringRef.current = false;
+      if (restoreId === "home") {
+        // Not on Home after all: the bubble and dot come back, and the Home row takes a click again.
+        homeFailedRef.current = true;
+        if (!hiddenRef.current) onActive(undefined, false);
+      }
       addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error");
     });
   }, []);

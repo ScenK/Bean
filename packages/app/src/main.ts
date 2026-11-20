@@ -817,8 +817,11 @@ app.whenReady().then(async () => {
       // The count is read now, not the last published one: a post may still be on its way to the bubble.
       openComponent: (kind, payload) => {
         if (kind !== "chat" || payload !== undefined) return openComponent(kind, payload);
-        const now: Promise<unknown> = host ? Promise.resolve(host.handlers.homePending()) : remote ? remote.call("homePending", []) : Promise.resolve(0);
-        void now.catch(() => homeCount).then((n) => (typeof n === "number" && n > 0 ? openChatHome() : openComponent("chat")));
+        // Inside the chain: a throwing local read falls back to the last count, and chat still opens.
+        void Promise.resolve()
+          .then((): unknown => (host ? host.handlers.homePending() : remote ? remote.call("homePending", []) : 0))
+          .catch(() => homeCount)
+          .then((n) => (typeof n === "number" && n > 0 ? openChatHome() : openComponent("chat")));
       },
       setChatHomeSeen: (seen) => setHomeSeen(seen),
       openChatHome,

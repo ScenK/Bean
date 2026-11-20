@@ -25,7 +25,8 @@ export function createHomeBubble(deps: {
 }) {
   const timers = deps.timers ?? { set: setTimeout, clear: clearTimeout };
   let expiry: ReturnType<typeof setTimeout> | undefined;
-  let last = { count: 0, newest: undefined as Newest };
+  // undefined until the first read (boot): that one sets the baseline, it isn't an arrival.
+  let last: { count: number; newest: Newest } | undefined;
   const read = (): { count: number; newest: Newest; next: string | undefined } | undefined => {
     try {
       return { count: deps.count(), newest: deps.newest(), next: deps.nextExpiry() };
@@ -42,30 +43,24 @@ export function createHomeBubble(deps: {
     expiry = r.next === undefined ? undefined
       : timers.set(() => refresh(), Math.min(MAX_TIMER_MS, Math.max(0, Date.parse(r.next!) - Date.now()) + 50));
   };
-  const refresh = (): void => {
-    const r = read();
-    if (r) show(r, false);
-  };
-  /** A post was inserted (here, or seen by the reconcile). */
-  const arrived = (r: NonNullable<ReturnType<typeof read>>): void => {
-    const mount = deps.homeMount();
-    if (mount !== undefined) deps.nudge(mount);
-    show(r, true);
-  };
   const isNewer = (a: Newest, b: Newest): boolean =>
     a !== undefined && (b === undefined || a.createdAt > b.createdAt || (a.createdAt === b.createdAt && a.id !== b.id));
-  const reconcile = setInterval(() => {
+  /** Every recount (insert, drain, boot, expiry, reconcile) goes through here, so whichever runs first
+   * after a post landed — even another process's — treats it as an arrival: nudge, newest slot. */
+  const refresh = (): void => {
     const r = read();
     if (!r) return;
-    if (isNewer(r.newest, last.newest)) arrived(r);
-    else if (r.count !== last.count) show(r, false);
-  }, HOME_RECONCILE_MS);
+    if (last !== undefined && isNewer(r.newest, last.newest)) {
+      const mount = deps.homeMount();
+      if (mount !== undefined) deps.nudge(mount);
+      show(r, true);
+    } else show(r, false);
+  };
+  const reconcile = setInterval(refresh, HOME_RECONCILE_MS);
   return {
     refresh,
-    posted: (): void => {
-      const r = read();
-      if (r) arrived(r);
-    },
+    /** A post was inserted here. */
+    posted: refresh,
     stop: (): void => {
       clearInterval(reconcile);
       if (expiry !== undefined) timers.clear(expiry);

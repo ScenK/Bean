@@ -195,6 +195,22 @@ describe("ChatWindow Home", () => {
     expect(bean.setChatHomeSeen!.mock.calls.at(-1)).toEqual([false]);
   });
 
+  it("#961: a failed Home restore isn't Home — the bubble comes back, and the Home row or a nudge retries it", async () => {
+    bean.chatThreadGet!.mockRejectedValueOnce(new Error("Not connected to me@box — reconnecting."));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+    // Rendered outside the click's act: its effect runs after the next frame.
+    await vi.waitFor(() => expect(bean.setChatHomeSeen!.mock.calls.at(-1)).toEqual([false]));
+    const failedMount = bean.chatThreadGet!.mock.calls[0]![1] as string;
+    await act(async () => { listeners.onHomePost!(failedMount); }); // e.g. reconnect / a post
+    await flush();
+    expect(bean.chatThreadGet).toHaveBeenCalledTimes(2);
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).not.toBeNull();
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
+  });
+
   it("Home's Off the record opens a separate off-the-record chat; Home is never taken off the record", async () => {
     bean.chatThreadGet!.mockResolvedValueOnce(homeThread([]));
     await act(async () => { render(h(ChatWindow, {}), root); });

@@ -81,6 +81,24 @@ describe("Home bubble", () => {
     bubble.stop();
   });
 
+  it("an expiry or drain recount that runs first still treats another process's post as an arrival", () => {
+    const { db, add, bubble, nudge, status } = setup({ mount: "m1" });
+    add("a", "2026-11-19T10:00:00.000Z");
+    db.expiry = new Date(Date.now() + 1_000).toISOString();
+    bubble.refresh();
+    status.upsert("d1", { kind: "delegate", name: "fix" });
+    add("b", "2026-11-19T10:05:00.000Z"); // inserted elsewhere
+    db.count = 1; // "a" expired
+    db.expiry = undefined;
+    vi.advanceTimersByTime(1_100); // the expiry recount, before the reconcile
+    expect(nudge).toHaveBeenCalledWith("m1");
+    expect(status.list().map((j) => j.id)).toEqual(["d1", HOME_JOB_ID]);
+    nudge.mockClear();
+    vi.advanceTimersByTime(HOME_RECONCILE_MS); // nothing newer since
+    expect(nudge).not.toHaveBeenCalled();
+    bubble.stop();
+  });
+
   it("a failed count leaves the bubble as it was", () => {
     const pushes: TaskJob[][] = [];
     const status = createTaskStatus((jobs) => pushes.push(jobs));

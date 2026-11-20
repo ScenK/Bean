@@ -50,15 +50,18 @@ arrival, the unread dot and the avatar bubble; the sprout-editor controls come l
   `task-status.ts`. Host `home-bubble.ts` recounts it on insert (`RoutineHostDeps.onHomePost`), on
   a draining save (`onDrained`), at boot, at the soonest pending expiry, and every
   `HOME_RECONCILE_MS` — only the lease holder gets `onHomePost`, so posts `bean-core` inserts on the
-  same data dir surface there: a newer newest pending post (`newestPendingHomePost`, not the count —
-  the cap can keep it flat) counts as an arrival. Its click opens Home and never dismisses it.
+  same data dir surface there. Every recount goes through one `refresh()`: past the boot baseline, a
+  newer newest pending post (`newestPendingHomePost`, not the count — the cap can keep it flat)
+  counts as an arrival, whichever recount sees it first (an expiry or drain may beat the poll). Its
+  click opens Home and never dismisses it.
 - An arrival pushes `homePost` (mount kind `home`) to the chat holding today's Home and moves the
   bubble to the newest slot. That chat re-asks `chatThreadGet("home")` only while **seen**: its tab
   shown and the chat window not hidden/minimized — from main's `chatWindowVisible` push
   (BrowserWindow show/restore/hide/minimize), not `document.visibilityState`, which stays "visible"
   under Playwright; macOS emits `hide` a beat late (the e2e waits for the push). Shown again it pulls.
   A nudge during Home's restore is pulled once the restore lands; picking Home when it's already
-  open pulls too (and re-pins it on a restarted remote core, as does every remote re-attach).
+  open pulls too (and re-pins it on a restarted remote core, as does every remote re-attach). A
+  failed Home restore clears the active Home (bubble and dot come back); the row, or a nudge, retries.
 - No timers decide the bubble: the chat window sends `chatHomeSeen` and main leaves the `home:posts`
   job out of the `taskStatus` broadcast while a Home is seen (it's draining what lands), so neither
   the bubble nor the Home-row dot flashes, local or remote, however slow the save.
