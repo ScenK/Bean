@@ -9,16 +9,20 @@ const str = (v: unknown): v is string => typeof v === "string";
 
 export const ROUTE_LABEL_RE = /^[a-z0-9-]+$/;
 
-/** Route checks: ≥2 paths, unique labels, every target a later step or "end". */
+/** A route target that ends the run ok with nothing delivered — "nothing worth saying". Reserved:
+ * no step may take it as its id. Route-only: `next` and gate gotos can't point at it. */
+export const QUIET = "quiet";
+
+/** Route checks: ≥2 paths, unique labels, every target a later step, "end" or "quiet". */
 function describeRouteError(route: unknown, at: string, i: number, ids: Map<string, number>): string | null {
   const { paths, otherwise } = (typeof route === "object" && route !== null ? route : {}) as { paths?: unknown; otherwise?: unknown };
   if (!Array.isArray(paths) || paths.length < 2) return `${at}: a route needs at least 2 paths`;
   const forward = (v: unknown, what: string): string | null => {
-    if (v === "end") return null;
-    if (!str(v)) return `${at}: ${what} needs a step id or "end"`;
+    if (v === "end" || v === QUIET) return null;
+    if (!str(v)) return `${at}: ${what} needs a step id, "end" or "quiet"`;
     const target = ids.get(v);
     if (target === undefined) return `${at}: ${what} step "${v}" doesn't exist`;
-    return target <= i ? `${at}: ${what} must point to a later step (or "end")` : null;
+    return target <= i ? `${at}: ${what} must point to a later step (or "end"/"quiet")` : null;
   };
   const seen = new Set<string>();
   for (const p of paths) {
@@ -38,6 +42,7 @@ function describeRouteError(route: unknown, at: string, i: number, ids: Map<stri
  * forward-only. */
 export function describeEdgeError(s: Record<string, unknown>, i: number, ids: Map<string, number>): string | null {
   const at = `step ${i + 1}`;
+  if (s.id === QUIET) return `${at}: "${QUIET}" is reserved for a route's quiet ending — pick another id`;
   if (s.route !== undefined) {
     if (s.gate !== undefined || s.next !== undefined) return `${at}: a route can't be combined with a gate or next`;
     return describeRouteError(s.route, at, i, ids);
@@ -105,7 +110,7 @@ export function describeGroupErrors(steps: readonly Record<string, unknown>[], i
     }
     // Only a group's first member may be a target: entering mid-group would skip its siblings.
     const into = (v: unknown, what: string): void => {
-      const t = str(v) && v !== "end" ? ids.get(v) : undefined;
+      const t = str(v) && v !== "end" && v !== QUIET ? ids.get(v) : undefined;
       const tg = t === undefined ? undefined : groupOf.get(t);
       if (tg && t !== tg.first) out[i] ??= `step ${i + 1}: ${what} can't point into a group — point it at step ${tg.first + 1}, where the group starts`;
     };
@@ -235,9 +240,9 @@ function walkRoutePaths(
     if (!s.route || !Array.isArray(s.route.paths)) return;
     // `?.`: the save check walks hand-edited JSON before any route shape is checked.
     const targets = [...s.route.paths.map((p) => [p?.when || "…", p?.goto] as const), ...(s.route.otherwise ? [["otherwise", s.route.otherwise] as const] : [])]
-      // "end" is the sentinel even if a step happens to have that id; the key tells a path labeled
-      // "otherwise" apart from the fallback.
-      .flatMap(([label, goto], k) => { const entry = goto === "end" ? undefined : ids.get(goto); return entry !== undefined && entry > r ? [{ key: `${r}:${k}`, label, entry }] : []; });
+      // "end"/"quiet" are sentinels even if a step happens to have that id; the key tells a path
+      // labeled "otherwise" apart from the fallback.
+      .flatMap(([label, goto], k) => { const entry = goto === "end" || goto === QUIET ? undefined : ids.get(goto); return entry !== undefined && entry > r ? [{ key: `${r}:${k}`, label, entry }] : []; });
     // Entry step → the first path that starts there.
     const entries = new Map<number, string>();
     for (const t of targets) if (!entries.has(t.entry)) entries.set(t.entry, t.label);
@@ -304,13 +309,13 @@ export function stepGroupCaptions(steps: readonly { alongside?: unknown }[]): (s
 }
 
 /** One edge of the read-only flow picture. `to` is a step index, or the run ending ok (`end`) /
- * asking for you (`stop`). `fail` goes forward, `loop` back (with its round cap); a route's
+ * ending ok with nothing delivered (`quiet`, route paths only) / asking for you (`stop`). `fail` goes forward, `loop` back (with its round cap); a route's
  * no-match is `otherwise` → `stop`. A forward edge into a parallel group becomes one `fork` per
  * member (`via` keeps the incoming kind, `label` its label); each member has one `join` edge to
  * the step after the group (or `end`). */
 export interface FlowEdge {
   from: number;
-  to: number | "end" | "stop";
+  to: number | "end" | "quiet" | "stop";
   kind: "flow" | "next" | "pass" | "fail" | "loop" | "path" | "otherwise" | "fork" | "join";
   via?: Exclude<FlowEdge["kind"], "fork" | "join" | "loop">;
   label?: string;
@@ -324,7 +329,7 @@ export interface FlowNode { key: string; index: number; id?: string; kind: Routi
 export function stepFlow(steps: RoutineStep[]): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const ids = new Map<string, number>();
   steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
-  const at = (goto: string): number | "end" => (goto === "end" ? "end" : ids.get(goto)!);
+  const at = (goto: string): number | "end" | "quiet" => (goto === "end" || goto === QUIET ? goto : ids.get(goto)!);
   const broken = (s: unknown, i: number): boolean => describeEdgeError(s as Record<string, unknown>, i, ids) !== null;
   const problems = stepEdgeProblems(steps);
   const groupOf = new Map<number, StepGroup>();

@@ -37,7 +37,8 @@ export { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS } from "./routine-graph.js";
 
 /** A step that ends its output with `ROUTE: <label>` picks the next step: the path whose `when`
  * is that label, else `otherwise`, else the run stops needs-attention. Each `goto`/`otherwise` is
- * a later step's id or "end". Exclusive with `gate` and `next`. */
+ * a later step's id, "end", or "quiet" (ends ok and delivers nothing — `RunRecord.quiet`).
+ * Exclusive with `gate` and `next`. */
 export interface StepRoute { paths: { when: string; goto: string }[]; otherwise?: string }
 
 /** Graph fields shared by every step kind. `next`: a later step's id or "end"; absent = the
@@ -122,6 +123,9 @@ export interface RunRecord {
   /** `chose`: a route step's picked label — set only on route steps, so the Dashboard can mark the
    * decision without mistaking a free-text `VERDICT:` line for one. */
   steps: { kind: StepKind; id?: string; cli?: CliName; round?: number; verdict?: string; chose?: string; ok: boolean; summary: string }[];
+  /** A route chose "quiet" (on every todo of a drain): the run is recorded but no sink gets it.
+   * The deciding step's one-line reason. */
+  quiet?: string;
 }
 
 export interface RoutineState {

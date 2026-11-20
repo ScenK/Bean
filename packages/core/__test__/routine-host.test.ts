@@ -151,6 +151,25 @@ describe("createRoutineHost", () => {
     });
   });
 
+  it("a quiet run is recorded only: no note, Home post, outbox entry or notification; a requested brief gets its line", async () => {
+    const notify = vi.fn(async () => {});
+    const onHomePost = vi.fn();
+    const h = host({ notify, onHomePost, delegateStep: async () => ({ output: "Nothing new upstream.\nROUTE: nothing" }) });
+    const r = routine([
+      { kind: "delegate", id: "d", instruction: "look", route: { paths: [{ when: "news", goto: "end" }, { when: "nothing", goto: "quiet" }] } },
+    ], { sinks: { note: true, notify: true, home: {}, chatops: [{ transport: "discord", channel: "c1" }] } });
+    const res = await h.runOneRoutine(r);
+    expect(res.record.quiet).toBe("Nothing new upstream.");
+    expect(h.status.at(-1)).toMatchObject({ type: "finish", state: "done", line: "Checked · nothing new" });
+    await expect(h.deliverDigest(r, res)).resolves.toBeUndefined();
+    await expect(h.deliverDigest(r, res, true)).resolves.toBe(res.digest);
+    expect(await loadNotes(dbFile(dir))).toEqual([]);
+    expect(listPendingHomePosts(dbFile(dir))).toEqual([]);
+    expect(await claimOutbox(outboxDir(dir), "discord")).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
+    expect(onHomePost).not.toHaveBeenCalled();
+  });
+
   it("maps a user sink to outbox userId with a whose-routine footer", async () => {
     const h = host();
     const r = routine([], { sinks: { chatops: [{ transport: "discord", user: "u1" }] } });

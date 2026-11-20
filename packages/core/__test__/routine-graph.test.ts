@@ -103,6 +103,15 @@ describe("stepFlow", () => {
     ]);
   });
 
+  it('draws a route path to "quiet" as its own ending', () => {
+    expect(edges([s("d", { route: { paths: [{ when: "x", goto: "b" }, { when: "y", goto: "quiet" }], otherwise: "quiet" } }), s("b")])).toEqual([
+      { from: 0, to: 1, kind: "path", label: "x" },
+      { from: 0, to: "quiet", kind: "path", label: "y" },
+      { from: 0, to: "quiet", kind: "otherwise" },
+      { from: 1, to: "end", kind: "flow" },
+    ]);
+  });
+
   it("follows a next skip and next: end", () => {
     expect(edges([s("a", { next: "c" }), s("b", { next: "end" }), s("c")])).toEqual([
       { from: 0, to: 2, kind: "next" },

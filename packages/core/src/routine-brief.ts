@@ -52,7 +52,7 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
  "notifyOnly": true | false,
  "steps": [{"kind": "delegate", "skill": "<skill name>", "project": "<project path>", "cli"?: "claude" | "codex" | "opencode", "instruction": "..."} | {"kind": "chat", "skill": "<optional>", "instruction": "..."} | {"kind": "command", "command": "shell check, e.g. pnpm test", "project"?: "<project path>"}],
    every step may also carry "id": "kebab-case", "gate": {"onFail": "stop" | {"goto": "<step id>", "maxRounds"?: 1-5}}, "next": "<later step id>" | "end",
-   or instead of gate/next, "route": {"paths": [{"when": "kebab-label", "goto": "<later step id>" | "end"}, ...], "otherwise"?: "<later step id>" | "end"},
+   or instead of gate/next, "route": {"paths": [{"when": "kebab-label", "goto": "<later step id>" | "end" | "quiet"}, ...], "otherwise"?: "<later step id>" | "end" | "quiet"} ("quiet" ends the run ok and delivers nothing — for "nothing worth saying"),
  "sinks": {"chatops": [{"transport": "discord" | "teams", "channel"?: "id"}], "note": true, "notify": true},
  "missing": [{"field": "steps.0.project" | "sinks" | "source" | "cron" | ..., "question": "plain question"}]}`,
     "Rules:",

@@ -218,6 +218,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
           : result?.stopped ? (queued ? `Stopped · ${queued} still queued — disable in Sprouts to hold` : "Stopped")
           : status === "failed" ? `Finished with a failed step${failedMembers(result!)}`
           : status === "needs-attention" ? "Needs attention — a gate stopped it"
+          : result?.record.quiet !== undefined ? "Checked · nothing new"
           : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`,
       });
     }
@@ -252,6 +253,9 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
    * so a chat sink resolving there is skipped. A drain covers many todos: then a conversation
    * counts only when every todo of the run was dispatched from it. */
   const deliverDigest = async (routine: Routine, result: RoutineRunResult, brief = false, origin?: RunOrigin): Promise<string | undefined> => {
+    // A route chose "quiet": recorded only — no note, Home post, chatops or notification. The
+    // record keeps it; a chat that asked for a brief gets the one-line "nothing new".
+    if (result.record.quiet !== undefined) return brief ? result.digest : undefined;
     if (routine.sinks.note) {
       await saveNote(dbFile(dir), {
         title: `sprout: ${routine.name}`,

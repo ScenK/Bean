@@ -3067,6 +3067,8 @@ button, input, textarea, select, a {
   border-top: 1px solid var(--bean-border);
 }
 .bean-dash-spine-row:first-child .bean-dash-run-head { margin-top: 0; padding-top: 0; border-top: none; }
+/* A quiet run's one-line reason, on its own line under the head. */
+.bean-dash-quiet { flex-basis: 100%; }
 .bean-dash-run-time {
   font-size: 15px;
   font-weight: 700;

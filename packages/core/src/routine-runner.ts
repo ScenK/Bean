@@ -11,7 +11,7 @@ import { selectRelevantMemories } from "./memory/store.js";
 import { quoteFence } from "./prompt.js";
 import { dropRouteLine, gateVerdict, lastLine, parseVerdict, routeLabel, type StepAttempt } from "./step-attempts.js";
 import { RETRO_SKILL, retroSession, type RetroDeps } from "./retro.js";
-import { stepGroups, stepLanes } from "./routine-graph.js";
+import { QUIET, stepGroups, stepLanes } from "./routine-graph.js";
 
 export interface DelegateStepRequest {
   skill?: Skill;
@@ -114,7 +114,8 @@ export interface StepResult {
 /** `stopped`: the user stopped it mid-run — status failed, a fixed digest, and no sink gets it.
  * `footer`: code-owned text already appended to `digest` (the retro proposal line), so a chat
  * brief built from `results` can re-append it. */
-/** `todoIds` = every todo this run took, in order (absent = it took none). */
+/** `todoIds` = every todo this run took, in order (absent = it took none). `results` = what the
+ * digest was built from: a drain's quiet todos are left out (`record.steps` keeps every step). */
 export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true; footer?: string; todoIds?: string[] }
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
@@ -151,8 +152,9 @@ const gist = (output: string): string =>
   (output.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("VERDICT:")) ?? "no report").slice(0, 120);
 
 /** How one pass of the steps ended; `attention` says why when it needs attention; `stoppedAt`
- * = the step the user's Stop landed on. */
-interface PassOutcome { status: RunStatus; attention?: string; stoppedAt?: number }
+ * = the step the user's Stop landed on; `quiet` = a route chose "quiet" on an otherwise ok pass
+ * (the deciding step's one-line reason) — nothing of this pass is delivered. */
+interface PassOutcome { status: RunStatus; attention?: string; stoppedAt?: number; quiet?: string }
 
 /** `step 3 (review)` — the step's id, skill or the start of its text. */
 function stepLabel(steps: RoutineStep[], i: number): string {
@@ -575,6 +577,11 @@ async function runSteps(
       if (goto === undefined) {
         return end(`no path matched at ${name(index)} (said: '${lastLine(said).slice(0, 120)}')`);
       }
+      if (goto === QUIET) {
+        // Quiet only when the pass ended clean: a failed member or an open gate FAIL still shows.
+        const out = end(lastFail);
+        return out.status === "ok" ? { ...out, quiet: gist(dropRouteLine(said)) } : out;
+      }
       pc = goto === "end" ? steps.length : byId.get(goto) ?? steps.length;
       continue;
     }
@@ -601,13 +608,18 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   const worst = (next: RunStatus): void => { if (RANK[next] > RANK[status]) status = next; };
   const attention: string[] = [];
   let stoppedAt: number | undefined; // the step the user's Stop landed on
-  let soleLabelPrefix = ""; // only meaningful when the run ends up with exactly one result
   const todoIds: string[] = [];
+  // Passes a route ended quiet: their results stay in the record but out of the digest and sinks.
+  const quietResults = new Set<StepResult>();
+  const quietLines: { label: string; reason: string }[] = [];
+  const markQuiet = (scoped: StepResult[], reason: string, label: string): void => {
+    for (const r of scoped) quietResults.add(r);
+    quietLines.push({ label, reason });
+  };
 
   /** Runs the pipeline for one claimed (already `running`) todo and settles its status. */
   const runTodo = async (item: TodoItem, setStatus: NonNullable<RoutineRunnerDeps["todos"]>["setStatus"]): Promise<void> => {
     const labelPrefix = `[todo: ${item.text}] `;
-    soleLabelPrefix = labelPrefix;
     todoIds.push(item.id);
     // Drain-time gate (#283), against this run's definition: the owner may have added a delegate
     // or command step since a member queued this. Their todo text must never reach one.
@@ -628,13 +640,15 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
       { id: item.id, text: item.text, scratch: Boolean(routine.watch) || parallelSlots(routine) > 1 },
     );
     results.push(...scoped);
+    if (outcome.quiet !== undefined) markQuiet(scoped, outcome.quiet, labelPrefix);
     const last = scoped[scoped.length - 1];
     // Strip the label prefix for the setStatus summary — it's redundant there since the
     // caller already knows which todo this is; `results`/the digest keep the labeled form.
     const rawOutput = last?.output.startsWith(labelPrefix) ? last.output.slice(labelPrefix.length) : last?.output ?? "";
     if (outcome.stoppedAt !== undefined) stoppedAt = outcome.stoppedAt;
     const summary = (outcome.stoppedAt !== undefined ? STOPPED_BY_YOU
-      : outcome.attention ? `needs attention: ${outcome.attention}` : rawOutput).slice(0, SUMMARY_CAP);
+      : outcome.attention ? `needs attention: ${outcome.attention}`
+      : outcome.quiet !== undefined ? `nothing new: ${outcome.quiet}` : rawOutput).slice(0, SUMMARY_CAP);
     await setStatus(item.id, outcome.status === "ok" ? "done" : "failed", summary);
     worst(outcome.status);
     if (outcome.attention) attention.push(`${labelPrefix}${outcome.attention}`);
@@ -662,6 +676,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     }
   } else {
     const outcome = await runSteps(routine, deps, timeoutMs, results, "", "", id);
+    if (outcome.quiet !== undefined) markQuiet(results, outcome.quiet, "");
     worst(outcome.status);
     if (outcome.attention) attention.push(outcome.attention);
     stoppedAt = outcome.stoppedAt;
@@ -680,13 +695,26 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     };
   }
 
+  // Every pass went quiet: a fixed line per pass, no model digest, and `record.quiet` keeps sinks off.
+  const delivered = results.filter((r) => !quietResults.has(r));
+  if (status === "ok" && quietLines.length > 0 && delivered.length === 0) {
+    const digest = quietLines.map((q) => `${q.label}Checked · nothing new — ${q.reason}`).join("\n");
+    const quiet = quietLines.length === 1 ? quietLines[0]!.reason : `${quietLines.length} todos, each nothing new`;
+    return {
+      record: { id, startedAt, finishedAt: now().toISOString(), status, digest, steps: stepsOf(), quiet },
+      digest, results: [], ...(todoIds.length ? { todoIds } : {}),
+    };
+  }
+
   // One successful step: its output IS the deliverable. Re-summarizing it only loses detail and
   // bolts on "Overall status / Step 1 / FAILED steps" scaffolding the step's own format forbids.
   // The `[todo: ...] ` label is scaffolding for the digest prompt's grouping, not for the reader.
-  const only = results.length === 1 ? results[0] : undefined;
+  // A drain's quiet todos are left out: each suppresses only its own output.
+  const only = delivered.length === 1 ? delivered[0] : undefined;
+  const label = only?.todo !== undefined ? `[todo: ${only.todo}] ` : "";
   const body = unfence(only?.ok
-    ? (soleLabelPrefix && only.output.startsWith(soleLabelPrefix) ? only.output.slice(soleLabelPrefix.length) : only.output)
-    : await composeDigest(routine, results, deps, timeoutMs));
+    ? (label && only.output.startsWith(label) ? only.output.slice(label.length) : only.output)
+    : await composeDigest(routine, delivered, deps, timeoutMs));
   const digest = attention.length ? `${attention.map((a) => `Needs attention: ${a}`).join("\n")}\n\n${body}` : body;
   const record: RunRecord = {
     id,
@@ -696,5 +724,5 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     digest,
     steps: stepsOf(),
   };
-  return { record, digest, results, ...(todoIds.length ? { todoIds } : {}) };
+  return { record, digest, results: delivered, ...(todoIds.length ? { todoIds } : {}) };
 }
