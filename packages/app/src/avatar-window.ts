@@ -33,6 +33,8 @@ export function installAvatarControls(win: BrowserWindow, hooks: AvatarRecoveryH
   let current: AvatarMode = "normal";
   // Height of the renderer's status-bubble stack (0 = no jobs). Idle/hover grow upward to hold it.
   let statusHeight = 0;
+  // Side of the last status layout; hover keeps it so a growing stack never flips under the pointer (#966).
+  let bubblesBelow: boolean | undefined;
   const stopPoll = (): void => {
     clearInterval(poll);
     poll = undefined;
@@ -54,15 +56,18 @@ export function installAvatarControls(win: BrowserWindow, hooks: AvatarRecoveryH
     if ((next === "normal" || next === "hover") && statusHeight > 0) {
       // The bean isn't at the window's center here, so keep the anchor for the eventual collapse.
       anchor = center;
-      const layout = statusLayout(center, statusHeight, work);
+      const layout = statusLayout(center, statusHeight, work, next === "hover" ? bubblesBelow : undefined);
+      bubblesBelow = layout.bean.bubblesBelow;
       place(layout.bounds);
       win.webContents.send(IPC.avatarDragLayout, layout.bean);
     } else if (next === "normal") {
+      bubblesBelow = undefined;
       const bounds = clampAvatarBounds({ x: center.x - AVATAR_SIZE.width / 2, y: center.y - AVATAR_SIZE.height / 2, ...AVATAR_SIZE }, work);
       anchor = undefined;
       place(bounds);
       win.webContents.send(IPC.avatarDragLayout, { x: bounds.width / 2, y: bounds.height / 2 });
     } else {
+      bubblesBelow = undefined;
       anchor = center;
       const layout = dragBloomLayout(center, avatarSizeForMode(next), work);
       place(layout.bounds);

@@ -97,8 +97,9 @@ const STATUS_BEAN_INSET = 44;
 
 /** Window bounds holding a `stackHeight`-tall bubble stack above a bean at `bean` (screen px) —
  * or below it when the top of the screen lacks the room and the bottom has more (Bean's default
- * spot is 160px from the top). ponytail: a stack taller than either side is squeezed by the clamp. */
-export function statusLayout(anchor: Point, stackHeight: number, workArea: Bounds): { bounds: Bounds; bean: Point & { bubblesBelow: boolean; stackMax: number } } {
+ * spot is 160px from the top). `keepBelow` forces the side instead (the pointer is over the stack, #966).
+ * ponytail: a stack taller than either side is squeezed by the clamp. */
+export function statusLayout(anchor: Point, stackHeight: number, workArea: Bounds, keepBelow?: boolean): { bounds: Bounds; bean: Point & { bubblesBelow: boolean; stackMax: number } } {
   const half = AVATAR_SIZE.height / 2;
   // A stale anchor (display removed/resized) would leave the bean outside the clamped window.
   const bean = {
@@ -108,7 +109,7 @@ export function statusLayout(anchor: Point, stackHeight: number, workArea: Bound
   const height = Math.round(stackHeight) + AVATAR_SIZE.height;
   const above = bean.y - workArea.y;
   const below = workArea.y + workArea.height - bean.y;
-  const bubblesBelow = above < height - half && below > above;
+  const bubblesBelow = keepBelow ?? (above < height - half && below > above);
   const bounds = clampAvatarBounds({
     x: bean.x - (STATUS_WIDTH - STATUS_BEAN_INSET),
     y: bubblesBelow ? bean.y - half : bean.y - (height - half),

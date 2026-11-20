@@ -133,6 +133,22 @@ test("status bubbles grow the idle window upward around a fixed bean, then colla
   win.emit("closed");
 });
 
+test("hover keeps the bubble side when the stack grows near the screen top; normal re-picks it (#966)", () => {
+  const { win, mode } = fixture();
+  ipc.get(IPC.moveWindowBy)!({ sender: win.webContents }, 0, -600); // bean at y=160
+  const height = (h: number) => ipc.get(IPC.setAvatarStatusHeight)!({ sender: win.webContents }, h);
+  const side = () => win.webContents.send.mock.lastCall?.[1]?.bubblesBelow;
+  height(100);
+  expect(side()).toBe(false);
+  mode("hover");
+  height(200); // would flip below the bean under the pointer
+  expect(side()).toBe(false);
+  expect(win.webContents.send).toHaveBeenLastCalledWith(IPC.avatarDragLayout, expect.objectContaining({ stackMax: 120 }));
+  mode("normal");
+  expect(side()).toBe(true);
+  win.emit("closed");
+});
+
 test("bring back replays the current jobs after the reload and ignores old-document IPC meanwhile", () => {
   let jobs = ["a"];
   const replayed: string[][] = [];
