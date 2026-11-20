@@ -224,11 +224,12 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
   /** What chat sinks post: an ok run summed up as one short brief in the persona's voice,
    * conclusion first (one model call over every step's output, shared by every chat sink). Brief
    * skipped = the final step's output as it is; the sprout asks for it, or nothing to brief = the
-   * full digest. Only the chat copy is rewritten: record, note and notification keep `result.digest`. */
-  const chatSinkBody = async (routine: Routine, result: RoutineRunResult): Promise<string> => {
+   * full digest. Only the chat copy is rewritten: record, note and notification keep `result.digest`.
+   * `verbatim` = chatops' `chatopsVerbatim`; the Home post always asks for the brief. */
+  const chatSinkBody = async (routine: Routine, result: RoutineRunResult, verbatim = routine.sinks.chatopsVerbatim === true): Promise<string> => {
     // Failed / needs-attention runs keep their problem lines out of a model; a stepless run
     // ("No pending todos", a notify-only watch fire) has nothing to brief.
-    if (routine.sinks.chatopsVerbatim === true || result.record.status !== "ok" || result.stopped || result.results.length === 0) {
+    if (verbatim || result.record.status !== "ok" || result.stopped || result.results.length === 0) {
       return result.digest;
     }
     let persona: Persona;
@@ -270,12 +271,18 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     });
     const asked = targets.length > 0 ? askedFrom(result, origin) : [];
     const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
-    const home = routine.sinks.home !== undefined && (deps.holdsLease?.() ?? true) ? routine.sinks.home : undefined;
-    const chatBody = kept.length > 0 || brief || home ? await chatSinkBody(routine, result) : result.digest;
+    const holds = (): boolean => deps.holdsLease?.() ?? true;
+    const home = routine.sinks.home !== undefined && holds() ? routine.sinks.home : undefined;
+    const chatBody = kept.length > 0 || brief ? await chatSinkBody(routine, result) : result.digest;
     if (home) {
-      insertHomePost(dbFile(dir), {
-        sprout: routine.name, body: chatBody, ...(home.ttlMinutes !== undefined ? { ttlMinutes: home.ttlMinutes } : {}),
-      }, newId);
+      // chatopsVerbatim is chatops' rule: Home still gets the brief (a second call only then).
+      const homeBody = (kept.length > 0 || brief) && routine.sinks.chatopsVerbatim !== true ? chatBody : await chatSinkBody(routine, result, false);
+      // Re-checked after the brief's await: a lease lost meanwhile belongs to the new holder.
+      if (holds()) {
+        insertHomePost(dbFile(dir), {
+          sprout: routine.name, body: homeBody, ...(home.ttlMinutes !== undefined ? { ttlMinutes: home.ttlMinutes } : {}),
+        }, newId);
+      }
     }
     for (const { sink, channel } of kept) {
       await enqueueOutbox(outboxDir(dir), {

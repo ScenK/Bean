@@ -96,7 +96,7 @@ describe("Routine.projects (display only)", () => {
     expect((await loadRoutines(dir))[0]?.sinks).toEqual({ home: { ttlMinutes: 30 } });
     await saveRoutine(dir, routine({ sinks: { home: {} } }));
     expect((await loadRoutines(dir))[0]?.sinks).toEqual({ home: {} });
-    for (const home of [true, null, [], { ttlMinutes: 0 }, { ttlMinutes: 1.5 }, { ttlMinutes: "5" }]) {
+    for (const home of [true, null, [], { ttlMinutes: 0 }, { ttlMinutes: 1.5 }, { ttlMinutes: "5" }, { ttlMinutes: 200000000000 }]) {
       expect(describeRoutineError({ ...routine(), sinks: { home } })).toMatch(/home sink/);
     }
   });
