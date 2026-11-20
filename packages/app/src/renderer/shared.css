@@ -1757,6 +1757,7 @@ button, input, textarea, select, a {
   border-radius: 4px;
   background: var(--bean-accent);
 }
+.bean-plan-lead { font-size: 14px; color: var(--bean-text); }
 /* Roomier than the inline chat card — the plan window is dedicated to this one prompt. */
 .bean-plan .bean-card-prompt { min-height: 260px; }
 

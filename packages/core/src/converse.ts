@@ -228,7 +228,7 @@ export function gapMarkerLine(at: Date): string {
 // webSearch splits "the web" into public vs private: public lookups Bean searches itself; the
 // user's own systems are stated as never being on the public web (a fact, not a prohibition),
 // so the model doesn't search, find nothing, and guess. Flag off = today's wording, verbatim.
-const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, webSearch = false): string =>
+const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, webSearch = false, desktop = false): string =>
   // Routing is decided by Bean's OWN closed capability set, not by guessing what the
   // delegated harness can do — that set (MCP servers, auth, skills) is invisible from here.
   // See .memory/convention-route-by-own-capabilities.md.
@@ -291,8 +291,9 @@ const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, w
   "with the complete markdown — the user confirms the card before anything is written. " +
   "If you are given a propose_todo tool, use it when the user wants a sprout to take a task — " +
   "now or queued for later; the card's Run now / Queue is the confirmation. " +
-  // No terminal (chatops): a propose_run skill answers in-line with no card, so no lead-in for it.
-  "Whenever you call a propose_* tool" + (runAvailable ? "" : " other than propose_run") +
+  // Chatops runs a propose_run skill in-line with no card, so no lead-in for it there; the desktop
+  // shows a card even without a terminal (a remote client).
+  "Whenever you call a propose_* tool" + (runAvailable || desktop ? "" : " other than propose_run") +
   ", also write one short, natural sentence leading into the card — don't restate what the card shows.";
   
 
@@ -791,7 +792,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const delegateOffered = delegateAvailable && (projects.length > 0 || scratchPath !== undefined);
   const systemParts = [
     composePersonaPrompt(persona),
-    behaviorInstructions(runAvailable, delegateOffered, webSearch),
+    behaviorInstructions(runAvailable, delegateOffered, webSearch, liveSessionHost === "desktop"),
     catalog(skills, projects),
   ];
   if (speaker !== undefined) systemParts.push(SHARED_CHAT_NOTE);

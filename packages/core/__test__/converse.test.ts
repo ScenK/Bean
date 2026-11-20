@@ -484,13 +484,15 @@ test("a proposal with no sentence gets CARD_LEAD; one with a sentence keeps it; 
   expect(new Set(toolSets).size).toBe(1);
 });
 
-test("with no terminal, propose_run (an in-line chat skill) is left out of the lead-in rule", async () => {
+test("chatops leaves propose_run (an in-line chat skill) out of the lead-in rule; desktop never does", async () => {
   const systems: string[] = [];
   const deps: ConverseDeps = { model: "m", chat: async ({ messages }) => { systems.push(messages[0]!.content); return { content: "ok", toolCalls: [] }; } };
   await conv({ latestUserText: "hi", deps, runAvailable: false });
   await conv({ latestUserText: "hi", deps, runAvailable: true });
+  await conv({ latestUserText: "hi", deps, runAvailable: false, liveSessionHost: "desktop" }); // a remote desktop client
   expect(systems[0]).toContain("Whenever you call a propose_* tool other than propose_run, also write");
   expect(systems[1]).toContain("Whenever you call a propose_* tool, also write");
+  expect(systems[2]).toContain("Whenever you call a propose_* tool, also write");
 });
 
 test("a plain reply with no proposal is never given the card lead", async () => {
