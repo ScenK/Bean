@@ -94,10 +94,16 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
       // enableWatch, which re-seeds from now (items published while it was off aren't judged) and
       // commits the new end with `enabled` only once that check succeeded — until then it stays ended.
       const restoreWatch = await lane(routine.name, async () => {
+        const now = new Date();
+        const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
+        const priorEnded = prior !== undefined && !prior.enabled && hasEnded(prior, now);
+        // A later end only comes back with the switch (#983): saved while still off, the next Enable
+        // would skip the restore below and a watch would keep its old seen-set.
+        if (priorEnded && !routine.enabled && !hasEnded(routine, now)) {
+          throw new Error(`"${routine.name}" ended — Restore it to give it a later end date`);
+        }
         if (routine.enabled) {
-          const now = new Date();
-          const prior = (await deps.loadRoutines()).find((r) => r.name === routine.name);
-          if (prior && !prior.enabled && hasEnded(prior, now)) {
+          if (prior && priorEnded) {
             if (hasEnded(routine, now)) throw new Error(`"${routine.name}" ended — give it a later end date to turn it back on`);
             if (routine.watch && deps.watch) {
               const { until: _, ...rest } = routine;

@@ -27,6 +27,10 @@ const untilDateValue = (until: string | undefined): string => {
   return Number.isNaN(d.getTime()) ? "" : `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 };
 
+// Which sprouts have ended, and which of those are archived — a change means the definitions moved.
+const endedKeyOf = (st: Record<string, RoutineStateView>): string =>
+  Object.keys(st).filter((n) => st[n]?.ended).sort().map((n) => `${n}:${st[n]!.ended!.archived}`).join("\n");
+
 const emptyRoutine = (): Routine => ({
   name: "",
   enabled: true,
@@ -259,9 +263,11 @@ export function RoutinesPanel() {
   // Restore on an ended sprout: once its editor is up, the draft turns back on with no end date.
   const [restoreFor, setRestoreFor] = useState<string | undefined>(undefined);
 
+  const endedKey = useRef("");
   const refresh = async (): Promise<void> => {
     const [list, st, bs] = await Promise.all([window.bean.routinesList(), window.bean.routinesState(), window.bean.routinesBuilds()]);
     setRoutines(list);
+    endedKey.current = endedKeyOf(st);
     setStates(st);
     setBuilds(bs);
   };
@@ -279,7 +285,13 @@ export function RoutinesPanel() {
     // Piggyback on the same 5s poll so "running now" chips update live while a todo-driven
     // routine is open.
     const t = setInterval(() => {
-      void window.bean.routinesState().then(setStates);
+      void window.bean.routinesState().then((st) => {
+        setStates(st);
+        // A sprout that ended (or came back) since the last read: re-read the definitions too, so an
+        // open editor isn't holding the pre-ending copy (Save would send its old `enabled`/`until`).
+        const key = endedKeyOf(st);
+        if (key !== endedKey.current) { endedKey.current = key; void refresh(); }
+      });
       void refreshTodos();
     }, 5000);
     return () => clearInterval(t);
@@ -442,6 +454,9 @@ export function RoutinesPanel() {
       ? { ...dropParallel(draft), steps: [], todoDriven: undefined }
       : { ...draft, steps: draft.steps.length > 0 ? draft.steps : [{ kind: "chat", instruction: "" }], todoDriven: true });
 
+  // The editor holds a Restore (an ended sprout's draft switched back on) until Save sprout.
+  const restoring = Boolean(selected && states[selected]?.ended && draft.enabled);
+
   const toggleEnabled = async (r: Routine): Promise<void> => {
     try {
       await window.bean.routinesSave({ ...r, enabled: !r.enabled });
@@ -457,6 +472,9 @@ export function RoutinesPanel() {
   // persist right away too — otherwise the next poll's refresh() overwrites the local draft
   // with the still-disabled saved copy and the flip silently reverts.
   const toggleDraftEnabled = async (): Promise<void> => {
+    // Switching off a Restore in progress just drops it: the saved sprout is still ended.
+    const saved = routines.find((r) => r.name === selected);
+    if (saved && restoring) { setDraft(saved); return; }
     const next = { ...draft, enabled: !draft.enabled };
     setDraft(next);
     if (selected) {
@@ -478,7 +496,8 @@ export function RoutinesPanel() {
   const setTodoDriven = async (on: boolean): Promise<void> => {
     const next = on ? { ...draft, todoDriven: true } : { ...dropParallel(draft), todoDriven: undefined };
     setDraft(next);
-    if (selected) {
+    // A Restore in progress saves with Save sprout, not here (that would turn it back on early).
+    if (selected && !restoring) {
       try {
         await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
         await refresh();
@@ -855,6 +874,8 @@ export function RoutinesPanel() {
                   class="bean-input bean-input--boxed"
                   type="date"
                   aria-label="End date"
+                  disabled={Boolean(ended) && !draft.enabled}
+                  title={ended && !draft.enabled ? "Restore it to give it a later end date" : undefined}
                   value={untilDateValue(draft.until)}
                   onChange={(e) => {
                     const v = (e.target as HTMLInputElement).value;

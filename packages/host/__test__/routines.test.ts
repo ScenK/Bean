@@ -108,6 +108,12 @@ test("save refuses turning on a sprout whose end has passed; an already-on one s
   await h({ ...ended, enabled: true }).save({ ...ended, enabled: true, description: "edited" });
   expect(saveRoutine).toHaveBeenCalledTimes(2);
   expect(rebase).toHaveBeenCalledTimes(1);
+  // #983: a later end saved while still off would let the next Enable skip the restore (no reseed).
+  const { until: _u, ...cleared } = ended;
+  await expect(h(ended).save(cleared)).rejects.toThrow(/Restore it/);
+  await expect(h(ended).save({ ...ended, until: "2999-01-01" })).rejects.toThrow(/Restore it/);
+  await h(ended).save({ ...ended, description: "still ended" }); // other edits while off still save
+  expect(saveRoutine).toHaveBeenCalledTimes(3);
 });
 
 test("turning an ended watch back on with a later until goes through enableWatch (re-seeded from now), outside the lane", async () => {
