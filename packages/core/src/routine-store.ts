@@ -129,7 +129,12 @@ export function untilTime(until: string | undefined): number | undefined {
     if (start.getFullYear() !== y || start.getMonth() !== m - 1 || start.getDate() !== day) return undefined;
     return new Date(y, m - 1, day + 1).getTime();
   }
-  if (!until.includes("T")) return undefined;
+  // A date-time: its calendar date must exist (Date.parse rolls 2026-02-30 into March).
+  const dt = /^(\d{4})-(\d{2})-(\d{2})T/.exec(until);
+  if (!dt) return undefined;
+  const [y, m, day] = [Number(dt[1]), Number(dt[2]), Number(dt[3])];
+  const probe = new Date(Date.UTC(y, m - 1, day));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== day) return undefined;
   const t = Date.parse(until);
   return Number.isFinite(t) ? t : undefined;
 }
@@ -159,12 +164,14 @@ export function isExpired(r: Pick<Routine, "enabled" | "until">, now: Date): boo
   return r.enabled && end !== undefined && end < now.getTime();
 }
 
-/** Why an ended sprout ended, from its newest run record: a route reached `done` = found, else its
- * `until` passed. Undefined = it hasn't ended (on, or paused before its `until`). */
+/** Why an ended sprout ended: found = a done run whose finish time is the current `until` (the done
+ * ending stamps exactly that), so a sibling run recorded later, or a restore that later expired,
+ * doesn't change the answer; else its `until` passed. Undefined = it hasn't ended (on, or paused
+ * before its `until`). */
 export function endReason(r: Pick<Routine, "enabled" | "until">, state: RoutineState | undefined, now: Date): "found" | "expired" | undefined {
   const end = untilTime(r.until);
   if (r.enabled || end === undefined || end > now.getTime()) return undefined;
-  return state?.history[0]?.done ? "found" : "expired";
+  return state?.history.some((h) => h.done && h.finishedAt === r.until) ? "found" : "expired";
 }
 
 export type RunStatus = "ok" | "failed" | "needs-attention";

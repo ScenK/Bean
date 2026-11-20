@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createRoutineScheduler, type RoutineSchedulerDeps } from "../src/routine-scheduler.js";
+import { DONE_FOOTER } from "../src/routine-runner.js";
 import {
   addTodo, describeRoutineError, dropPendingTodos, endReason, isArchived, isExpired, listTodos, resolveTodoRoutine,
   untilLabel, untilTime, claimTodo, queueTodoDispatch,
@@ -18,7 +19,7 @@ describe("until and archived (store)", () => {
   it("a bare date ends with its local day; a date-time is that instant; nonsense is invalid", () => {
     expect(untilTime("2026-12-20")).toBe(at(2026, 12, 21).getTime());
     expect(untilTime("2026-12-20T10:00:00.000Z")).toBe(Date.parse("2026-12-20T10:00:00.000Z"));
-    for (const bad of ["2026-02-30", "Dec 20", "2026-12-20 10:00", "", "tomorrow"]) expect(untilTime(bad)).toBeUndefined();
+    for (const bad of ["2026-02-30", "2026-02-30T00:00:00Z", "2026-13-01T00:00:00Z", "Dec 20", "2026-12-20 10:00", "", "tomorrow"]) expect(untilTime(bad)).toBeUndefined();
     expect(untilLabel("2026-12-20")).toBe("Dec 20, 2026");
     const r: Routine = { name: "w", enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
     expect(describeRoutineError({ ...r, until: "2026-12-20" })).toBeNull();
@@ -37,13 +38,18 @@ describe("until and archived (store)", () => {
     expect(isArchived({ enabled: false }, at(2027, 6, 1))).toBe(false);
   });
 
-  it("why it ended comes from the newest run record", () => {
+  it("why it ended: found only when a done run's finish is the current until", () => {
     const now = at(2026, 12, 25);
-    const done: RoutineState = { history: [{ startedAt: "x", finishedAt: "x", status: "ok", digest: "", steps: [], done: true }] };
-    expect(endReason({ enabled: false, until: "2026-12-20" }, done, now)).toBe("found");
+    const foundAt = "2026-12-20T10:00:00.000Z";
+    const rec = (over: object) => ({ startedAt: "x", finishedAt: foundAt, status: "ok" as const, digest: "", steps: [], ...over });
+    // A sibling recorded after the done run doesn't change it.
+    const done: RoutineState = { history: [rec({ finishedAt: "2026-12-20T10:05:00.000Z" }), rec({ done: true })] };
+    expect(endReason({ enabled: false, until: foundAt }, done, now)).toBe("found");
+    // Restored with a later until that then passed: expired, though an old done run is in history.
+    expect(endReason({ enabled: false, until: "2026-12-22" }, done, now)).toBe("expired");
     expect(endReason({ enabled: false, until: "2026-12-20" }, { history: [] }, now)).toBe("expired");
     expect(endReason({ enabled: false, until: "2027-01-20" }, done, now)).toBeUndefined(); // paused before its end
-    expect(endReason({ enabled: true, until: "2026-12-20" }, done, now)).toBeUndefined();
+    expect(endReason({ enabled: true, until: foundAt }, done, now)).toBeUndefined();
   });
 
   it("an archived sprout takes no todos; a paused one within the grace still does", () => {
@@ -85,6 +91,7 @@ function setup(initial: Routine[], over: Partial<RoutineSchedulerDeps> = {}) {
     loadStates: async () => states,
     saveStates: async (s) => { states = s; },
     runRoutine: vi.fn(async (): Promise<RoutineRunResult> => {
+      queue.length = 0; // a drain takes everything
       const record = { startedAt: clock.toISOString(), finishedAt: clock.toISOString(), status: "ok" as const, digest: "ran", steps: [] };
       return { record, digest: "ran", results: [] };
     }),
@@ -106,7 +113,8 @@ function setup(initial: Routine[], over: Partial<RoutineSchedulerDeps> = {}) {
     ...over,
   };
   return {
-    deps, sched: createRoutineScheduler(deps), queue, seeded,
+    deps, sched: createRoutineScheduler(deps), queue, seeded, states: () => states,
+    setRoutines: (next: Routine[]) => { routines = next; },
     routine: (name: string) => routines.find((r) => r.name === name)!,
     setClock: (d: Date) => { clock = d; },
     setItems: (next: WatchItem[]) => { items = next; },
@@ -114,8 +122,11 @@ function setup(initial: Routine[], over: Partial<RoutineSchedulerDeps> = {}) {
 }
 
 const todo = (id: string): TodoItem => ({ id, routine: "w", text: `item ${id}`, status: "pending", createdAt: "x", order: 0 });
-const doneResult = (digest = "found it"): RoutineRunResult => ({
-  record: { startedAt: "x", finishedAt: "x", status: "ok", digest, steps: [], done: true }, digest, results: [], ending: "done",
+const FOUND_AT = "2026-12-10T17:05:00.000Z";
+const doneResult = (digest = "found it", todo?: string): RoutineRunResult => ({
+  record: { id: `run-${digest}`, startedAt: "2026-12-10T17:00:00.000Z", finishedAt: FOUND_AT, status: "ok", digest: `${digest}\n\n${DONE_FOOTER}`, steps: [], done: true },
+  digest: `${digest}\n\n${DONE_FOOTER}`, footer: `\n\n${DONE_FOOTER}`, ending: "done",
+  results: todo ? [{ index: 0, kind: "chat", ok: true, output: digest, todo }] : [],
 });
 const watchQueue = (over: Partial<Routine> = {}): Routine => ({
   name: "w", enabled: true, todoDriven: true, watch: { kind: "feed", url: "https://f", everyMinutes: 15 },
@@ -131,13 +142,49 @@ describe("the done ending (scheduler)", () => {
     expect(res.started).toBe(true);
     expect(t.deps.deliverDigest).toHaveBeenCalledTimes(1);
     expect(vi.mocked(t.deps.deliverDigest).mock.calls[0]![1]).toMatchObject({ ending: "done" });
-    expect(t.routine("w")).toMatchObject({ enabled: false, until: at(2026, 12, 10, 9, 0).toISOString() });
+    expect(t.routine("w")).toMatchObject({ enabled: false, until: FOUND_AT });
     expect(t.deps.dropPendingTodos).toHaveBeenCalledWith("w");
     expect(t.queue).toEqual([]);
     // Paused: the next tick admits nothing.
     t.queue.push(todo("c"));
     await t.sched.tick();
     expect(t.deps.runRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  it("two parallel workers both reaching done: one owns the ending, the other delivers as an ordinary run", async () => {
+    const t = setup([watchQueue({ maxParallel: 2 })]);
+    t.queue.push(todo("a"), todo("b"), todo("c"));
+    let releaseA: () => void = () => {};
+    vi.mocked(t.deps.runRoutine).mockImplementation(async (_r, item) => {
+      if (item?.id === "a") await new Promise<void>((res) => { releaseA = res; });
+      return doneResult(`found by ${item?.id}`);
+    });
+    const run = t.sched.runNow("w");
+    await vi.waitFor(() => expect(t.deps.dropPendingTodos).toHaveBeenCalled()); // b owned it
+    releaseA();
+    await run;
+    expect(vi.mocked(t.deps.runRoutine).mock.calls.map((c) => c[1]?.id)).toEqual(["a", "b"]);
+    const delivered = vi.mocked(t.deps.deliverDigest).mock.calls.map((c) => [c[1].digest, c[1].ending]);
+    expect(delivered).toEqual([[`found by b\n\n${DONE_FOOTER}`, "done"], ["found by a", undefined]]);
+    expect(t.deps.saveRoutine).toHaveBeenCalledTimes(1);
+    expect(t.deps.dropPendingTodos).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed done delivery keeps the sprout on and its queue, shows needs attention and queues the item again", async () => {
+    const t = setup([watchQueue()]);
+    t.queue.push(todo("a"), todo("b"));
+    vi.mocked(t.deps.runRoutine).mockResolvedValueOnce(doneResult("found it", "item a"));
+    vi.mocked(t.deps.deliverDigest).mockRejectedValueOnce(new Error("outbox locked"));
+    const res = await t.sched.runNow("w");
+    expect(res).toMatchObject({ started: true, status: "needs-attention" });
+    expect(t.routine("w").enabled).toBe(true);
+    expect(t.deps.saveRoutine).not.toHaveBeenCalled();
+    expect(t.deps.dropPendingTodos).not.toHaveBeenCalled();
+    expect(t.deps.addTodo).toHaveBeenCalledWith("w", "item a");
+    const rec = t.states().w!.history[0]!;
+    expect(rec.status).toBe("needs-attention");
+    expect(rec.done).toBeUndefined();
+    expect(rec.digest).toMatch(/couldn't deliver this \(outbox locked\)/);
   });
 
   it("parallel workers claim nothing after a sibling's done; the sprout ends once", async () => {
@@ -172,6 +219,41 @@ describe("expiry (scheduler)", () => {
     expect(t.deps.dropPendingTodos).toHaveBeenCalledTimes(1);
     expect(t.deps.runRoutine).not.toHaveBeenCalled();
     expect(t.deps.pollWatch).not.toHaveBeenCalled();
+  });
+
+  it("overlapping ticks post the expiry once: a tick stuck on another watch's poll re-reads before posting", async () => {
+    let releasePoll: () => void = () => {};
+    const slow = watchQueue({ name: "slow" });
+    const t = setup([slow, watchQueue({ until: "2026-12-20" })], {
+      pollWatch: vi.fn(async () => { await new Promise<void>((res) => { releasePoll = res; }); return []; }),
+    });
+    t.setClock(at(2026, 12, 21, 9, 0));
+    const first = t.sched.tick(); // blocks in slow's poll, with w already on its expired list
+    await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
+    await t.sched.tick(); // slow is already polling: this one expires w
+    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(1);
+    releasePoll();
+    await first;
+    expect(t.deps.deliverDigest).toHaveBeenCalledTimes(1);
+    expect(t.deps.saveRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  it("a due sprout paused while the tick was busy isn't started", async () => {
+    let releasePoll: () => void = () => {};
+    const q = watchQueue({ name: "q", watch: { kind: "feed", url: "https://q" } });
+    const t = setup([q, watchQueue({ name: "slow", watch: { kind: "feed", url: "https://slow" } })], {
+      pollWatch: vi.fn(async (w) => {
+        if (w.kind === "feed" && w.url === "https://slow") await new Promise<void>((res) => { releasePoll = res; });
+        return [];
+      }),
+      hasPendingTodos: async (r) => r === "q",
+    });
+    const tick = t.sched.tick(); // q is due (pending work); then blocks in slow's poll
+    await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalledTimes(2));
+    t.setRoutines([{ ...q, enabled: false }, watchQueue({ name: "slow" })]);
+    releasePoll();
+    await tick;
+    expect(t.deps.runRoutine).not.toHaveBeenCalled();
   });
 
   it("only the lease holder expires; before until nothing happens", async () => {

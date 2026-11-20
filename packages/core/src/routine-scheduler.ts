@@ -2,7 +2,7 @@
 import { nextRun } from "./cron.js";
 import { appendRunRecord, isArchived, isExpired, parallelSlots, untilLabel, untilTime, watchEveryMinutes } from "./routine-store.js";
 import type { Routine, RoutineState, RoutineWatch, RunRecord, RunStatus } from "./routine-store.js";
-import type { RoutineRunResult } from "./routine-runner.js";
+import { DONE_FOOTER, type RoutineRunResult } from "./routine-runner.js";
 import type { TodoItem } from "./todo-store.js";
 import { watchDigest, watchSourceKey, watchTodoText } from "./watch.js";
 import type { WatchItem } from "./watch.js";
@@ -170,36 +170,64 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   // newest, matching the queue (each Run now goes in front of the last). A drain or worker usually takes it first (it's at the queue's front), and then its
   // exact claim just loses. In memory only — after a restart the queue's front order still holds.
   const waiting = new Map<string, string[]>();
-  // Sprouts a `done` run is ending (#980): from the moment the result is in until the pause is saved
-  // and their last slot frees, nothing new is admitted or claimed for them. `expiring` = an expiry
-  // notice is being posted (ticks overlap): post once, then pause.
+  // Sprouts a `done` run is ending (#980). `ended`: from the moment the first done result is in
+  // until its owner has settled (paused, or given up on a failed delivery) and the sprout's last
+  // slot frees, nothing new is admitted or claimed. `ending` = the owner is still delivering/pausing.
+  // `expiring` = an expiry notice is being posted (ticks overlap): post once, then pause.
   const ended = new Set<string>();
   const ending = new Set<string>();
   const expiring = new Set<string>();
   const clearEnded = (name: string): void => { if (count(name) === 0 && !ending.has(name)) ended.delete(name); };
-  /** Pauses the sprout (its current definition), optionally stamping `until`, and drops its queue. */
-  const endSprout = async (name: string, until?: string): Promise<void> => {
-    const current = (await deps.loadRoutines()).find((r) => r.name === name);
-    if (current && deps.saveRoutine) await deps.saveRoutine({ ...current, enabled: false, ...(until ? { until } : {}) });
-    await deps.dropPendingTodos?.(name);
-  };
-  /** After a run's delivery: a `done` run ends the sprout (once, even when parallel runs both hit it). */
-  const finishDone = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
-    if (!result.record.done || result.stopped || ending.has(routine.name)) return;
+  /** Synchronous, before any await after the run returns: the first done result owns the ending;
+   * a sibling's later done result is delivered as an ordinary run. */
+  const claimEnding = (routine: Routine, result: RoutineRunResult): boolean => {
+    if (!result.record.done || result.stopped || ended.has(routine.name)) return false;
+    ended.add(routine.name);
     ending.add(routine.name);
+    return true;
+  };
+  /** A done result that doesn't own the ending: no "keep watching?" line, no ending flag. */
+  const asOrdinary = (result: RoutineRunResult): RoutineRunResult => {
+    if (!result.ending) return result;
+    const line = `\n\n${DONE_FOOTER}`;
+    const { ending: _, ...rest } = result;
+    return { ...rest, digest: result.digest.replace(line, ""), ...(result.footer ? { footer: result.footer.replace(line, "") } : {}) };
+  };
+
+  /** Delivers the run that owns a done ending (#980) and pauses the sprout only once the
+   * delivery landed, stamping `until` with the done run's finish time (`endReason` matches on it),
+   * and drops the queue. A failed delivery keeps the sprout on and its queue intact, marks the
+   * record needs-attention so it shows, and queues the done todo again so it's judged and
+   * delivered on a later run. */
+  async function deliverRun(routine: Routine, result: RoutineRunResult, run: RunOutcome, opts: RunOpts, todo?: TodoItem): Promise<void> {
     try {
-      await endSprout(routine.name, now().toISOString());
+      try {
+        await deliver(deps, routine, result, run, opts);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        console.error(`bean: sprout "${routine.name}" done delivery failed — it keeps going`, err);
+        run.status = "needs-attention";
+        const line = `⚠ couldn't deliver this (${why.slice(0, 200)}) — the sprout keeps going and tries again`;
+        const { done: _, ...rest } = result.record;
+        await updateState(routine.name, (s) => ({
+          ...(s ?? { history: [] }),
+          history: (s?.history ?? []).map((h) => (h.startedAt === rest.startedAt && h.id === rest.id
+            ? { ...rest, status: "needs-attention" as const, digest: `${rest.digest}\n\n${line}` } : h)),
+        })).catch(() => {});
+        const text = todo?.text ?? result.results.at(-1)?.todo;
+        if (text !== undefined) await deps.addTodo?.(routine.name, text).catch(() => {});
+        return;
+      }
+      const current = (await deps.loadRoutines()).find((r) => r.name === routine.name);
+      if (current && deps.saveRoutine) await deps.saveRoutine({ ...current, enabled: false, until: result.record.finishedAt });
+      await deps.dropPendingTodos?.(routine.name);
     } catch (err) {
       console.error(`bean: sprout "${routine.name}" couldn't end after done`, err);
     } finally {
       ending.delete(routine.name);
       clearEnded(routine.name);
     }
-  };
-  /** Before the delivery's await: a done result stops further claims right away. */
-  const markDone = (routine: Routine, result: RoutineRunResult): void => {
-    if (result.record.done && !result.stopped) ended.add(routine.name);
-  };
+  }
   let timer: ReturnType<typeof setInterval> | undefined;
   const checkSinks = (routine: Routine, result: RoutineRunResult): RoutineRunResult =>
     withSinkProblems(result, deps.sinkProblems?.(routine) ?? []);
@@ -276,19 +304,19 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   async function execute(routine: Routine, ctl: AbortController, opts: RunOpts): Promise<FillResult> {
     let run: RunOutcome = { status: "failed" };
     let stoppedRun = false;
+    let owner = false;
     try {
       await stamp(routine.name);
       const result = checkSinks(routine, await deps.runRoutine(routine, undefined, ctl.signal));
       run = outcomeOf(result);
       stoppedRun = result.stopped === true;
-      markDone(routine, result);
+      owner = claimEnding(routine, result);
       await appendAndPrune(routine.name, result.record);
-      // Done: deliver the run, then pause it — even when the delivery failed (the record says done).
-      if (!stoppedRun) {
-        try { await deliver(deps, routine, result, run, opts); } finally { if (result.record.done) await finishDone(routine, result); }
-      }
+      if (!stoppedRun) await (owner ? deliverRun(routine, result, run, opts) : deliver(deps, routine, asOrdinary(result), run, opts));
     } catch (err) {
       console.error(`bean: routine "${routine.name}" run failed`, err);
+      // A throw before deliverRun settled the ending (e.g. the record save): release it.
+      if (owner && ending.delete(routine.name)) clearEnded(routine.name);
     } finally {
       settleStop(routine.name, ctl);
       release(routine, !stoppedRun);
@@ -325,19 +353,21 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         bump(routine.name, 1);
         try {
           let result: RoutineRunResult;
+          let owner = false;
           try {
             result = checkSinks(routine, await deps.runRoutine(routine, todo, ctl.signal));
             runs[at] = outcomeOf(result);
             if (result.stopped) stoppedRun = true;
-            markDone(routine, result);
+            owner = claimEnding(routine, result);
             await appendAndPrune(routine.name, result.record, () => (inFlight.get(routine.name) ?? 0) > 1);
+          } catch (err) {
+            if (owner && ending.delete(routine.name)) clearEnded(routine.name);
+            throw err;
           } finally {
             bump(routine.name, -1);
           }
-          if (!result.stopped) {
-            // No extra await on an ordinary run: sibling claim/prune ordering stays as it was.
-            try { await deliver(deps, routine, result, runs[at]!, opts); } finally { if (result.record.done) await finishDone(routine, result); }
-          }
+          // A plain await on the ordinary path: no extra async hop, so sibling claim/prune ordering holds.
+          if (!result.stopped) await (owner ? deliverRun(routine, result, runs[at]!, opts, todo) : deliver(deps, routine, asOrdinary(result), runs[at]!, opts));
         } catch (err) {
           console.error(`bean: routine "${routine.name}" todo run failed`, err);
         }
@@ -497,15 +527,28 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       unflag();
       throw err;
     }
+    let current: Routine[];
+    try {
+      for (const r of expired) {
+        if (count(r.name) > 0 || !mayFire()) continue; // a live run finishes first
+        await expire(r).catch((err: unknown) => console.error(`bean: sprout "${r.name}" expiry failed`, err));
+      }
+      // Re-read after every await above (polls, expiry): a sprout paused, expired or ended meanwhile
+      // isn't started, and each starts on its current definition.
+      current = due.length > 0 ? await deps.loadRoutines() : [];
+    } catch (err) {
+      unflag();
+      throw err;
+    }
     // Due routines start together (fill takes its slots synchronously, right after the flags clear).
     // One a Run now started while this tick was deciding (it dropped the flag) is already handled.
     // Re-checked after the awaits above: a lease lost mid-tick admits nothing.
-    const go = mayFire() ? due.filter((r) => checking.get(r.name) === token) : [];
+    const startAt = now();
+    const go = mayFire() ? due.flatMap((r) => {
+      const c = current.find((x) => x.name === r.name);
+      return checking.get(r.name) === token && c?.enabled && !isExpired(c, startAt) && !ended.has(c.name) ? [c] : [];
+    }) : [];
     unflag();
-    for (const r of expired) {
-      if (count(r.name) > 0 || expiring.has(r.name) || !mayFire()) continue; // a live run finishes first
-      await expire(r).catch((err: unknown) => console.error(`bean: sprout "${r.name}" expiry failed`, err));
-    }
     await Promise.all(go.map((r) => fill(r)));
 
     async function consider(routine: Routine, state: RoutineState | undefined, nowT: Date): Promise<void> {
@@ -545,18 +588,27 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
    * its queue. Post first: a crash in between posts again on the next start (at-least-once, like the
    * outbox). Lease holder only (tick's `mayFire`); no pause without `saveRoutine` (it'd post every tick). */
   async function expire(routine: Routine): Promise<void> {
-    if (!deps.saveRoutine) return;
-    expiring.add(routine.name);
+    const name = routine.name;
+    if (!deps.saveRoutine || expiring.has(name)) return;
+    expiring.add(name);
     try {
+      // Under the guard, against the current definition: an overlapping tick may already have
+      // posted and paused it, or the owner extended it meanwhile.
+      const found = (await deps.loadRoutines()).find((r) => r.name === name);
+      if (!found || !isExpired(found, now()) || count(name) > 0 || !mayFire()) return;
       const at = now().toISOString();
-      const digest = `Nothing by ${untilLabel(routine.until)} — extend?`;
-      await deps.deliverDigest(routine, {
+      const digest = `Nothing by ${untilLabel(found.until)} — extend?`;
+      await deps.deliverDigest(found, {
         digest, results: [], ending: "expired",
         record: { startedAt: at, finishedAt: at, status: "ok", digest, steps: [] },
       });
-      await endSprout(routine.name);
+      // Pause only the deadline that was posted about: an edit during the post wins.
+      const after = (await deps.loadRoutines()).find((r) => r.name === name);
+      if (!after?.enabled || after.until !== found.until) return;
+      await deps.saveRoutine({ ...after, enabled: false });
+      await deps.dropPendingTodos?.(name);
     } finally {
-      expiring.delete(routine.name);
+      expiring.delete(name);
     }
   }
 

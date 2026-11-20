@@ -83,18 +83,25 @@ always test the target with `isQuietEnd(goto, ids)`, never `goto === "quiet"`.
 core-local day) or an ISO date-time (`untilTime`). Route target `"done"` (route-only, not reserved —
 `isDoneEnd`, same rule as quiet) on a clean ok pass sets `RunRecord.done`, appends `DONE_FOOTER`
 (recommended next step; its "a week" is `ARCHIVE_GRACE_DAYS`) and stops the drain claiming. The
-scheduler marks the sprout `ended` in memory before delivery (siblings claim nothing more, Run now
-refuses), delivers, then saves `enabled: false, until: now` and `dropPendingTodos` — once, even if
-two parallel runs hit done. Expiry: a tick (lease holder only) finds `isExpired` (on and past
-`until`), waits for live runs, posts `Nothing by <date> — extend?` via `deliverDigest`
-(`ending: "expired"`, never recorded), then pauses + drops the queue — post first (a crash may
-re-post), and a failed post leaves it on to retry. Either ending is chatops `context: true` and
-ignores `chatopsOnlyOnProblems`. `isArchived` = off and `ARCHIVE_GRACE_DAYS` past `until` —
-derived; refused by Run now / trigger / Check now / exact-todo runs / `resolveTodoRoutine` and
+first done result owns the ending (`claimEnding`, synchronous, before any await): `ended` stops
+sibling claims and admissions until the owner settles and the last slot frees; a sibling's later
+done result is delivered as an ordinary run (no footer). The owner pauses only after its delivery
+landed — `enabled: false, until: <done run's finishedAt>` + `dropPendingTodos`; a failed delivery
+keeps the sprout on and its queue, rewrites that record needs-attention (no `done`) and re-queues
+the done todo's text. Expiry: a tick (lease holder only) finds `isExpired` (on and past `until`),
+waits for live runs, and `expire()` — under the `expiring` guard and re-reading the definition
+(overlapping ticks) — posts `Nothing by <date> — extend?` via `deliverDigest`
+(`ending: "expired"`, never recorded), then pauses + drops the queue only if `until` is unchanged
+— post first (a crash may re-post); a failed post leaves it on to retry. Expiry runs before the
+tick's due list is started, and that list is re-read (enabled, not expired, not ended, lease) right
+before the slots are taken. Either ending is chatops `context: true` and ignores
+`chatopsOnlyOnProblems`. `isArchived` = off and `ARCHIVE_GRACE_DAYS` past `until` — derived;
+refused by Run now / trigger / Check now / exact-todo runs / `resolveTodoRoutine` and
 filtered from the desktop + chatops run/todo catalogs and the `sprouts` / `enable` commands. A
 paused sprout within the grace stays visible. `enable` (chatops) refuses an ended one past its
 `until`; restore = `scheduler.enableWatch(name, false, later until)`, which refuses a passed end.
-"Why it ended" = `endReason()` from the newest record (`done` = found, else expired).
+"Why it ended" = `endReason()`: found when a `done` record's `finishedAt` equals the current `until`,
+else expired. A date-time `until` must name a real calendar date (no Feb 30 roll-over).
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
 `stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
 never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.
