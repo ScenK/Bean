@@ -83,6 +83,17 @@ test("the stack holds still under the pointer: a vanished memory bubble's click 
   expect(ids()).toEqual(["delegate:1", "memory:batch"]);
 });
 
+test("a frozen stack's Stop counts runs that started under the pointer and still shows Stopping", () => {
+  const { box, b, open } = mount([job("routine:r:1", { routine: "r" })]);
+  open("routine:r:1");
+  box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointerenter"));
+  b.update([job("routine:r:1", { routine: "r" }), job("routine:r:2", { routine: "r" })]);
+  expect(box.querySelectorAll(".bean-bubble")).toHaveLength(1); // held
+  expect(box.querySelector(".bean-bubble-stop")!.textContent).toBe("Stop all 2 runs");
+  b.update([job("routine:r:1", { routine: "r", line: "Stopping…" }), job("routine:r:2", { routine: "r", line: "Stopping…" })]);
+  expect(box.querySelector<HTMLButtonElement>(".bean-bubble-stop")!.disabled).toBe(true);
+});
+
 describe("liveBadgeAgent", () => {
   const job = (p: Partial<TaskJob>): TaskJob => ({ id: "j", kind: "live", name: "", line: "", detail: "", startedAt: 0, state: "running", ...p });
 

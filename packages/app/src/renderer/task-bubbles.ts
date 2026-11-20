@@ -12,7 +12,8 @@ import type { DashboardTarget } from "../channels.js";
 // <button> (a button can't nest one), overlaid on room reserved in the detail.
 // While the pointer is over the stack, a change that adds, removes or reorders bubbles waits until
 // it leaves: a 10s-lingering bubble vanishing under the cursor would slide its neighbour into the
-// spot, and the click would land there (a memory bubble's click opening a delegate's chat).
+// spot, and the click would land there (a memory bubble's click opening a delegate's chat). The
+// shown bubbles' content and the Stop count still follow the latest list, so Stop never undersells.
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
@@ -142,7 +143,7 @@ export function createTaskBubbles(
     if (openId && !shown.some((j) => j.id === openId)) openId = undefined;
     const html = shown.map((j, i) =>
       bubble(j, j.id === openId, openId !== undefined && j.id !== openId, i === shown.length - 1, !seen.has(j.id), now,
-        j.id === openId ? stopLabel(j, jobs) : undefined));
+        j.id === openId ? stopLabel(j, latest) : undefined));
     const failed = hidden.filter((j) => j.state === "failed").length;
     // Oldest end of the stack (farthest from the bean), so it lands there in either direction.
     if (hidden.length) html.unshift(`<button type="button" class="bean-bubble-more" aria-expanded="false">+${hidden.length} more${failed ? ` · ${failed} failed` : ""}</button>`);
@@ -227,8 +228,10 @@ export function createTaskBubbles(
   return {
     update(next: TaskJob[]): void {
       latest = next;
-      if (hovered && !sameIds(jobs, next)) return;
-      jobs = next;
+      if (hovered && !sameIds(jobs, next)) {
+        const byId = new Map(next.map((j) => [j.id, j]));
+        jobs = jobs.map((j) => byId.get(j.id) ?? j); // same bubbles in the same spots, fresh content
+      } else jobs = next;
       render();
     },
     running: (): boolean => latest.some((j) => j.state === "running"),
