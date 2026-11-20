@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "vitest";
-import { CARD_LEAD, checkPdfAttachment, converse, gapMarkerLine, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
+import { checkPdfAttachment, converse, gapMarkerLine, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
+import { CARD_LEAD } from "../src/card-record.js";
 import { cardRecord } from "../src/card-record.js";
 import { composePersonaPrompt, DEFAULT_PERSONA, type Persona } from "../src/persona.js";
 import { availableModels } from "../src/models.js";
@@ -481,6 +482,15 @@ test("a proposal with no sentence gets CARD_LEAD; one with a sentence keeps it; 
   expect(systems[0]).toContain("one short, natural sentence leading into the card");
   expect(new Set(systems).size).toBe(1);
   expect(new Set(toolSets).size).toBe(1);
+});
+
+test("with no terminal, propose_run (an in-line chat skill) is left out of the lead-in rule", async () => {
+  const systems: string[] = [];
+  const deps: ConverseDeps = { model: "m", chat: async ({ messages }) => { systems.push(messages[0]!.content); return { content: "ok", toolCalls: [] }; } };
+  await conv({ latestUserText: "hi", deps, runAvailable: false });
+  await conv({ latestUserText: "hi", deps, runAvailable: true });
+  expect(systems[0]).toContain("Whenever you call a propose_* tool other than propose_run, also write");
+  expect(systems[1]).toContain("Whenever you call a propose_* tool, also write");
 });
 
 test("a plain reply with no proposal is never given the card lead", async () => {

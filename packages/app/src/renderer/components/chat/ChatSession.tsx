@@ -14,6 +14,7 @@ import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, linkedNoteData } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
+import { CARD_LEAD } from "@bean/core/card-record";
 import { dataUrlToAttachment, labelNoteImages } from "../../shared/note-images.js";
 import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
@@ -1204,7 +1205,9 @@ export function ChatSession({
     const prompt = composePrompt(skill, rest);
     const instruction = `${skill.name}${rest ? ` — ${rest}` : ""}`;
     const proposal = { projectPath: dest.projectPath, instruction, skillName: skill.name, composedPrompt: prompt };
-    setItems((prev) => addDelegateProposal(prev, proposal, id));
+    // No converse() turn here, so the card gets the neutral lead-in a bare proposal gets (#978).
+    const lead: ChatItem = { kind: "reply", id: newId(), text: CARD_LEAD, at: new Date().toISOString() };
+    setItems((prev) => addDelegateProposal([...prev, lead], proposal, id));
     setAutoFocusDelegateId(id);
   };
 

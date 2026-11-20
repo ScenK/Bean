@@ -190,6 +190,7 @@ test("chat history: New chat in place, and a delegate keeps running in a chat sw
     const card = shown.locator(".bean-card", { hasText: "delegate" });
     const start = card.getByRole("button", { name: "Delegate" });
     await expect(start).toBeFocused();
+    await expect(shown.locator(".bean-bubble--bean")).toContainText("Here's what I'd do:"); // #978: no bare card
     await chat.keyboard.down("Enter"); // still held: a key-repeat, now on the focused Start
     await chat.keyboard.up("Enter");
     await chat.waitForTimeout(300);

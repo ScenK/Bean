@@ -27,7 +27,10 @@ the same action, because a tool-only turn leaves no reply text.
   explains them is static) and not citable for memory. The synced view shows them as status rows.
 - Untapped chatops cards stay `pending` after their store's 10-minute expiry (known limit).
 - **Lead-in (#978):** every card arrives under one sentence of speech. `converse()`'s behavior
-  instructions ask for it (not `AGENT_RULES` — that reaches routine steps and briefs too); its
-  proposal returns (`card()`) fill `CARD_LEAD` when the model said nothing. Card paths that skip
-  `converse()` (chatops `/live-session`, Continue live) `fx.post(CARD_LEAD)` first. Chatops drops
-  the lead for a chat-target run (no card follows) and for an ignored nested card's second hop.
+  instructions ask for it (not `AGENT_RULES` — that reaches routine steps and briefs too; with no
+  terminal, propose_run is excluded since chatops runs chat skills in-line); its proposal returns
+  (`card()`) fill `CARD_LEAD` (node-free `@bean/core/card-record`) when the model said nothing.
+  Card paths that skip `converse()` add it themselves: desktop `/skill` (`runTerminalSkill`, a
+  reply row), chatops `/live-session` and Continue live (`fx.post`). Chatops drops the lead for a
+  chat-target run (no card follows) and for an ignored nested card's second hop. A new
+  converse-free card path needs the same.

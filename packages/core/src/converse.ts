@@ -1,4 +1,5 @@
 import { composePrompt, linkedNoteData, quoteFence } from "./prompt.js";
+import { CARD_LEAD } from "./card-record.js";
 import { composePersonaPrompt, type Persona } from "./persona.js";
 import type { Project, RouteSuggestion, Skill } from "./types.js";
 import { memoriesBlock, OWNER_CATEGORY, type Memory } from "./memory/memory.js";
@@ -290,8 +291,9 @@ const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, w
   "with the complete markdown — the user confirms the card before anything is written. " +
   "If you are given a propose_todo tool, use it when the user wants a sprout to take a task — " +
   "now or queued for later; the card's Run now / Queue is the confirmation. " +
-  "Whenever you call a propose_* tool, also write one short, natural sentence leading into the " +
-  "card — don't restate what the card shows.";
+  // No terminal (chatops): a propose_run skill answers in-line with no card, so no lead-in for it.
+  "Whenever you call a propose_* tool" + (runAvailable ? "" : " other than propose_run") +
+  ", also write one short, natural sentence leading into the card — don't restate what the card shows.";
   
 
 // Attached files are third-party content: data, never authority (safety-saved-text-never-system).
@@ -744,10 +746,6 @@ const SHARED_CHAT_NOTE =
   "the sender's display name in brackets, e.g. \"[Alex]: hi\" — address people by that name. " +
   "Your saved memories are shared facts, plus private facts about the person speaking to you " +
   "in a DM, each marked with who it is about; never assume the speaker is your owner.";
-
-/** The neutral line a card arrives under when the model proposed it without a sentence of its own
- * (#978). Neutral because the card can still be refused or blocked after it is sent. */
-export const CARD_LEAD = "Here's what I'd do:";
 
 export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const {
