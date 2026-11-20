@@ -1,4 +1,4 @@
-# Bean
+# Superagent Bean
 
 <div align="center">
   <img src="docs/icon.png" alt="Bean app icon" width="128" height="128" />
