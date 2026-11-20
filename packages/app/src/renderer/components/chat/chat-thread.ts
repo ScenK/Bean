@@ -87,20 +87,30 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
           ...(typeof it.batch === "string" ? { batch: it.batch.slice(0, 100) } : {}),
         }
         : undefined;
+    case "summary":
+      return typeof it.text === "string" && it.text ? { kind: "summary", id: it.id, text: cap(it.text) } : undefined;
   }
 }
 
 /** The transcript as it is saved: transient state dropped, actions made inert, each text capped, at
- * most THREAD_ITEMS_MAX items (oldest dropped) and under THREAD_MAX_BYTES as JSON. Never mutates. */
+ * most THREAD_ITEMS_MAX items (oldest dropped) and under THREAD_MAX_BYTES as JSON. Only the latest
+ * rolling summary is kept, and never trimmed away: cut past, it stays first, standing for what was
+ * dropped (#975). Never mutates. */
 export function normalizeForSave(items: readonly ChatItem[]): ChatItem[] {
-  let out = items.flatMap((it) => normalizeItem(it) ?? []).slice(-THREAD_ITEMS_MAX);
+  const all = items.flatMap((it) => normalizeItem(it) ?? []);
+  const latest = all.findLastIndex((it) => it.kind === "summary");
+  const kept = all.filter((it, i) => it.kind !== "summary" || i === latest);
+  const s = kept.findIndex((it) => it.kind === "summary");
+  const view = (cut: number): ChatItem[] => (s >= 0 && s < cut ? [kept[s]!, ...kept.slice(cut)] : kept.slice(cut));
+  let cut = Math.max(0, kept.length - THREAD_ITEMS_MAX);
+  if (s >= 0 && s < cut) cut++; // the pinned summary takes a slot
   const bytes = (xs: ChatItem[]): number => new TextEncoder().encode(JSON.stringify(xs)).length;
   // ponytail: re-encodes per drop of a tenth; fine at ≤500 items.
-  while (out.length > 0 && bytes(out) > THREAD_MAX_BYTES) out = out.slice(Math.max(1, Math.floor(out.length / 10)));
-  return out;
+  while (cut < kept.length && bytes(view(cut)) > THREAD_MAX_BYTES) cut += Math.max(1, Math.floor((kept.length - cut) / 10));
+  return view(cut);
 }
 
-const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot", "continued", "post"]);
+const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot", "continued", "post", "summary"]);
 
 /** A saved transcript back into the window: well-formed items only, normalized again, fresh ids (a
  * restored `item-3` would collide with this load's counter), and user turns stripped of `source` —

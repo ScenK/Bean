@@ -938,6 +938,7 @@ export function ChatPanel({
               />
             );
           }
+          if (it.kind === "summary") return null; // model history only (#975); ChatSession filters it out
           // Same "assigned skills, else every project" fallback PlanWindow uses for its picker.
           const assigned = projects.filter((p) => p.skills?.includes(it.run.skillName));
           return (

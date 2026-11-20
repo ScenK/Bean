@@ -25,7 +25,7 @@ const list = arr(() => true);
 const turn = shape({ role: oneOf("user", "assistant", "system"), content: str, id: opt(str) });
 const image = shape({ data: str, mimeType: str });
 const chatRequest = shape({
-  history: arr(turn), message: str, source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
+  history: arr(turn), summary: opt(str), message: str, source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
   linkedNote: opt(obj), images: opt(arr(image)), documents: opt(list), turnId: opt(str),
 });
 const project = shape({ name: str, path: str, skills: opt(arr(str)) });

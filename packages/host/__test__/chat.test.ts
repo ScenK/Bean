@@ -1,7 +1,7 @@
 import { describe, expect, it, test, vi } from "vitest";
 import { buildChatHandler, buildModelsHandler, buildModelMemoryHandlers, type ChatHandlerDeps } from "../src/chat.js";
 import { buildMemoryHandlers } from "../src/memory.js";
-import type { Project, Skill, Persona, Memory } from "@bean/core";
+import { formatSummaryBlock, type ChatTurn, type Project, type Skill, type Persona, type Memory } from "@bean/core";
 
 test("chat handler wires skills/projects/persona into converse", async () => {
   const skills: Skill[] = [{ name: "review-code", description: "r", body: "BODY" }];
@@ -527,6 +527,41 @@ test("a forget receipt's Undo: memory.append of result.forgotten restores the id
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("the chat handler bounds a long history with a rolling summary on the core, local or remote shell alike (#975)", async () => {
+  const calls: Array<{ tools: number; messages: Array<{ role: string; content: unknown }> }> = [];
+  let failSummary = false;
+  const handler = buildChatHandler({
+    loadSkills: async () => [], loadProjects: async () => [], loadPersona: async () => ({ name: "Ponyta", tags: [] }),
+    converse: async ({ messages, tools }) => {
+      calls.push({ tools: tools.length, messages });
+      if (tools.length === 0) {
+        if (failSummary) throw new Error("down");
+        return { content: "they planned the trip", toolCalls: [] };
+      }
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m", projectSkillsDir: "/b/p", skillsDir: "/b/s", projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json", projectPersonaFile: "/b/pp.json", loadMemories: async () => [], dbFile: "/b/memory.json",
+  });
+  const history: ChatTurn[] = Array.from({ length: 61 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: `turn ${i}` }));
+  const out = await handler({ history, summary: "they met", message: "next?" });
+  expect(out.reply).toBe("ok");
+  expect(out.summary).toEqual({ text: "they planned the trip", covers: 41 });
+  const sent = calls.at(-1)!.messages.map((m) => m.content);
+  expect(sent).toContain(formatSummaryBlock("they planned the trip"));
+  expect(sent).not.toContain("turn 40");
+  expect(sent).toContain("turn 41");
+
+  // A failed summary call still answers: the old summary and a bounded tail, no new summary.
+  failSummary = true;
+  const failed = await handler({ history, summary: "they met", message: "next?" });
+  expect(failed.reply).toBe("ok");
+  expect(failed.summary).toBeUndefined();
+  const tail = calls.at(-1)!.messages.map((m) => m.content);
+  expect(tail).toContain(formatSummaryBlock("they met"));
+  expect(tail).not.toContain("turn 40");
 });
 
 test("models handler returns only models the enabled CLIs offer", () => {

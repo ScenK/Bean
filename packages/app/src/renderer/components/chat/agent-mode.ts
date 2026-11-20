@@ -2,7 +2,7 @@ import type { AvailableModel, CliName, LiveCli } from "@bean/core";
 import type { HandoffItem, LiveEvent } from "@bean/host";
 import type { CloseTurn } from "@bean/host";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
-import type { AgentId, ChatItem } from "../../shared/chat-types.js";
+import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { cardRecord, runEndState, type CardRecordState } from "@bean/core/card-record";
 import { quoteFence } from "@bean/core/prompt";
 import { pdfPlaceholder, SPROUT_UNKNOWN } from "./chat-thread.js";
@@ -120,6 +120,31 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     const capped = text.length > max ? `${text.slice(0, max)}…` : text;
     return [{ role: "assistant", content: `[${AGENT_NAMES[it.agent]}] ${capped}` }];
   });
+}
+
+const latestSummary = (items: readonly ChatItem[]): number => items.findLastIndex((it) => it.kind === "summary");
+
+/** The items after the latest rolling summary (#975): what Bean's history and the close-time memory
+ * transcript read — a summary is never episode evidence, and what it covers isn't re-read. */
+export const sinceSummary = (items: ChatItem[]): ChatItem[] => items.slice(latestSummary(items) + 1);
+
+/** A Bean turn's history (#975): the latest summary's text and the turns of the items after it.
+ * `owners[i]` = the item turn i came from, so a reply's new summary lands after what it covers. */
+export function modelHistory(items: ChatItem[]): { summary?: string; turns: CloseTurn[]; owners: string[] } {
+  const s = items[latestSummary(items)];
+  const turns: CloseTurn[] = [];
+  const owners: string[] = [];
+  for (const it of sinceSummary(items)) for (const t of chatTurns([it])) { turns.push(t); owners.push(it.id); }
+  return { ...(s?.kind === "summary" ? { summary: s.text } : {}), turns, owners };
+}
+
+/** A reply's new summary (covering the request's first `covers` turns) as a hidden item right after
+ * the last item it covers; unchanged when there is none or that item is gone. */
+export function placeSummary(items: ChatItem[], owners: readonly string[], summary: { text: string; covers: number } | undefined): ChatItem[] {
+  const owner = summary && Number.isInteger(summary.covers) && summary.covers > 0 ? owners[summary.covers - 1] : undefined;
+  const at = owner === undefined ? -1 : items.findIndex((it) => it.id === owner);
+  if (at < 0 || !summary?.text) return items;
+  return [...items.slice(0, at + 1), { kind: "summary", id: newId(), text: summary.text }, ...items.slice(at + 1)];
 }
 
 /** A Home post's history turn: code-built header, the sprout's text fenced as data. */

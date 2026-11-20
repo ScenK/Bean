@@ -1,9 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ChatPanel, type StopTarget } from "./ChatPanel.js";
 import { MAX_IMAGES_PER_MESSAGE, PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
-  HANDOFF_ITEMS, chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
+  HANDOFF_ITEMS, chatTurns, modelHistory, placeSummary, sinceSummary, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
   LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
   LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths, type LabeledImage,
 } from "./agent-mode.js";
@@ -30,9 +30,10 @@ type LeaveFlow = { switchTo: string; title: string } | null;
 
 // Transcript handed to rememberOnClose — see chatTurns (typed agent steering is citable; agent finals are context).
 // Nothing typed since this window loaded = nothing new to remember (a restored chat's turns were
-// covered when it first closed), so no extraction call at all.
+// covered when it first closed), so no extraction call at all. Only the items after the latest
+// rolling summary (#975), so an episode's cost stays bounded.
 export const closeTranscript = (items: ChatItem[], typedSinceLoad: boolean): CloseTurn[] =>
-  typedSinceLoad ? chatTurns(items, { memory: true }) : [];
+  typedSinceLoad ? chatTurns(sinceSummary(items), { memory: true }) : [];
 
 /** Desktop chat history: a change is written at most this long after it lands. */
 export const THREAD_SAVE_MS = 1000;
@@ -255,6 +256,8 @@ export function ChatSession({
   mountId, restoreId, startIncognito, prompt, sessions, hidden, homePending = false, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
 }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
+  // A rolling summary (#975) is model history only: the panel (and so Find and its rows) never sees it.
+  const shownItems = useMemo(() => items.filter((it) => it.kind !== "summary"), [items]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("model");
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
@@ -685,12 +688,13 @@ export function ChatSession({
     const unpinFailed = (): void => { if (doc && pdfRef.current?.data === doc.data) setPdf(undefined); };
 
     // Image bytes ride only on the current turn; older turns keep a text placeholder
-    // (mirrors chatops — see core's latestUserImages doc comment).
-    const history = chatTurns(itemsRef.current);
+    // (mirrors chatops — see core's latestUserImages doc comment). The latest rolling summary
+    // stands for everything before it; the core folds more in once past its budget (#975).
+    const { summary, turns: history, owners } = modelHistory(itemsRef.current);
 
     try {
       const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
-      const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
+      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
       if (res.model) setModel(res.model);
       // Stopped while attaching: the file may be what hung, so it's unpinned like a failure. A PDF an
       // earlier turn already read stays pinned.
@@ -704,7 +708,7 @@ export function ChatSession({
       rejectedMemoriesRef.current.push(...(res.forgotten ?? []).map((m) => m.text));
 
       setItems((prev) => {
-        const next = prev.filter((it) => it.id !== workingId);
+        const next = placeSummary(prev.filter((it) => it.id !== workingId), owners, res.summary);
         const generated = res.generatedImages?.filter(
           (g): g is { path: string; dataUrl: string } => typeof g.dataUrl === "string",
         );
@@ -1727,7 +1731,7 @@ export function ChatSession({
         onTerminalOpen={setTerminalOpen}
         onShells={onShells}
         terminalShortcut={terminalShortcutRef}
-        items={items}
+        items={shownItems}
         busy={busy || evicting}
         model={model}
         status={status}

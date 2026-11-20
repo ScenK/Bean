@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, applySproutEnd, newPostItems, settleRestoredSprouts, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
-import { canContinueLive, chatTurns } from "../src/renderer/components/chat/agent-mode.js";
+import { canContinueLive, chatTurns, modelHistory, placeSummary } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
 
 const run = { skillName: "s", projectPath: "/p", confidence: 1, composedPrompt: "go" };
@@ -202,6 +202,50 @@ describe("close-time memory", () => {
     expect(closeTranscript(restored, false)).toEqual([]);
     expect(closeTranscript([...restored, { kind: "user", id: "new", text: "I use vim", source: "typed" }], true).at(-1))
       .toMatchObject({ content: "I use vim", source: "typed" });
+  });
+});
+
+describe("rolling summary (#975)", () => {
+  const turn = (i: number): ChatItem => (i % 2
+    ? { kind: "reply", id: `r${i}`, text: `answer ${i}` }
+    : { kind: "user", id: `u${i}`, text: `ask ${i}`, source: "typed" });
+  const summary = (text: string): ChatItem => ({ kind: "summary", id: newId(), text });
+
+  it("model history is the latest summary plus the items after it, each turn owned by its item", () => {
+    const items = [turn(0), summary("old"), turn(1), { kind: "status", id: "s", text: "hi", tone: "info" } as ChatItem, summary("new"), turn(2), turn(3)];
+    const h = modelHistory(items);
+    expect(h.summary).toBe("new");
+    expect(h.turns.map((t) => t.content)).toEqual(["ask 2", "answer 3"]);
+    expect(h.owners).toEqual(["u2", "r3"]);
+    expect(modelHistory([turn(0)]).summary).toBeUndefined();
+  });
+
+  it("a reply's summary lands right after the last item it covers, and survives a save and restore there", () => {
+    const items = [turn(0), turn(1), turn(2), turn(3)];
+    const { owners } = modelHistory(items);
+    const placed = placeSummary([...items, turn(4)], owners, { text: "S", covers: 2 });
+    expect(placed.map((it) => it.kind)).toEqual(["user", "reply", "summary", "user", "reply", "user"]);
+    expect(placeSummary(items, owners, { text: "S", covers: 9 })).toBe(items);
+    expect(placeSummary(items, owners, undefined)).toBe(items);
+    const restored = restoreItems(JSON.parse(JSON.stringify(normalizeForSave(placed))));
+    expect(modelHistory(restored)).toMatchObject({ summary: "S", owners: [restored[3]!.id, restored[4]!.id, restored[5]!.id] });
+  });
+
+  it("a 600-item transcript saves with its latest summary kept (older ones dropped), still within the caps", () => {
+    const items = [summary("first"), ...Array.from({ length: 50 }, (_, i) => turn(i)), summary("latest"), ...Array.from({ length: 550 }, (_, i) => turn(50 + i))];
+    const saved = normalizeForSave(items);
+    expect(saved).toHaveLength(THREAD_ITEMS_MAX);
+    expect(saved.filter((it) => it.kind === "summary")).toEqual([{ kind: "summary", id: items[51]!.id, text: "latest" }]);
+    expect(saved[0]!.kind).toBe("summary");
+    expect(saved.at(-1)!.id).toBe(items.at(-1)!.id);
+    // Kept in place when the cut doesn't reach it.
+    const late = [...Array.from({ length: 590 }, (_, i) => turn(i)), summary("late"), turn(590)];
+    expect(normalizeForSave(late).at(-2)).toMatchObject({ kind: "summary", text: "late" });
+  });
+
+  it("close-time memory reads only the items after the latest summary, never the summary", () => {
+    const items = [turn(0), summary("they talked"), { kind: "user", id: "u9", text: "I use vim", source: "typed" } as ChatItem];
+    expect(closeTranscript(items, true)).toEqual([{ role: "user", content: "I use vim", source: "typed", id: "u9" }]);
   });
 });
 

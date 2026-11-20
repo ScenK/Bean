@@ -114,7 +114,11 @@ export type ChatItem =
   // A sprout's Home post (#960), appended once per `postId` when today's Home is shown. Untrusted
   // sprout output: rendered as inert markdown, in history only as a fenced, non-typed user turn.
   // `batch` = drained together (2+ fold into one "While you were away · N" block); `at` = its ISO time.
-  | { kind: "post"; id: string; postId: string; sprout: string; at: string; text: string; batch?: string };
+  | { kind: "post"; id: string; postId: string; sprout: string; at: string; text: string; batch?: string }
+  // A rolling summary (#975), never rendered: it stands for every item before it in Bean's model
+  // history (the core made it, see core compactHistory). Only the latest one counts — history is it
+  // plus the items after it, by position (ids are remapped on restore).
+  | { kind: "summary"; id: string; text: string };
 
 /** The speaker of a reply/working bubble, or undefined for every other item. */
 export function itemAgent(it: ChatItem): AgentId | undefined {

@@ -1,8 +1,9 @@
-import { expect, test, beforeEach, afterEach } from "vitest";
+import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatSummaryBlock, maybeCompact, summarizeTurns } from "../src/chatops/compact.js";
+import { compactHistory, formatSummaryBlock, HISTORY_BYTE_BUDGET, maybeCompact, summarize, summarizeTurns, SUMMARY_TURN_CHARS } from "../src/chatops/compact.js";
+import type { ChatTurn } from "../src/converse.js";
 import { formatAmbientBlock } from "../src/chatops/ambient.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { closeDb } from "../src/db.js";
@@ -93,4 +94,53 @@ test("a /new reset while the summary is pending leaves the fresh conversation un
     { role: "user", content: "new0" },
     { role: "assistant", content: "new1" },
   ]);
+});
+
+describe("compactHistory (desktop rolling summary, #975)", () => {
+  const turns = (n: number, from = 0): ChatTurn[] =>
+    Array.from({ length: n }, (_, i) => ({ role: (from + i) % 2 ? "assistant" : "user", content: `t${from + i}` }) as ChatTurn);
+  const seen: string[] = [];
+  const summarizer = { chat: async (a: { messages: Array<{ content: unknown }> }) => {
+    seen.push(String(a.messages[1]!.content));
+    return { content: `S${seen.length}`, toolCalls: [] };
+  }, model: "m" };
+
+  test("under budget: the summary plus the turns as-is, so the prefix stays byte-identical turn to turn", async () => {
+    seen.length = 0;
+    const a = await compactHistory(turns(40), "earlier", summarizer);
+    const b = await compactHistory(turns(42), "earlier", summarizer);
+    expect(seen).toEqual([]);
+    expect(a.summary).toBeUndefined();
+    expect(a.history[0]).toEqual({ role: "user", content: formatSummaryBlock("earlier") });
+    expect(b.history.slice(0, a.history.length)).toEqual(a.history);
+    expect((await compactHistory(turns(3), undefined, summarizer)).history).toEqual(turns(3));
+  });
+
+  test("past the turn budget: one summary of all but a recent tail, folded into the previous one", async () => {
+    seen.length = 0;
+    const out = await compactHistory(turns(61), "earlier", summarizer);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("Summary so far:\nearlier");
+    expect(seen[0]).toContain("user: t0");
+    expect(seen[0]).not.toContain("t41");
+    expect(out.summary).toEqual({ text: "S1", covers: 41 });
+    expect(out.history).toEqual([{ role: "user", content: formatSummaryBlock("S1") }, ...turns(20, 41)]);
+  });
+
+  test("past the byte budget: the kept tail fits half of it, and each turn's summary input is capped", async () => {
+    seen.length = 0;
+    const big = "x".repeat(HISTORY_BYTE_BUDGET / 4);
+    const out = await compactHistory(Array.from({ length: 6 }, () => ({ role: "user" as const, content: big })), undefined, summarizer);
+    expect(out.summary?.covers).toBe(4); // two turns = half the budget
+    expect(out.history).toHaveLength(3);
+    expect(seen[0]!.length).toBeLessThan(6 * (SUMMARY_TURN_CHARS + 10));
+  });
+
+  test("a failed summary call keeps the previous summary and sends only the tail", async () => {
+    const failing = { chat: async () => { throw new Error("down"); }, model: "m" };
+    const out = await compactHistory(turns(70), "earlier", failing);
+    expect(out.summary).toBeUndefined();
+    expect(out.history).toEqual([{ role: "user", content: formatSummaryBlock("earlier") }, ...turns(20, 50)]);
+    await expect(summarize(turns(2), { chat: async () => ({ content: " ", toolCalls: [] }), model: "m" })).rejects.toThrow();
+  });
 });

@@ -191,6 +191,9 @@ export interface ConverseResult {
   sendCard?: SendCard;
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
+  /** A new rolling summary of the desktop chat (#975), covering the request's first `covers`
+   * history turns — set by the desktop handler (compactHistory), never by converse() itself. */
+  summary?: { text: string; covers: number };
   /** The caller aborted the turn (`ConverseInput.signal`); `reply` is "" and nothing else is set. */
   stopped?: true;
 }
@@ -198,7 +201,9 @@ export interface ConverseResult {
  * `incognito` (the chat's off-the-record chip) withholds them too — an incognito chat writes nothing. */
 /** `turnId` = the desktop renderer's id for this user turn, so close-time catch-up can skip
  * turns whose per-turn memory capture already ran (app ipc.ts buildMemoryHandlers). */
-export interface ChatRequest { history: ChatTurn[]; message: string; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string; }
+/** `summary` = the desktop chat's latest rolling summary (#975); `history` is then only the turns
+ * after it. The host bounds the two with compactHistory. */
+export interface ChatRequest { history: ChatTurn[]; summary?: string; message: string; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string; }
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent

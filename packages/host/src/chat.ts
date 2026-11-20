@@ -1,6 +1,6 @@
 import {
   converse, checkPdfAttachment, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  checkImageAttachments, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
+  checkImageAttachments, compactHistory, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   DESKTOP_CHAT_MAX_BYTES, homeThreadId, homeThreadTitle, nextHomeDay, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
@@ -104,8 +104,11 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
         })
       : undefined;
     const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? []), ...(workTool ? [workTool] : [])];
+    // Bounded here, on the core (a remote shell never holds the API key): the summary rides back
+    // with the reply and the shell keeps it as a hidden item (#975).
+    const compacted = await compactHistory(req.history, req.summary, { chat: deps.converse, model: deps.getModel() }, signal);
     const result = await converse({
-      history: req.history,
+      history: compacted.history,
       latestUserText: req.message,
       latestUserImages: req.images,
       documents,
@@ -131,6 +134,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       sendAvailable: deps.proposeSend !== undefined,
       signal,
     });
+    if (compacted.summary) result.summary = compacted.summary;
     if (result.proposedSend && deps.proposeSend) {
       result.sendCard = deps.proposeSend(result.proposedSend.destination, result.proposedSend.text);
       delete result.proposedSend;

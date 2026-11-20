@@ -33,6 +33,11 @@ Evaluated and deliberately left alone:
 - **Chatops compaction** (`chatops/compact.ts`) rewrites the history head (oldest 40 → 1
   summary) and necessarily busts the whole prefix — but only once per ~40 turns, and the
   alternative (unbounded history) costs more than the periodic bust. Inherent tradeoff.
+- **Desktop compaction** (#975, `compactHistory` in the host `chat` handler) is the same tradeoff:
+  history = the latest summary block + the turns after it, byte-identical between compaction
+  events; a bust once per ~40 turns. Before it, a chat at the 500-item save cap dropped its oldest
+  item every turn and missed the cache every turn — don't bound history by trimming its head per turn
+  ([project-desktop-chat-compaction](project-desktop-chat-compaction.md)).
 - **Ambient channel blocks** (`chatops/bot.ts`) are persisted into history as ordinary turns,
   so their time anchors freeze and the prefix stays append-only — keep it that way; injecting
   them per-request instead would churn the prefix.

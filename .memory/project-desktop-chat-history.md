@@ -84,7 +84,8 @@ proposal/delegate/note/skill/todo/offer cards become `expired`, starting/running
 `interrupted`, memory rows `kept` (no Undo); a running sprout card with a `jobId` stays running and settles
 from the thread's dispatch rows at restore (#921, [project-sprout-dispatches](project-sprout-dispatches.md)). Delegate and live-status **receipts are kept** — Continue
 live resumes through the host's `findDelegateRun(…, "desktop")`, never through restored JSON. Each text is
-capped at 20k chars, the list at 500 items (oldest dropped), the JSON at 2 MB (renderer copy of
+capped at 20k chars, the list at 500 items (oldest dropped — except the latest rolling `summary` item, see
+[project-desktop-chat-compaction](project-desktop-chat-compaction.md)), the JSON at 2 MB (renderer copy of
 `DESKTOP_CHAT_MAX_BYTES`). `restoreItems` remaps every id with `newId()` (a restored `item-3` would
 collide with the new load's counter) and drops `source` from user turns, so restored turns are context
 only for memory extraction. A restored done delegate has no `taskId`, so no event can loop it back.

@@ -90,7 +90,7 @@ export function frameReader(onFrame: (msg: unknown) => void, onError: (why: stri
 const { str, num, bool, obj, arr, opt, oneOf, shape } = g;
 const turn = shape({ role: oneOf("user", "assistant", "system"), content: str, id: opt(str) });
 const chatRequest = shape({
-  history: arr(turn), message: str, source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
+  history: arr(turn), summary: opt(str), message: str, source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
   linkedNote: opt(obj), images: opt(arr(shape({ data: str, mimeType: str }))), documents: opt(arr(() => true)), turnId: opt(str),
 });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
