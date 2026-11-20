@@ -35,7 +35,8 @@ export function groupThreads<T extends { updatedAt: string }>(threads: T[], now:
  * No push channel — this ack is the only live update. */
 export function withSaveAck(threads: DesktopChatListing[], ack: ChatThreadAck, items: ChatItem[]): DesktopChatListing[] {
   const agents = [...new Set(items.flatMap((it) => (it.kind === "reply" && it.agent && it.agent !== "bean" ? [it.agent] : [])))];
-  const old = threads.find((t) => t.id === ack.id);
+  const { home: _home, ...old } = threads.find((t) => t.id === ack.id) ?? {};
+  // `home` follows the ack only: a Home thread kept open past midnight becomes plain history.
   return [{ starred: false, groupName: null, ...old, ...ack, agents }, ...threads.filter((t) => t.id !== ack.id)];
 }
 
@@ -65,6 +66,8 @@ interface Props {
   /** Threads whose chat holds a live terminal shell: a calm `>_` (a dev server never finishes, so no spinner). */
   terminal: Set<string>;
   overlay: boolean;
+  /** The shown chat is today's Home (#960). */
+  homeActive: boolean;
   onNew: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
@@ -162,9 +165,12 @@ export function rowTime(iso: string, now: Date): string {
   return agoText(iso, now).replace("just now", "now").replace(" ago", "");
 }
 
-export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete, onStar, onRename, onGroup, onRenameGroup }: Props) {
+export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, homeActive, onNew, onOpen, onDelete, onStar, onRename, onGroup, onRenameGroup }: Props) {
   const now = new Date();
-  const rows = mergeRows(threads, synced);
+  // Today's Home is the pinned row, never a dated one (earlier days' Home threads are plain history).
+  // Filtered here, not into `threads`: effects key on that prop's identity.
+  const homeId = threads.find((t) => t.home)?.id;
+  const rows = mergeRows(threads.filter((t) => !t.home), synced);
   const sections = sidebarGroups(rows, now);
   const groupNames = sections.flatMap((s) => (s.kind === "group" ? [s.label] : []));
   const colors = groupColors(groupNames);
@@ -337,6 +343,21 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
     >
       <div class="bean-chat-sidebar-head">
         <span>All chats · {rows.length}</span>
+      </div>
+      <div class={`bean-chat-sidebar-home${homeActive ? " bean-chat-sidebar-home--active" : ""}`}>
+        <button
+          type="button"
+          class="bean-chat-sidebar-open"
+          disabled={busy}
+          aria-current={homeActive ? "true" : undefined}
+          title="Sprouts set to Post to Home land here"
+          onClick={() => { if (!homeActive) onOpen("home"); }}
+        >
+          <span class="bean-chat-sidebar-line">
+            <span class="bean-chat-sidebar-home-title">🏠 Home</span>
+            {homeId !== undefined ? marker(homeId) : null}
+          </span>
+        </button>
       </div>
       <div class="bean-chat-sidebar-list" ref={listRef}>
         {rows.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div> : null}

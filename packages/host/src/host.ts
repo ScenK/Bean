@@ -13,7 +13,7 @@ import {
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
   listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
   isWatchSeeded, clearWatch, watchSourceKey, briefMessages, parseBrief, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat,
-  deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, detectTools,
+  deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
   saveModelMemory, resolveDelegateSelection, liveRuns,
@@ -479,7 +479,7 @@ export async function createHost(deps: HostDeps) {
   // Desktop chat history: per-chat thread pins and incognito latches.
   const threads = buildChatThreadHandlers({
     dbFile: db, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats,
-    renameDesktopChatGroup, listDesktopChats,
+    renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (file) => listPendingHomePosts(file), saveDesktopChatDraining,
   });
   const sessions = createChatSessions({
     isChatClient, chat, memory, threads, delegateTasks, liveTasks, push,

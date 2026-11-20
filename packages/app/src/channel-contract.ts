@@ -47,7 +47,7 @@ const liveStart = shape({
   history: opt(arr(shape({ role: oneOf("user", "reply"), text: str, agent: opt(str) }))),
 });
 const launch = shape({ mode: str, projectPath: str, prompt: opt(str), model: opt(str) });
-const threadSave = shape({ id: str, title: str, items: list, noteSlug: opt(str) });
+const threadSave = shape({ id: str, title: str, items: list, noteSlug: opt(str), drainedPostIds: opt(arr(str)) });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
 const deskContinue = shape({ channelId: str, title: str, sessionId: opt(str) });
 const watch = either(

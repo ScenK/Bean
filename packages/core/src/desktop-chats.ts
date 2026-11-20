@@ -14,6 +14,8 @@ export interface DesktopChatListing extends DesktopChatSummary {
   starred: boolean;
   /** The starred thread's named group; null = ungrouped. Only starred threads have one. */
   groupName: string | null;
+  /** Today's Home thread (#960) — pinned in the sidebar, never in the dated list. Set by the host. */
+  home?: true;
 }
 
 export interface DesktopChat extends DesktopChatSummary {

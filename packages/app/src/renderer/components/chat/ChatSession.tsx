@@ -9,7 +9,7 @@ import {
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
-import { applySproutEnd, continuedTo, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
+import { applySproutEnd, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, linkedNoteData } from "@bean/core/prompt";
@@ -173,6 +173,8 @@ export interface ChatSessionApi {
   liveEvent: (e: LiveEvent) => void;
   /** The thread this chat writes, once it has one. */
   threadId: () => string | undefined;
+  /** It holds today's Home (#960). */
+  home: () => boolean;
   /** Its thread was renamed in the sidebar: the stored title, for Continue in Discord. */
   renamed: (title: string) => void;
   /** A per-turn "Memory updated" receipt for this chat (the shell routes by mount and thread). */
@@ -207,8 +209,10 @@ export interface ChatSessionApi {
 export interface ChatSessionProps {
   /** This chat's key in main (ipc.ts buildChatMounts) — a fresh UUID per mount. */
   mountId: string;
-  /** A saved thread to restore on mount; undefined = a new chat. */
+  /** A saved thread to restore on mount ("home" = today's Home, #960); undefined = a new chat. */
   restoreId?: string;
+  /** A new chat that starts off the record (Home's incognito control opens one). */
+  startIncognito?: boolean;
   /** A pushed prompt (runInChat) this new chat starts with. */
   prompt?: ChatPrompt;
   /** The shell's registry: this chat puts its api here on each render, removed at unmount. */
@@ -219,7 +223,7 @@ export interface ChatSessionProps {
   runModels: AvailableModel[];
   prefillUrl?: ChatDrop;
   setThreads: (update: (prev: DesktopChatListing[]) => DesktopChatListing[]) => void;
-  onActive: (id: string | undefined) => void;
+  onActive: (id: string | undefined, home?: boolean) => void;
   /** Its switch-away save is in flight (the sidebar waits). */
   onBusy: (busy: boolean) => void;
   /** Its thread while it has work in flight (the sidebar spinner), undefined once idle. */
@@ -246,7 +250,7 @@ export interface ChatSessionProps {
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
 export function ChatSession({
-  mountId, restoreId, prompt, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
+  mountId, restoreId, startIncognito, prompt, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
 }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -269,6 +273,8 @@ export function ChatSession({
   const removedNoticeRef = useRef<string | undefined>(undefined);
   // Sent from the toggle itself, not an effect: a close right after the click must not beat it.
   const toggleIncognito = (): void => {
+    // Home never goes off the record: its control opens a separate, off-the-record chat.
+    if (homeRef.current) { open("incognito"); return; }
     const on = !incognitoRef.current;
     incognitoRef.current = on;
     window.bean.setChatIncognito(on, mountId);
@@ -304,6 +310,13 @@ export function ChatSession({
   // An off-the-record chat has no thread: its sprout runs name this one, known only to main's memory.
   const offRecordThreadRef = useRef(crypto.randomUUID());
   const savedRef = useRef<string | undefined>(undefined);
+  // Today's Home (#960): its posts arrive with the restore and are appended only while this chat is
+  // shown; `undrained` = appended post ids not yet confirmed drained by a landed save.
+  const homeRef = useRef(false);
+  const [home, setHome] = useState(false);
+  const waitingPostsRef = useRef<Array<{ id: string; sprout: string; body: string; createdAt: string }>>([]);
+  const undrainedRef = useRef(new Set<string>());
+  const dayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushRef = useRef(false);
   // Each write resolves to whether it landed (it never rejects) — a switch waits on that.
@@ -448,9 +461,14 @@ export function ChatSession({
     if (snap === savedRef.current) return savingRef.current;
     savedRef.current = snap;
     const [items, noteSlug] = JSON.parse(snap) as [ChatItem[], string | null];
+    // Home posts this save holds: drained with it (one transaction in main), so a failed save leaves them pending.
+    const drained = [...undrainedRef.current].filter((id) => items.some((it) => it.kind === "post" && it.postId === id));
     savingRef.current = savingRef.current
-      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}) }, mountId))
+      .then(() => window.bean.chatThreadSave({
+        id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}), ...(drained.length > 0 ? { drainedPostIds: drained } : {}),
+      }, mountId))
       .then((ack) => {
+        for (const id of drained) undrainedRef.current.delete(id);
         if (ack) setThreads((prev) => withSaveAck(prev, ack, items));
         return true;
       }, (err: unknown) => {
@@ -467,7 +485,35 @@ export function ChatSession({
   }, [items, linkedNote]);
   // Every unmount path writes first (evict, closeOut) or must not write (discard), so a debounced
   // save still pending then is stale: left alone it fires a second later against whatever is mounted.
-  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
+  useEffect(() => () => { clearTimeout(saveTimerRef.current); clearTimeout(dayTimerRef.current); }, []);
+
+  // Home's waiting posts, once per post id, at the end (the prompt prefix stays byte-stable). No model
+  // turn: a post is context for the owner's next message. Saved (and drained) on the next render.
+  const appendPosts = (): boolean => {
+    const fresh = newPostItems(itemsRef.current, waitingPostsRef.current);
+    waitingPostsRef.current = [];
+    if (fresh.length === 0) return false;
+    itemsRef.current = [...itemsRef.current, ...fresh];
+    flushRef.current = true;
+    return true;
+  };
+  // A hidden Home doesn't drain: its posts wait until it's shown.
+  useEffect(() => {
+    if (!hidden && waitingPostsRef.current.length > 0 && appendPosts()) setItems(itemsRef.current);
+  }, [hidden]);
+  // Midnight with Home open: this thread stays (now plain history); the next post starts the new day's Home.
+  const endHomeDay = (): void => {
+    homeRef.current = false;
+    setHome(false);
+    const id = threadRef.current?.id;
+    setThreads((prev) => prev.map((t) => {
+      if (t.id !== id) return t;
+      const { home: _home, ...rest } = t;
+      return rest;
+    }));
+    if (!hiddenRef.current) onActive(id, false);
+    addStatus("A new day — the new day's Home starts with the next sprout post.", "info");
+  };
 
   useEffect(() => {
     window.bean.getModel().then(setModel);
@@ -500,7 +546,14 @@ export function ChatSession({
         setLinkedNote(linked);
       }
       threadRef.current = { id: t.id, title: t.title };
-      onActive(t.id);
+      onActive(t.id, t.home !== undefined);
+      if (t.home) {
+        homeRef.current = true;
+        setHome(true);
+        waitingPostsRef.current = t.home.posts;
+        for (const p of t.home.posts) undrainedRef.current.add(p.id);
+        dayTimerRef.current = setTimeout(endHomeDay, Math.max(0, Date.parse(t.home.until) - Date.now()));
+      }
       // Running sprout cards settle from main's record of their runs (their results loop back below).
       const sprouts = settleRestoredSprouts(restoreItems(t.items), t.sprouts);
       const restored = sprouts.items;
@@ -517,6 +570,7 @@ export function ChatSession({
         flushRef.current = true;
       }
       if (sprouts.changed) flushRef.current = true;
+      if (!hiddenRef.current) appendPosts();
       setItems(itemsRef.current);
       for (const lb of sprouts.loopbacks) void sendRef.current(lb.text, lb.display, true, undefined, lb.source);
       // An end pushed while the thread loaded found no card and waited: its card is here now.
@@ -579,6 +633,7 @@ export function ChatSession({
     })();
   };
   useEffect(() => { if (prompt) runPrompt(prompt); }, []);
+  useEffect(() => { if (startIncognito) toggleIncognito(); }, []);
 
   const sendMessage = async (
     text: string, display?: string, queueIfBusy = false, images?: ImageAttachment[], source: TurnSource = "typed",
@@ -1484,7 +1539,7 @@ export function ChatSession({
   // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
     if (evictingRef.current || leavingRef.current) return;
-    if (target === "new" ? untouched() : target === threadRef.current?.id) return;
+    if (target === "new" ? untouched() : target === threadRef.current?.id || (target === "home" && homeRef.current)) return;
     // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
     // sidebar row to come back to — kept hidden, it would be unreachable).
     if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {
@@ -1541,6 +1596,7 @@ export function ChatSession({
     sproutEvent: applySproutEvent,
     liveEvent: onLiveEvent,
     threadId: () => threadRef.current?.id,
+    home: () => homeRef.current,
     renamed: (title) => { if (threadRef.current) threadRef.current = { ...threadRef.current, title }; },
     memoryUpdated: (saved) => setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]),
     // generate_image started inside the current turn — flip the working bubble so the
@@ -1703,6 +1759,7 @@ export function ChatSession({
         onUnlink={() => setLinkedNote(undefined)}
         incognito={incognito}
         onToggleIncognito={toggleIncognito}
+        home={home}
         continueButton={(
           <ContinueDiscord
             disabled={continueDisabled}

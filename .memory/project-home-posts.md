@@ -1,7 +1,7 @@
 # Home posts (`home_posts`, `sinks.home`)
 
-Epic #958 (Home chat). Story #959 is the core half; the drain, the Home thread and the UI come in
-later stories.
+Epic #958 (Home chat). Story #959 is the core half; #960 the Home thread and its drain; live arrival
+and the sprout-editor controls come later.
 
 - `sinks.home: { ttlMinutes? }` on a sprout → `deliverDigest` inserts **one** `home_posts` row per
   delivered run (core `home-posts.ts`). The body is the chat brief (`chatSinkBody`), built even when
@@ -18,3 +18,21 @@ later stories.
 - `markHomePostsDrained` is idempotent (`WHERE drained_at IS NULL`), ignores unknown ids, and opens
   no transaction of its own, so the host can run it inside the transcript save's transaction.
 - Not `sprout_dispatches`: posts have no origin conversation and never enter the chatops outbox.
+
+## Home thread (#960)
+
+- Today's Home id = `homeThreadId()`: a UUID-shaped sha256 of the **core-local** date (no stored
+  state, every shell agrees). The shell asks for it as `chatThreadGet("home", mount)` — it can't know
+  the core's date — and gets an empty thread before the first save, plus `home: { posts, until }`.
+  Earlier days' Home threads are plain history (deletable, never drain); the listing flags only
+  today's with `home: true`, which the sidebar pins instead of dating.
+- Drain = the save that holds the posts: `chatThreadSave` carries `drainedPostIds`, and the host
+  calls `saveDesktopChatDraining` (save + mark drained in one `BEGIN IMMEDIATE`) for ids it handed
+  **to that mount with that thread** only. A failed save leaves them pending; the renderer appends by
+  post id, so a re-hand never doubles. The host never appends to `items_json`.
+- The renderer appends posts only while the chat is shown (a hidden Home waits), adds no model turn,
+  and maps a `post` item into history as a `[sprout "<name>" posted]: <<<…>>>` user turn with source
+  `loopback` (non-typed); it's left out of the close-time memory transcript.
+- Home is never deleted/starred/renamed/grouped (host throws) or taken off the record (host
+  `setIncognito` ignores it; the shell's Off the record opens a separate incognito chat).
+- Midnight with Home open: the chat stays on that thread (now plain history) with a status row.

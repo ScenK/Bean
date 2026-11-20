@@ -59,7 +59,7 @@ export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
  * event's mount id (or to the shown chat), along with the one-time pulled data. */
 export function ChatWindow() {
   const sessions = useRef(new Map<string, ChatSessionApi>()).current;
-  const [mounts, setMounts] = useState<Array<{ mountId: string; restoreId?: string; prompt?: ChatPrompt }>>(() => [{ mountId: crypto.randomUUID() }]);
+  const [mounts, setMounts] = useState<Array<{ mountId: string; restoreId?: string; prompt?: ChatPrompt; incognito?: true }>>(() => [{ mountId: crypto.randomUUID() }]);
   const [shown, setShownState] = useState(() => mounts[0]!.mountId);
   const shownRef = useRef(shown);
   const setShown = (id: string): void => { shownRef.current = id; setShownState(id); };
@@ -101,6 +101,7 @@ export function ChatWindow() {
   // shown chat's switch-away save.
   const [threads, setThreads] = useState<DesktopChatListing[]>([]);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
+  const [homeActive, setHomeActive] = useState(false);
   const [busy, setBusy] = useState(false);
   // Synced chats (Discord/Teams, SyncedChat.tsx): shown over the current desktop chat, which stays
   // mounted (hidden) underneath — picking a desktop row or New chat goes back through it.
@@ -261,16 +262,24 @@ export function ChatWindow() {
   };
   // The shown chat left for `target` (kept mounted, or evicted). A pick another mounted chat already
   // holds is shown as is; otherwise it mounts fresh (restoring the thread). Then every other hidden
-  // chat that's idle now evicts itself.
+  // chat that's idle now evicts itself. `home` = today's Home (#960); `incognito` = a new chat that
+  // starts off the record (Home's incognito control — Home itself never goes off the record).
   const switchTo = (from: string, target: string, keep: boolean): void => {
     if (!keep) dropMount(from);
+    const fresh = target === "new" || target === "incognito";
     const prompt = target === "new" ? pendingPromptRef.current : undefined;
     pendingPromptRef.current = undefined;
-    const held = target === "new" ? undefined : [...sessions.values()].find((s) => s.mountId !== from && s.threadId() === target);
+    const held = fresh ? undefined
+      : [...sessions.values()].find((s) => s.mountId !== from && (target === "home" ? s.home() : s.threadId() === target));
     const next = held?.mountId ?? crypto.randomUUID();
-    if (!held) setMounts((prev) => [...prev, { mountId: next, ...(target === "new" ? { prompt } : { restoreId: target }) }]);
+    if (!held) {
+      setMounts((prev) => [...prev, {
+        mountId: next, ...(target === "new" ? { prompt } : target === "incognito" ? { incognito: true as const } : { restoreId: target }),
+      }]);
+    }
     setShown(next);
-    setActiveId(target === "new" ? undefined : target);
+    setActiveId(fresh ? undefined : target === "home" ? held?.threadId() : target);
+    setHomeActive(target === "home" || held?.home() === true);
     setBusy(false);
     setUnread((prev) => { const u = new Set(prev); u.delete(target); return u; });
     for (const s of sessions.values()) if (s.mountId !== next && s.mountId !== from) s.sweep();
@@ -404,6 +413,7 @@ export function ChatWindow() {
           threads={threads}
           synced={synced}
           activeId={syncedListing ? syncedShown : activeId}
+          homeActive={homeActive && !syncedListing}
           busy={busy}
           working={new Set([...Object.values(working), ...(syncedWorking ? [syncedWorking] : [])])}
           unread={unread}
@@ -419,19 +429,24 @@ export function ChatWindow() {
           onRenameGroup={renameGroup}
         />
       ) : null}
-      {mounts.map(({ mountId, restoreId, prompt }) => (
+      {mounts.map(({ mountId, restoreId, prompt, incognito }) => (
         <ChatSession
           key={mountId}
           mountId={mountId}
           restoreId={restoreId}
           prompt={prompt}
+          startIncognito={incognito === true}
           sessions={sessions}
           hidden={mountId !== shown || syncedListing !== undefined}
           clis={clis}
           runModels={runModels}
           prefillUrl={mountId === shown ? droppedUrl : undefined}
           setThreads={setThreads}
-          onActive={(id) => { if (mountId === shownRef.current) setActiveId(id); }}
+          onActive={(id, home) => {
+            if (mountId !== shownRef.current) return;
+            setActiveId(id);
+            setHomeActive(home === true);
+          }}
           onBusy={(b) => { if (mountId === shownRef.current) setBusy(b); }}
           onWorking={(thread) => setWorking(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}
           onLive={(thread) => setLive(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}

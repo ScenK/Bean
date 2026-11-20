@@ -2,8 +2,9 @@
 // Sprout posts for the desktop's Home chat (#959): `sinks.home` leaves one row per delivered run
 // in `bean.db`'s `home_posts`; a shell drains the pending ones into its Home transcript. Written
 // only by the scheduler-lease holder (routine-host.ts).
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { openDb } from "./db.js";
+import { saveDesktopChat, type DesktopChatInput } from "./desktop-chats.js";
 
 export interface HomePost {
   id: string;
@@ -79,4 +80,39 @@ export function markHomePostsDrained(file: string, ids: readonly string[], now: 
   let n = 0;
   for (const id of ids) n += Number(stmt.run(at, id).changes);
   return n;
+}
+
+/** The core-local calendar day of `now`, `YYYY-MM-DD`. */
+const localDay = (now: Date): string =>
+  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+/** Today's Home thread id (#960): a UUID-shaped hash of the core-local date, so every shell of this
+ * core lands in the same thread and a new day starts a new one with no stored state. */
+export function homeThreadId(now: Date = new Date()): string {
+  const h = createHash("sha256").update(`bean:home:${localDay(now)}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+/** Today's Home thread title, e.g. "Home · Nov 19" (core-local day). */
+export const homeThreadTitle = (now: Date = new Date()): string =>
+  `Home · ${now.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+
+/** When today's Home stops being today's: the next core-local midnight. */
+export const nextHomeDay = (now: Date = new Date()): Date => new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+
+/** Saves a Home transcript and marks the posts it now holds drained, in one transaction: a failed
+ * save leaves them pending, and a crash can't drain a post the transcript doesn't hold. Returns the
+ * stored title. */
+export function saveDesktopChatDraining(file: string, chat: DesktopChatInput, drained: readonly string[], now: Date = new Date()): string {
+  const db = openDb(file);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const title = saveDesktopChat(file, chat, now);
+    markHomePostsDrained(file, drained, () => now);
+    db.exec("COMMIT");
+    return title;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }

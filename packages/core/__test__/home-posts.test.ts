@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  countPendingHomePosts, HOME_PENDING_CAP, HOME_POST_MAX_CHARS, insertHomePost, listPendingHomePosts, markHomePostsDrained,
+  countPendingHomePosts, HOME_PENDING_CAP, HOME_POST_MAX_CHARS, homeThreadId, insertHomePost, listPendingHomePosts, markHomePostsDrained,
+  nextHomeDay, saveDesktopChatDraining,
 } from "../src/home-posts.js";
+import { DESKTOP_CHAT_MAX_BYTES, getDesktopChat } from "../src/desktop-chats.js";
 
 let dir: string;
 let file: string;
@@ -53,5 +55,29 @@ describe("home posts", () => {
     const pending = listPendingHomePosts(file, at(0));
     expect(pending).toHaveLength(HOME_PENDING_CAP);
     expect(pending[0]!.id).toBe("p3");
+  });
+});
+
+describe("Home thread (#960)", () => {
+  it("one UUID-shaped id per core-local day", () => {
+    const morning = new Date(2026, 10, 19, 0, 1);
+    const night = new Date(2026, 10, 19, 23, 59);
+    expect(homeThreadId(morning)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(homeThreadId(night)).toBe(homeThreadId(morning));
+    expect(homeThreadId(new Date(2026, 10, 20, 0, 0))).not.toBe(homeThreadId(night));
+    expect(nextHomeDay(night)).toEqual(new Date(2026, 10, 20));
+  });
+
+  it("saves the transcript and drains its posts together; a failed save drains nothing", () => {
+    n = 0;
+    insertHomePost(file, { sprout: "a", body: "one" }, id, at(0));
+    insertHomePost(file, { sprout: "a", body: "two" }, id, at(1));
+    const home = homeThreadId(at(2)());
+    expect(() => saveDesktopChatDraining(file, { id: home, title: "Home", itemsJson: "x".repeat(DESKTOP_CHAT_MAX_BYTES + 1) }, ["p0"], at(2)()))
+      .toThrow(/too large/);
+    expect(listPendingHomePosts(file, at(2)).map((p) => p.id)).toEqual(["p0", "p1"]);
+    expect(saveDesktopChatDraining(file, { id: home, title: "Home", itemsJson: "[]" }, ["p0"], at(3)())).toBe("Home");
+    expect(getDesktopChat(file, home)).toBeDefined();
+    expect(listPendingHomePosts(file, at(3)).map((p) => p.id)).toEqual(["p1"]);
   });
 });

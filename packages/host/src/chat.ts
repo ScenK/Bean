@@ -3,7 +3,7 @@ import {
   checkImageAttachments, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
-  DESKTOP_CHAT_MAX_BYTES, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
+  DESKTOP_CHAT_MAX_BYTES, homeThreadId, homeThreadTitle, nextHomeDay, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
 } from "@bean/core";
 import { readFile } from "node:fs/promises";
 import type { ClientId } from "./shell-ops.js";
@@ -205,11 +205,20 @@ export function buildModelMemoryHandlers(deps: ModelMemoryHandlerDeps) {
 }
 
 /** A chat window's transcript save. `items` are the renderer's normalized ChatItems — opaque here. */
-export interface ChatThreadSaveRequest { id: string; title: string; items: unknown[]; noteSlug?: string }
-export interface ChatThreadAck { id: string; title: string; updatedAt: string }
+export interface ChatThreadSaveRequest {
+  id: string; title: string; items: unknown[]; noteSlug?: string;
+  /** Home posts (#960) this transcript now holds: marked drained with the save, in one transaction. */
+  drainedPostIds?: string[];
+}
+export interface ChatThreadAck { id: string; title: string; updatedAt: string; home?: true }
 /** What a chat restores: a saved thread, or `missing` when the picked one is gone (deleted or
  * pruned) — the chat opens empty with a status row. */
-export type PendingChatThread = { id: string; title: string; items: unknown[]; noteSlug: string | null; sprouts?: SproutOutcome[] } | { missing: true };
+export type PendingChatThread = {
+  id: string; title: string; items: unknown[]; noteSlug: string | null; sprouts?: SproutOutcome[];
+  /** Today's Home (#960): its pending posts, handed to this chat to append and drain with its next
+   * save, and when it stops being today's (the next core-local midnight). */
+  home?: { posts: HomePost[]; until: string };
+} | { missing: true };
 
 /** A sprout run a desktop chat started (#921), as its card learns it: `status` absent = still
  * running; `text` = the finish line + the run's brief, fenced as data (dispatchContext) — the
@@ -231,8 +240,15 @@ export interface ChatThreadHandlerDeps {
   groupDesktopChats: (file: string, ids: string[], name: string | null) => string[];
   renameDesktopChatGroup: (file: string, from: string, to: string) => string[];
   listDesktopChats: (file: string) => DesktopChatListing[];
+  /** Home posts (#960); absent = Home opens with no posts and a save drains nothing. */
+  listPendingHomePosts?: (file: string) => HomePost[];
+  saveDesktopChatDraining?: (file: string, chat: DesktopChatInput, drained: readonly string[], now?: Date) => string;
+  now?: () => Date;
   dbFile: string;
 }
+
+/** `chatThreadGet`'s name for today's Home thread (#960) — the shell can't know the core-local date. */
+export const HOME_TARGET = "home";
 
 export const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -278,26 +294,46 @@ export function buildChatMounts() {
 export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
   const threads = new Map<string, string>(); // mount key → thread id; dropped at release
   const unsavable = new Set<string>();
+  // Per chat: the Home posts handed to it with today's Home — the only ids its saves may drain.
+  const handed = new Map<string, { thread: string; ids: Set<string> }>();
+  const now = (): Date => deps.now?.() ?? new Date();
+  const isHome = (id: string): boolean => id === homeThreadId(now());
   const holder = (id: string): string | undefined => [...threads].find(([, t]) => t === id)?.[0];
-  /** A saved thread for this chat to restore (pinned to it), or `missing` when it's gone. */
-  const get = (key: string, id: unknown): PendingChatThread => {
+  /** A saved thread for this chat to restore (pinned to it), or `missing` when it's gone. Today's
+   * Home (`HOME_TARGET` or its id) is never missing: an empty thread until its first save, with the
+   * pending posts. */
+  const get = (key: string, target: unknown): PendingChatThread => {
+    const id = target === HOME_TARGET ? homeThreadId(now()) : target;
     if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
     const pinned = threads.get(key);
     if (pinned !== undefined && pinned !== id) throw new Error("this chat saves a different chat thread");
     const other = holder(id);
     if (other !== undefined && other !== key) throw new Error("that chat is already open");
+    const home = isHome(id);
     const row = deps.getDesktopChat(deps.dbFile, id);
-    if (!row) return { missing: true };
-    let items: unknown;
-    try { items = JSON.parse(row.itemsJson); } catch { items = []; }
+    if (!row && !home) return { missing: true };
+    let items: unknown = [];
+    if (row) try { items = JSON.parse(row.itemsJson); } catch { items = []; }
     if (!unsavable.has(key)) threads.set(key, id);
-    return { id: row.id, title: row.title, items: Array.isArray(items) ? items : [], noteSlug: row.noteSlug };
+    const thread = { id, title: row?.title ?? homeThreadTitle(now()), items: Array.isArray(items) ? items : [], noteSlug: row?.noteSlug ?? null };
+    if (!home || unsavable.has(key)) return thread;
+    const posts = deps.listPendingHomePosts?.(deps.dbFile) ?? [];
+    handed.set(key, { thread: id, ids: new Set([...(handed.get(key)?.thread === id ? handed.get(key)!.ids : []), ...posts.map((p) => p.id)]) });
+    return { ...thread, home: { posts, until: nextHomeDay(now()).toISOString() } };
+  };
+  /** Today's Home is pinned in the sidebar: never deleted, starred, renamed or grouped. */
+  const notHome = (id: string, what: string): void => {
+    if (isHome(id)) throw new Error(`Home can't be ${what}`);
   };
   return {
-    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile),
+    list: (): DesktopChatListing[] => {
+      const home = homeThreadId(now());
+      return deps.listDesktopChats(deps.dbFile).map((t) => (t.id === home ? { ...t, home: true } : t));
+    },
     /** Sidebar delete: never a thread an open chat holds. */
     delete: (id: unknown): void => {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
+      notHome(id, "deleted");
       if (holder(id) !== undefined) throw new Error("an open chat can't be deleted");
       deps.deleteDesktopChat(deps.dbFile, id);
     },
@@ -305,12 +341,14 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     star: (id: unknown, starred: unknown): string | undefined => {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
       if (typeof starred !== "boolean") throw new Error("starred must be a boolean");
+      notHome(id, "starred");
       return deps.starDesktopChat(deps.dbFile, id, starred);
     },
     /** Sidebar rename: any thread, open or not. The stored title, or undefined when it's gone. */
     rename: (id: unknown, title: unknown): string | undefined => {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
       if (typeof title !== "string") throw new Error("title must be a string");
+      notHome(id, "renamed");
       return deps.renameDesktopChat(deps.dbFile, id, title);
     },
     /** Sidebar group (stars too) / ungroup (`null`, keeps the star): 1–100 unique UUIDs, open or not.
@@ -320,6 +358,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (!ids.every((id) => typeof id === "string" && THREAD_ID.test(id))) throw new Error("chat thread id must be a UUID");
       if (new Set(ids.map((id: string) => id.toLowerCase())).size !== ids.length) throw new Error("chat thread ids must be unique");
       if (name !== null && typeof name !== "string") throw new Error("group name must be a string or null");
+      for (const id of ids as string[]) notHome(id, "grouped");
       return deps.groupDesktopChats(deps.dbFile, ids as string[], name);
     },
     /** Sidebar group rename (onto an existing name, they merge): the moved ids. */
@@ -335,21 +374,34 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (!o || typeof o.id !== "string" || !THREAD_ID.test(o.id)) throw new Error("chat thread id must be a UUID");
       if (typeof o.title !== "string" || !Array.isArray(o.items)) throw new Error("malformed chat thread");
       if (o.noteSlug !== undefined && o.noteSlug !== null && typeof o.noteSlug !== "string") throw new Error("malformed chat thread");
+      if (o.drainedPostIds !== undefined && (!Array.isArray(o.drainedPostIds) || !o.drainedPostIds.every((x) => typeof x === "string"))) {
+        throw new Error("malformed chat thread");
+      }
       const pinned = threads.get(key);
       if (pinned !== undefined && pinned !== o.id) throw new Error("this chat saves a different chat thread");
       const other = holder(o.id);
       if (other !== undefined && other !== key) throw new Error("another open chat saves this thread");
       const itemsJson = JSON.stringify(o.items);
       if (Buffer.byteLength(itemsJson, "utf8") > DESKTOP_CHAT_MAX_BYTES) throw new Error("desktop chat is too large to save");
-      const now = new Date();
+      const at = now();
+      const chat = { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null };
+      // Only ids handed to this chat with this thread drain — never another chat's, never a guess.
+      const mine = handed.get(key);
+      const drained = mine?.thread === o.id ? (o.drainedPostIds ?? []).filter((x) => mine.ids.has(x)) : [];
       // The stored title, not the renderer's: a rename since the first save wins over the open chat's copy.
-      const title = deps.saveDesktopChat(deps.dbFile, { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null }, now);
+      const title = drained.length > 0 && deps.saveDesktopChatDraining
+        ? deps.saveDesktopChatDraining(deps.dbFile, chat, drained, at)
+        : deps.saveDesktopChat(deps.dbFile, chat, at);
+      for (const x of drained) mine?.ids.delete(x);
       threads.set(key, o.id);
-      return { id: o.id, title, updatedAt: now.toISOString() };
+      return { id: o.id, title, updatedAt: at.toISOString(), ...(isHome(o.id) ? { home: true as const } : {}) };
     },
     /** 🕶 on: latch first, then delete the chat's saved row. Off: nothing — the latch is sticky. */
     setIncognito: (key: string, on: boolean): void => {
       if (!on) return;
+      // Home can't go off the record (the shell opens a separate chat instead); never deleted here.
+      const pinned = threads.get(key);
+      if (pinned !== undefined && isHome(pinned)) return;
       unsavable.add(key);
       const id = threads.get(key);
       if (id !== undefined) deps.deleteDesktopChat(deps.dbFile, id);
@@ -363,6 +415,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     release: (key: string): void => {
       threads.delete(key);
       unsavable.delete(key);
+      handed.delete(key);
     },
   };
 }
