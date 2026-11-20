@@ -14,6 +14,7 @@ import { listStepAttempts } from "../src/step-attempts.js";
 import { saveSkillProposals } from "../src/retro.js";
 import { addTodo, claimTodo, listTodos } from "../src/todo-store.js";
 import { openDispatch } from "../src/dispatch-store.js";
+import { listPendingHomePosts } from "../src/home-posts.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bean-host-")); });
@@ -314,6 +315,30 @@ describe("createRoutineHost", () => {
       await deliver({ sinks: { ...sinks, chatopsOnlyOnProblems: true } });
       await deliver({ sinks: { note: true } });
       expect(calls).toHaveLength(0);
+    });
+
+    it("a home sink inserts one post holding the brief, even with no chat sink; no home sink inserts nothing", async () => {
+      const { h, calls, notify } = briefHost();
+      const res = await h.runOneRoutine(routine([{ kind: "chat", instruction: "check" }]));
+      await h.deliverDigest(routine([{ kind: "chat", instruction: "check" }], { sinks: { note: true, notify: true } }), res);
+      expect(listPendingHomePosts(dbFile(dir))).toEqual([]);
+      expect(calls).toHaveLength(0);
+      await h.deliverDigest(routine([{ kind: "chat", instruction: "check" }], { sinks: { note: true, notify: true, home: { ttlMinutes: 30 } } }), res);
+      const posts = listPendingHomePosts(dbFile(dir));
+      expect(posts).toHaveLength(1);
+      expect(posts[0]).toMatchObject({ sprout: "r", body: BRIEF });
+      expect(Date.parse(posts[0]!.expiresAt!) - Date.parse(posts[0]!.createdAt)).toBe(30 * 60_000);
+      expect(calls).toHaveLength(1);
+      expect(await posted()).toEqual([]);
+      expect((await loadNotes(dbFile(dir)))[0]?.body).toBe(REPORT);
+      expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ body: REPORT }));
+    });
+
+    it("a host without the scheduler lease writes no home post", async () => {
+      const { h } = briefHost({ holdsLease: () => false });
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { home: {} } });
+      await h.deliverDigest(r, await h.runOneRoutine(r));
+      expect(listPendingHomePosts(dbFile(dir))).toEqual([]);
     });
 
     it("a requested brief is the chat body, written even with no chat sink and posted nowhere", async () => {
