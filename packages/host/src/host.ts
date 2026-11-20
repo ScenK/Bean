@@ -447,7 +447,7 @@ export async function createHost(deps: HostDeps) {
   const routineDrafts = buildRoutineDraftHandlers({
     loadRoutines: () => loadRoutines(routinesPath),
     save: (r) => handlers.routines.save(r),
-    enableWatch: (name) => routineScheduler.enableWatch(name, false),
+    enableWatch: (name, until) => routineScheduler.enableWatch(name, false, until),
     cliModels: () => cliModels, destinations: () => listDestinations(db), newId: randomUUID,
   });
   // The running turn per chat (mount id), so image progress can find its bubble.

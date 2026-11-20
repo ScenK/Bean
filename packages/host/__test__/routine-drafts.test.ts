@@ -15,9 +15,10 @@ function setup(saved: Routine[] = []) {
     const i = store.findIndex((x) => x.name === r.name);
     if (i >= 0) store[i] = { ...r }; else store.push({ ...r });
   });
-  const enableWatch = vi.fn(async (name: string) => {
+  const enableWatch = vi.fn(async (name: string, until: string | null) => {
     const r = store.find((x) => x.name === name)!;
-    Object.assign(r, { enabled: true });
+    if (until === null) delete r.until;
+    Object.assign(r, { enabled: true, ...(until !== null ? { until } : {}) });
   });
   const h = buildRoutineDraftHandlers({
     loadRoutines: async () => store.map((r) => ({ ...r })), save, enableWatch,
@@ -43,8 +44,17 @@ describe("desktop sprout drafts (#982)", () => {
     await s.propose(feed);
     expect(await s.h.save("d1")).toEqual({ ok: true, name: "album" });
     expect(s.save).toHaveBeenCalledWith({ ...feed, enabled: false });
-    expect(s.enableWatch).toHaveBeenCalledWith("album");
+    expect(s.enableWatch).toHaveBeenCalledWith("album", "2026-12-20");
     expect(s.store[0]).toMatchObject({ enabled: true, until: "2026-12-20", sinks: { home: {} } });
+  });
+
+  test("replacing an ended watch saves it off with its old end; the seed commits the new one (#983)", async () => {
+    const s = setup([{ ...feed, enabled: false, until: "2026-10-01" }]);
+    await s.propose(feed);
+    expect(await s.h.save("d1")).toEqual({ ok: true, name: "album" });
+    expect(s.save).toHaveBeenCalledWith({ ...feed, enabled: false, until: "2026-10-01" });
+    expect(s.enableWatch).toHaveBeenCalledWith("album", "2026-12-20");
+    expect(s.store[0]).toMatchObject({ enabled: true, until: "2026-12-20" });
   });
 
   test("a feed that can't be checked leaves the watch saved off, and says so", async () => {
