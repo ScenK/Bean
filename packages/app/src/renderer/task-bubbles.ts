@@ -10,6 +10,9 @@ import type { DashboardTarget } from "../channels.js";
 // session opens that chat (dismissing it once finished) — the chat shows its detail and output.
 // A running sprout's expanded detail carries the one control: Stop. It sits beside the bubble's
 // <button> (a button can't nest one), overlaid on room reserved in the detail.
+// While the pointer is over the stack, a change that adds, removes or reorders bubbles waits until
+// it leaves: a 10s-lingering bubble vanishing under the cursor would slide its neighbour into the
+// spot, and the click would land there (a memory bubble's click opening a delegate's chat).
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
@@ -108,7 +111,9 @@ export function createTaskBubbles(
   onOpenChat: (mountId: string) => void = () => {},
   onStop: (routine: string) => void = () => {},
 ) {
-  let jobs: TaskJob[] = [];
+  let jobs: TaskJob[] = []; // what's rendered
+  let latest: TaskJob[] = []; // what main last sent
+  let hovered = false;
   let openId: string | undefined;
   let showAll = false;
   // Pop-in plays once per job — every streamed output line re-renders the stack.
@@ -154,6 +159,22 @@ export function createTaskBubbles(
     }
   };
 
+  const sameIds = (a: readonly TaskJob[], b: readonly TaskJob[]): boolean =>
+    a.length === b.length && a.every((j, i) => j.id === b[i]?.id);
+  // A click is the user acting on what they see: drop the dismissed bubble and catch up at once.
+  const dismiss = (id: string): void => {
+    onDismiss(id);
+    latest = latest.filter((j) => j.id !== id);
+    jobs = latest;
+  };
+  stack.addEventListener("pointerenter", () => { hovered = true; });
+  stack.addEventListener("pointerleave", () => {
+    hovered = false;
+    if (jobs === latest) return;
+    jobs = latest;
+    render();
+  });
+
   stack.addEventListener("click", (e) => {
     const stop = (e.target as HTMLElement).closest<HTMLButtonElement>(".bean-bubble-stop");
     if (stop) {
@@ -169,21 +190,23 @@ export function createTaskBubbles(
     if (!id) return;
     const job = jobs.find((j) => j.id === id);
     if (job?.kind === "memory") {
-      onDismiss(id);
+      dismiss(id);
+      render();
       onOpenMemory();
       return;
     }
     if (job && opensRun(job)) {
-      onDismiss(id);
+      dismiss(id);
+      render();
       onOpenRun(job.runStartedAt ? { routine: job.name, startedAt: job.runStartedAt } : { routine: job.name });
       return;
     }
     if (job?.mountId && opensChat(job)) {
-      if (job.state !== "running") onDismiss(id); // finished: the chat holds the result now
+      if (job.state !== "running") { dismiss(id); render(); } // finished: the chat holds the result now
       onOpenChat(job.mountId);
       return;
     }
-    if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") onDismiss(id);
+    if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") dismiss(id);
     openId = openId === id ? undefined : id;
     render();
   });
@@ -203,10 +226,12 @@ export function createTaskBubbles(
 
   return {
     update(next: TaskJob[]): void {
+      latest = next;
+      if (hovered && !sameIds(jobs, next)) return;
       jobs = next;
       render();
     },
-    running: (): boolean => jobs.some((j) => j.state === "running"),
+    running: (): boolean => latest.some((j) => j.state === "running"),
     /** From main's layout: which side of the bean, and how tall the stack may get before it scrolls. */
     setLayout(nextBelow: boolean, stackMax: number | undefined): void {
       stack.style.maxHeight = stackMax ? `${stackMax}px` : "";
