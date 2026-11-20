@@ -51,14 +51,20 @@ arrival, the unread dot and the avatar bubble; the sprout-editor controls come l
   a draining save (`onDrained`), at boot and at the soonest pending expiry — the count is the only
   state. Its click opens the chat window on Home and never dismisses it.
 - A new post pushes `homePost` (mount kind `home`) to the chat holding today's Home, which re-asks
-  `chatThreadGet("home")` only while shown. The host can't see visibility, so the bubble waits
-  `HOME_ARRIVAL_GRACE_MS` when a chat holds Home (a shown one drains within it); the e2e
-  `home-arrival.e2e.ts` waits past it.
+  `chatThreadGet("home")` only while seen: its tab shown **and** the chat window not hidden or
+  minimized. That last bit comes from main's `chatWindowVisible` push (BrowserWindow show/restore/
+  hide/minimize), not `document.visibilityState` — that stays "visible" under Playwright, and macOS
+  emits `hide` a beat late (the e2e waits for the push). Restored, the window pulls again. A nudge
+  during Home's restore is queued and pulled once the restore lands. The host can't see visibility,
+  so the bubble waits `HOME_ARRIVAL_GRACE_MS` when a chat holds Home (a seen one drains within it);
+  the e2e `home-arrival.e2e.ts` waits past it.
 - The chat window's Home-row dot reads the job feed (`taskStatus` has the `home` job) after one
-  `homePending` read on mount. Only the lease holder inserts, so a second host on the same data dir
-  learns of a post only at its next drain/boot/expiry recount.
+  `homePending` read on mount. Only the lease holder inserts (and gets `onHomePost`), so every host
+  also re-reads the count every `HOME_RECONCILE_MS`: a rise from another process (`bean-core` holding
+  the lease) counts as an arrival.
 - Remote shell: no job feed, so `createRemoteHomePoll` (remote-core.ts) reads `homePending` on
-  attach, every `HOME_POLL_MS`, on a `home` push and after a `chatThreadSave`, drops replies from an
+  attach, every `HOME_POLL_MS`, after a `chatThreadSave`, and `HOME_ARRIVAL_GRACE_MS` after a `home`
+  push (other reads wait for that one, so a seen Home's drain lands first), drops replies from an
   earlier connection, and main broadcasts `[homeJob(n)]` as the whole job list.
 - "Open on Home": main's `openChatHome` (bubble, a sprout banner with `meta.open: "home"`, and the
   avatar's plain open-chat while posts are pending) pushes `chatShowHome` to an open window and

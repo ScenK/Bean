@@ -104,6 +104,8 @@ declare global {
       /** How many Home posts are pending (the job feed keeps it current after this first read). */
       homePending(): Promise<number>;
       onChatShowHome(cb: () => void): void;
+      /** The chat window was shown/restored (true) or hidden/minimized (false). */
+      onChatWindowVisible(cb: (visible: boolean) => void): void;
       /** Whether this (just opened) chat window should start on Home; consumed by the call. */
       getPendingChatHome(): Promise<boolean>;
       /** The plan for a URL dropped on a skill tile (show it with proposeRun). */

@@ -357,9 +357,10 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
         >
           <span class="bean-chat-sidebar-line">
             <span class="bean-chat-sidebar-home-title">🏠 Home</span>
-            {homeId !== undefined && working.has(homeId) ? marker(homeId)
-              : homePending || (homeId !== undefined && unread.has(homeId))
-                ? <span class="bean-chat-sidebar-dot" role="img" aria-label={homePending ? "New posts" : "New reply"} /> : null}
+            {homeId !== undefined && working.has(homeId) ? marker(homeId) : null}
+            {/* Pending posts show even beside a running Home turn's spinner (#961). */}
+            {homePending || (homeId !== undefined && !working.has(homeId) && unread.has(homeId))
+              ? <span class="bean-chat-sidebar-dot" role="img" aria-label={homePending ? "New posts" : "New reply"} /> : null}
           </span>
         </button>
       </div>

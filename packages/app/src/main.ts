@@ -501,6 +501,10 @@ app.whenReady().then(async () => {
         componentWindows.set(kind, win);
         sendToWindow(win, IPC.reviewBeforeClose, quitClosing);
       });
+      // A Home drains only where it can be seen (#961): the renderer's own visibility can't tell.
+      for (const [event, visible] of [["show", true], ["restore", true], ["hide", false], ["minimize", false]] as const) {
+        win.on(event as "show", () => sendToWindow(win, IPC.chatWindowVisible, visible));
+      }
       // Captured now: the webContents is destroyed by the time `closed` fires.
       const clientId = win.webContents.id;
       win.on("closed", () => {
@@ -725,7 +729,7 @@ app.whenReady().then(async () => {
         cli: coreCli(remoteTarget),
         onPush: (mountId, kind, payload) => {
           if (Object.hasOwn(HOST_PUSH_CHANNELS, kind)) push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
-          if (kind === "home") homePoll.check();
+          if (kind === "home") homePoll.arrived();
         },
         onStatus: (status) => {
           push.broadcast(IPC.coreStatusChanged, status);

@@ -411,6 +411,31 @@ describe("a chat sprout start whose reply a drop lost (#922)", () => {
 });
 
 describe("remote Home count (#961)", () => {
+  it("a post's nudge re-reads only after the grace, so a shown Home's drain lands first", async () => {
+    vi.useFakeTimers();
+    try {
+      let pending = 1;
+      const call = vi.fn(async () => pending);
+      const onCount = vi.fn();
+      const poll = createRemoteHomePoll({ call, onCount, graceMs: 5_000 });
+      pending = 0;
+      poll.attached();
+      await Promise.resolve();
+      pending = 1; // a post lands; the shown Home will drain it
+      poll.arrived();
+      poll.check(); // e.g. a save during the grace: deferred to the grace's own read
+      expect(call).toHaveBeenCalledTimes(1);
+      pending = 0;
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      expect(call).toHaveBeenCalledTimes(2);
+      expect(onCount.mock.calls).toEqual([[0], [0]]); // never a positive count
+      poll.detached();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("asks on attach and on a bounded poll while attached; a reply from an earlier connection is discarded", async () => {
     vi.useFakeTimers();
     try {

@@ -150,6 +150,30 @@ describe("ChatWindow Home", () => {
     await vi.waitFor(() => expect(savedPosts()).toEqual(["p2"]));
   });
 
+  it("#961: a post nudged in while Home restores is pulled once the restore lands; one for a hidden window waits for its show", async () => {
+    let restore!: (t: unknown) => void;
+    bean.chatThreadGet!.mockImplementationOnce(() => new Promise((r) => { restore = r; }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    const mount = bean.chatThreadGet!.mock.calls[0]![1] as string;
+    await act(async () => { listeners.onHomePost!(mount); });
+    await act(async () => { restore(homeThread([])); });
+    await flush();
+    expect(bean.chatThreadGet).toHaveBeenCalledTimes(2);
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(2);
+
+    // The chat window hidden: a nudge reads nothing; shown again, it pulls.
+    bean.chatThreadGet!.mockClear();
+    await act(async () => { listeners.onChatWindowVisible!(false); });
+    await act(async () => { listeners.onHomePost!(mount); });
+    await flush();
+    expect(bean.chatThreadGet).not.toHaveBeenCalled();
+    await act(async () => { listeners.onChatWindowVisible!(true); });
+    await flush();
+    expect(bean.chatThreadGet).toHaveBeenCalledWith("home", mount);
+  });
+
   it("Home's Off the record opens a separate off-the-record chat; Home is never taken off the record", async () => {
     bean.chatThreadGet!.mockResolvedValueOnce(homeThread([]));
     await act(async () => { render(h(ChatWindow, {}), root); });

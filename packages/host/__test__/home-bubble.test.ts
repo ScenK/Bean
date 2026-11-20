@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createHomeBubble, HOME_ARRIVAL_GRACE_MS } from "../src/home-bubble.js";
+import { createHomeBubble, HOME_ARRIVAL_GRACE_MS, HOME_RECONCILE_MS } from "../src/home-bubble.js";
 import { createTaskStatus, HOME_JOB_ID, type TaskJob } from "../src/task-status.js";
 
 // The avatar's Home bubble (#961): recounted on insert, drain, boot and expiry; a post for an open Home
@@ -69,6 +69,25 @@ describe("Home bubble", () => {
     db.expiry = undefined;
     vi.advanceTimersByTime(60_000 + 100);
     expect(home()).toBeUndefined();
+  });
+
+  it("reconciles posts another process inserted (bean-core holding the lease): bubble, or a nudge to an open Home", () => {
+    const { db, bubble, home, nudge } = setup();
+    bubble.refresh();
+    db.count = 1; // inserted elsewhere: no hook fires here
+    vi.advanceTimersByTime(HOME_RECONCILE_MS);
+    expect(home()).toMatchObject({ count: 1 });
+    expect(nudge).not.toHaveBeenCalled();
+    const open = setup({ mount: "m1" });
+    open.bubble.refresh();
+    open.db.count = 2;
+    vi.advanceTimersByTime(HOME_RECONCILE_MS);
+    expect(open.nudge).toHaveBeenCalledWith("m1");
+    open.db.count = 0; // the shown Home drained them
+    vi.advanceTimersByTime(HOME_ARRIVAL_GRACE_MS);
+    expect(open.home()).toBeUndefined();
+    bubble.stop();
+    open.bubble.stop();
   });
 
   it("a failed count leaves the bubble as it was", () => {

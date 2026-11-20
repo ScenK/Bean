@@ -43,6 +43,26 @@ test("home: boot bubble, live arrival on a shown Home, and the dot while another
     await expect(bubble).toHaveCount(0);
     await expect(chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).toHaveCount(0);
 
+    // Home selected but the window hidden (Cmd+W): nothing drains unseen; showing it again does.
+    const chatWindow = (show: boolean) => app.evaluate(({ BrowserWindow }, on) => {
+      const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith("/chat.html"))!;
+      if (on) w.show(); else w.hide();
+    }, show);
+    // macOS emits `hide` a beat later: wait for the push to land before the post does.
+    const hidden = chat.evaluate(() => new Promise<void>((done) => {
+      (window as unknown as { bean: { onChatWindowVisible: (cb: (v: boolean) => void) => void } }).bean
+        .onChatWindowVisible((v) => { if (!v) done(); });
+    }));
+    await chatWindow(false);
+    await hidden;
+    await runNow(avatar, "poster");
+    await expect(bubble).toContainText("Bean has 1 post for you", { timeout: 15_000 });
+    expect(listPendingHomePosts(file)).toHaveLength(1);
+    await expect(chat.locator(".bean-post")).toHaveCount(2);
+    await chatWindow(true);
+    await expect(chat.locator(".bean-post")).toHaveCount(3);
+    await expect(bubble).toHaveCount(0);
+
     // Another chat shown: the bubble and the Home row's dot, until Home is opened.
     await chat.locator(".bean-chat-sidebar-new").click();
     await expect(chat.locator(".bean-chat-sidebar-home")).not.toHaveClass(/--active/);
@@ -51,7 +71,7 @@ test("home: boot bubble, live arrival on a shown Home, and the dot while another
     await expect(chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).toBeVisible();
     await expect(chat.locator(".bean-post")).toHaveCount(0);
     await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
-    await expect(chat.locator(".bean-post")).toHaveCount(3);
+    await expect(chat.locator(".bean-post")).toHaveCount(4);
     await expect(bubble).toHaveCount(0);
     await expect(chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).toHaveCount(0);
   } finally {

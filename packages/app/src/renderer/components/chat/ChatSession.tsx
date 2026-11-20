@@ -221,6 +221,9 @@ export interface ChatSessionProps {
   sessions: Map<string, ChatSessionApi>;
   /** Mounted but not shown — it has work in flight (#517). */
   hidden: boolean;
+  /** The chat window itself is hidden or minimized (#961): a shown Home still doesn't drain. Read
+   * live, not from a render — a post can land before one runs (the shell pulls again on restore). */
+  windowHidden?: () => boolean;
   clis: CliName[];
   runModels: AvailableModel[];
   prefillUrl?: ChatDrop;
@@ -252,7 +255,7 @@ export interface ChatSessionProps {
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
 export function ChatSession({
-  mountId, restoreId, startIncognito, prompt, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
+  mountId, restoreId, startIncognito, prompt, sessions, hidden, windowHidden = () => false, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
 }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -498,13 +501,18 @@ export function ChatSession({
     flushRef.current = true;
     return true;
   };
-  // A hidden Home doesn't drain. Shown (again), it asks main for the pending posts first: that list
-  // replaces the held one, so a post that expired or landed meanwhile is right. A failed read appends
-  // nothing; the next show asks again.
-  const pullPosts = (): void => {
-    if (hiddenRef.current || !homeRef.current) return;
+  // A hidden Home doesn't drain — another chat shown, or the chat window hidden or minimized (#961:
+  // a drain clears the bubble, so it must only happen where the owner can see it). Shown (again), it
+  // asks main for the pending posts first: that list replaces the held one, so a post that expired or
+  // landed meanwhile is right. A failed read appends nothing; the next show asks again.
+  const seen = (): boolean => !hiddenRef.current && !windowHidden();
+  // A post nudged in while Home was still restoring: its snapshot predates the post, so pull once more.
+  const pullAfterRestoreRef = useRef(false);
+  const pullPosts = (nudged = false): void => {
+    if (!homeRef.current && restoringRef.current && restoreId === "home") { if (nudged) pullAfterRestoreRef.current = true; return; }
+    if (!seen() || !homeRef.current) return;
     window.bean.chatThreadGet("home", mountId).then((t) => {
-      if (goneRef.current || hiddenRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
+      if (goneRef.current || !seen() || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
       for (const p of t.home.posts) undrainedRef.current.add(p.id);
       waitingPostsRef.current = t.home.posts;
       if (appendPosts()) setItems(itemsRef.current);
@@ -588,8 +596,9 @@ export function ChatSession({
         flushRef.current = true;
       }
       if (sprouts.changed) flushRef.current = true;
-      if (!hiddenRef.current) appendPosts();
+      if (seen()) appendPosts();
       setItems(itemsRef.current);
+      if (pullAfterRestoreRef.current) { pullAfterRestoreRef.current = false; pullPosts(); }
       for (const lb of sprouts.loopbacks) void sendRef.current(lb.text, lb.display, true, undefined, lb.source);
       // An end pushed while the thread loaded found no card and waited: its card is here now.
       for (const [jobId, e] of pendingSproutEndsRef.current) {
@@ -1558,7 +1567,7 @@ export function ChatSession({
   const open = (target: string): void => {
     if (evictingRef.current || leavingRef.current) return;
     // A mount still restoring Home counts as Home: a loading window gets both the pull and the push (#961).
-    const onHome = homeRef.current || (restoreId === "home" && threadRef.current === undefined);
+    const onHome = homeRef.current || (restoreId === "home" && restoringRef.current);
     if (target === "new" ? untouched() : target === threadRef.current?.id || (target === "home" && onHome)) return;
     // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
     // sidebar row to come back to — kept hidden, it would be unreachable).
@@ -1617,7 +1626,7 @@ export function ChatSession({
     liveEvent: onLiveEvent,
     threadId: () => threadRef.current?.id,
     home: () => homeRef.current,
-    homePost: pullPosts,
+    homePost: () => pullPosts(true),
     renamed: (title) => { if (threadRef.current) threadRef.current = { ...threadRef.current, title }; },
     memoryUpdated: (saved) => setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]),
     // generate_image started inside the current turn — flip the working bubble so the

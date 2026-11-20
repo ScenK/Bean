@@ -1,6 +1,6 @@
 import type { Readable, Writable } from "node:stream";
 import {
-  checkHandshake, CONTRACT_VERSION, encodeFrame, frameReader, REMOTE_OPS, type Handshake, type MountPushKind,
+  checkHandshake, CONTRACT_VERSION, encodeFrame, frameReader, HOME_ARRIVAL_GRACE_MS, REMOTE_OPS, type Handshake, type MountPushKind,
 } from "@bean/host";
 import { IPC, type CoreStatus } from "./channels.js";
 import { CHANNEL_CONTRACT, guardIpc, type IpcLike } from "./channel-contract.js";
@@ -314,16 +314,21 @@ export const HOME_POLL_MS = 60_000;
 
 /** A remote shell's Home count (#961): the core sends it no job feed, so the shell asks `homePending`
  * on every attach, on a bounded poll while attached, and when something may have changed it (a post's
- * nudge, a transcript save). A reply from an earlier connection is discarded. */
+ * nudge, a transcript save). A reply from an earlier connection is discarded. A post's nudge is read
+ * only after the core's arrival grace, as the local host does: a shown Home drains it first, so the
+ * bubble doesn't flash over the post it already shows. */
 export function createRemoteHomePoll(deps: {
   call: (op: string, args: unknown[]) => Promise<unknown>;
   onCount: (n: number) => void;
   pollMs?: number;
+  graceMs?: number;
 }) {
   let conn = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let grace: ReturnType<typeof setTimeout> | undefined;
   const check = (): void => {
     if (timer === undefined) return; // not attached
+    if (grace !== undefined) return; // a post's grace runs: its own re-read comes after
     const mine = conn;
     deps.call("homePending", []).then((n) => {
       if (mine === conn && typeof n === "number" && Number.isInteger(n) && n >= 0) deps.onCount(n);
@@ -339,9 +344,17 @@ export function createRemoteHomePoll(deps: {
     detached: (): void => {
       conn++;
       clearInterval(timer);
+      clearTimeout(grace);
+      grace = undefined;
       timer = undefined;
     },
     check,
+    /** A post's nudge: re-read once the grace is up. ponytail: a remote save slower than the grace
+     * still shows the bubble until it lands (the save re-reads at once). */
+    arrived: (): void => {
+      clearTimeout(grace);
+      grace = setTimeout(() => { grace = undefined; check(); }, deps.graceMs ?? HOME_ARRIVAL_GRACE_MS);
+    },
   };
 }
 
