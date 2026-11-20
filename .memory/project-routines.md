@@ -100,7 +100,8 @@ Done commit (winner, lease held): deliver, then pause with `until: <finishedAt>`
 failed hand-off: record → needs-attention with the error, sprout paused (`until` kept), queue kept
 for the owner — no re-delivery. Expiry (tick, lease holder, idle sprout only — a live run may
 still reach done): post `Nothing by <date> — extend?` (`ending: "expired"`, never recorded), then
-pause + drop, and clear a startup `missed` flag (else a restored cron sprout waits for Run now). Dropping closes the dropped todos' chat receipts (`failed`, `ENDED_BEFORE_RUN`) for
+pause + drop. Restoring an ended cron sprout (host save) calls `scheduler.rebase`: lastRun = now,
+missed cleared — no catch-up of a slot passed while ended, no stale startup `missed`. Dropping closes the dropped todos' chat receipts (`failed`, `ENDED_BEFORE_RUN`) for
 the dispatch sweep — never delete them. A failed post leaves it on for the next tick (a crash may re-post). Known gap: the done commit holds the lane while `deliverDigest` composes the chat brief (a model
 call). One `mayFire()` at commit; lease handovers mid-commit are out of scope. Either ending is chatops `context: true`,
 ignores `chatopsOnlyOnProblems`, and isn't deduped against the asking chat (`askedFrom`): the

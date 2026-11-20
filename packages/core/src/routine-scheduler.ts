@@ -625,9 +625,6 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       await deps.deliverDigest(c, { digest, results: [], ending: "expired", record: { startedAt: at, finishedAt: at, status: "ok", digest, steps: [] } });
       await save({ ...c, enabled: false });
       await deps.dropPendingTodos?.(c.name);
-      // A missed fire is moot once it ended: a restore must schedule normally, not wait for Run now.
-      missedNames.delete(c.name);
-      await updateState(c.name, (s) => ({ ...(s ?? { history: [] }), missed: undefined }));
     });
   }
 
@@ -692,6 +689,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     withSprout,
     /** Hosts with no Run-now (headless): drop the missed flag and rebase the schedule to now, so
      * each routine fires at its next slot — the missed one is still never run. */
+    /** A cron sprout restored after it ended (#980): its schedule restarts from now — the next slot
+     * fires, a slot that passed while it was ended is not caught up, and a stale missed flag goes. */
+    async rebase(name: string): Promise<void> {
+      await updateState(name, (s) => ({ ...(s ?? { history: [] }), lastRun: now().toISOString(), missed: undefined }));
+      missedNames.delete(name);
+    },
     async clearMissed(names: string[]): Promise<void> {
       const at = startedAt.toISOString();
       await withStates((all) => {

@@ -74,6 +74,8 @@ export interface RoutineHandlerDeps {
   /** The scheduler's per-sprout lane (#980): saves serialize with its admissions and endings.
    * Absent = no lane (tests). */
   withSprout?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+  /** Restarts a restored cron sprout's schedule from now (the scheduler's `rebase`). */
+  rebase?: (name: string) => Promise<void>;
 }
 
 export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
@@ -100,6 +102,10 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
               await deps.saveRoutine({ ...rest, ...(prior.until !== undefined ? { until: prior.until } : {}), enabled: false });
               return true;
             }
+            // A cron sprout: its schedule restarts from now — no catch-up of a slot passed while ended.
+            await deps.saveRoutine(routine);
+            await deps.rebase?.(routine.name);
+            return false;
           }
         }
         await deps.saveRoutine(routine);

@@ -580,6 +580,7 @@ export async function createHost(deps: HostDeps) {
       isRunning: (name) => routineScheduler.isRunning(name),
       runningCount: (name) => routineScheduler.runningCount(name),
       withSprout: routineScheduler.withSprout,
+      rebase: (name) => routineScheduler.rebase(name),
       queueCounts: async (name) => {
         const todos = await listTodos(db, name);
         return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };

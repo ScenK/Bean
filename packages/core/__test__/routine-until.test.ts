@@ -350,19 +350,24 @@ describe("expiry (scheduler)", () => {
     expect(t.deps.deliverDigest).toHaveBeenCalledTimes(1);
   });
 
-  it("a cron sprout flagged missed at startup drops the flag when it expires, so a restore schedules normally", async () => {
+  it("a restored cron sprout drops a stale missed flag and restarts its schedule from now (no catch-up)", async () => {
     const cron: Routine = { name: "c", enabled: true, cron: "0 9 * * *", until: "2026-12-20", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
     const t = setup([cron]);
-    t.deps.saveStates({ c: { lastRun: at(2026, 12, 1, 9, 0).toISOString(), history: [] } });
+    await t.deps.saveStates({ c: { lastRun: at(2026, 12, 1, 9, 0).toISOString(), history: [] } });
     t.sched.start(); // flags it missed
     t.sched.stop();
     await vi.waitFor(() => expect(t.states().c?.missed).toBe(true));
     t.setClock(at(2026, 12, 21, 9, 0));
     await t.sched.tick();
     expect(t.routine("c").enabled).toBe(false);
+    t.setRoutines([{ ...cron, until: "2027-01-31" }]); // restored at 10:00 (the host saves, then rebases)
+    t.setClock(at(2026, 12, 22, 10, 0));
+    await t.sched.rebase("c");
     expect(t.states().c?.missed).toBeUndefined();
-    t.setRoutines([{ ...cron, until: "2027-01-31" }]); // restored
-    t.setClock(at(2026, 12, 22, 9, 1));
+    t.setClock(at(2026, 12, 22, 10, 1));
+    await t.sched.tick();
+    expect(t.deps.runRoutine).not.toHaveBeenCalled(); // today's 09:00 passed while it was ended
+    t.setClock(at(2026, 12, 23, 9, 1));
     await t.sched.tick();
     expect(t.deps.runRoutine).toHaveBeenCalledTimes(1);
   });
