@@ -1001,6 +1001,7 @@ button, input, textarea, select, a {
 .bean-send-body { min-height: 0; resize: none; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bean-btn {
   font: 600 12px sans-serif;
+  line-height: 14px; /* fixed, so an emoji glyph (💬) can't grow the button past its text-only siblings */
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
   border: none;
