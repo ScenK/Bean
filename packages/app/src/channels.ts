@@ -125,18 +125,12 @@ export const IPC = {
   dismissTask: "bean:dismiss-task",
   openChatMount: "bean:open-chat-mount",
   showChatMount: "bean:show-chat-mount",
-  // Home (#961): a new post's nudge to the chat holding today's Home; the pending count (a remote
-  // shell polls it); and "open the chat window on Home" (bubble, avatar, notification) — pushed to an
-  // open window, pulled by one still mounting.
-  homePost: "bean:home-post",
+  // Home (#961): the pending count (a remote shell polls it), and "open the chat window on Home"
+  // (bubble, avatar, notification) — pushed to an open window, pulled by one still mounting.
   homePending: "bean:home-pending",
   openChatHome: "bean:open-chat-home",
   chatShowHome: "bean:chat-show-home",
   getPendingChatHome: "bean:get-pending-chat-home",
-  // The chat window itself shown or not (hidden / minimized): a Home drains only where it can be seen.
-  chatWindowVisible: "bean:chat-window-visible",
-  // chat → main: a Home is seen (its tab shown in an unhidden window), so the bubble stays out.
-  chatHomeSeen: "bean:chat-home-seen",
   // avatar → main: the plan for a skill tile a URL was dropped on (shown via proposeRun).
   planDrop: "bean:plan-drop",
   getConfig: "bean:get-config",

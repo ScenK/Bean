@@ -107,8 +107,6 @@ export function ChatWindow() {
   const [homeActive, setHomeActive] = useState(false);
   // Home posts waiting (#961): the avatar's Home bubble, from the job feed every window gets.
   const [homePending, setHomePending] = useState(false);
-  const windowHiddenRef = useRef(false);
-  const [windowHidden, setWindowHidden] = useState(false);
   const [busy, setBusy] = useState(false);
   // Synced chats (Discord/Teams, SyncedChat.tsx): shown over the current desktop chat, which stays
   // mounted (hidden) underneath — picking a desktop row or New chat goes back through it.
@@ -120,13 +118,6 @@ export function ChatWindow() {
   const [syncedWorking, setSyncedWorking] = useState<string | undefined>(undefined);
   const [bots, setBots] = useState<Record<string, boolean>>({});
   const syncedListing = synced.find((c) => syncedKey(c) === syncedShown);
-  // A Home on screen drains what lands, so main leaves the bubble out meanwhile (#961).
-  const homeSeen = homeActive && !syncedListing && !windowHidden;
-  useEffect(() => { window.bean.setChatHomeSeen(homeSeen); }, [homeSeen]);
-  // A remote core (re)attached — perhaps restarted, with no record that this chat holds Home: the
-  // shown Home asks again, which pins it there and catches up on posts (#961).
-  const attached = coreStatus.kind === "remote" && coreStatus.state === "attached";
-  useEffect(() => { if (attached) shownApi()?.homePost(); }, [attached]);
   const [narrow, setNarrow] = useState(() => window.innerWidth < SIDEBAR_INLINE_MIN);
   const [inlineOpen, setInlineOpen] = useState(() => localStorage.getItem(SIDEBAR_OPEN_KEY) !== "0");
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -244,17 +235,9 @@ export function ChatWindow() {
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
     window.bean.homePending().then((n) => setHomePending(n > 0), () => {});
     window.bean.onTaskStatus((jobs) => setHomePending(jobs.some((j) => j.kind === "home")));
-    // A new post goes to the chat holding today's Home (#961); it appends only while shown.
-    window.bean.onHomePost((mountId) => sessions.get(mountId)?.homePost());
     // The Home bubble, the avatar with posts pending, or a sprout banner: show today's Home.
     window.bean.getPendingChatHome().then((h) => { if (h) openThreadRef.current("home"); }, () => {});
     window.bean.onChatShowHome(() => openThreadRef.current("home"));
-    // The window itself hidden or minimized: a shown Home doesn't drain; shown again, it pulls (#961).
-    window.bean.onChatWindowVisible((v) => {
-      windowHiddenRef.current = !v;
-      setWindowHidden(!v);
-      if (v) shownApi()?.homePost();
-    });
     // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.
     window.bean.onShowChatMount((mountId) => {
       // An idle owner may be evicted by now (a finished task's bubble outlives it): its thread reopens.
@@ -483,7 +466,7 @@ export function ChatWindow() {
           startIncognito={incognito === true}
           sessions={sessions}
           hidden={mountId !== shown || syncedListing !== undefined}
-          windowHidden={() => windowHiddenRef.current}
+          homePending={homePending}
           clis={clis}
           runModels={runModels}
           prefillUrl={mountId === shown ? droppedUrl : undefined}

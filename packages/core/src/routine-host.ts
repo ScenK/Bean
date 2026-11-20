@@ -69,7 +69,7 @@ export interface RoutineHostDeps {
   newId?: () => string;
   /** The scheduler lease: only its holder writes `sinks.home` posts. Absent = held. */
   holdsLease?: () => boolean;
-  /** A `sinks.home` post was just inserted (#961): the host recounts and nudges today's Home. */
+  /** A `sinks.home` post was just inserted (#961): the host recounts its bubble. */
   onHomePost?: () => void;
 }
 

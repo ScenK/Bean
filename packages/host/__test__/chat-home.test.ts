@@ -25,19 +25,15 @@ function setup(at = new Date(2026, 10, 19, 12), onDrained = () => {}) {
 const posts = (...ids: string[]) => ids.map((postId) => ({ kind: "post", id: `i-${postId}`, postId, sprout: "digest", at: "x", text: "t" }));
 
 describe("Home thread", () => {
-  it("names the chat holding today's Home, and a draining save (only) recounts the bubble (#961)", () => {
+  it("a draining save (only) recounts the bubble (#961)", () => {
     let recounts = 0;
     const { threads, post, home } = setup(undefined, () => { recounts++; });
-    expect(threads.homeHolder()).toBeUndefined();
     const p1 = post("one");
     threads.get("a", HOME_TARGET);
-    expect(threads.homeHolder()).toBe("a");
     threads.save("a", { id: home, title: "Home", items: [] });
     expect(recounts).toBe(0);
     threads.save("a", { id: home, title: "Home", items: posts(p1) });
     expect(recounts).toBe(1);
-    threads.release("a");
-    expect(threads.homeHolder()).toBeUndefined();
   });
 
   it("opens as an empty thread with the pending posts, and the save holding them drains them", () => {

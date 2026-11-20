@@ -46,14 +46,12 @@ export function createTaskStatus(
 
   return {
     list: (): TaskJob[] => [...jobs.values()],
-    /** Create (needs every field) or patch an existing job. A patch for an unknown id is dropped.
-     * `newest` moves it to the newest slot (the list's end — nearest the bean). */
-    upsert(id: string, patch: Partial<Omit<TaskJob, "id">>, newest = false): void {
+    /** Create (needs every field) or patch an existing job. A patch for an unknown id is dropped. */
+    upsert(id: string, patch: Partial<Omit<TaskJob, "id">>): void {
       const cur = jobs.get(id);
       if (!cur && !(patch.kind && patch.name !== undefined)) return;
       const t = lingers.get(id);
       if (t !== undefined) { timers.clear(t); lingers.delete(id); } // a rerun revives it
-      if (newest) jobs.delete(id);
       jobs.set(id, { line: "", detail: "", startedAt: Date.now(), state: "running", ...cur, ...patch, id } as TaskJob);
       push();
     },

@@ -1,7 +1,7 @@
 # Home posts (`home_posts`, `sinks.home`)
 
-Epic #958 (Home chat). Story #959 is the core half; #960 the Home thread and its drain; #961 live
-arrival, the unread dot and the avatar bubble; the sprout-editor controls come later.
+Epic #958 (Home chat). Story #959 is the core half; #960 the Home thread and its drain; #961 the
+unread dot, the avatar bubble and the jump-down pill; the sprout-editor controls come later.
 
 - `sinks.home: { ttlMinutes? }` on a sprout → `deliverDigest` inserts **one** `home_posts` row per
   delivered run (core `home-posts.ts`). The body is the chat brief (`chatSinkBody`), built even when
@@ -43,32 +43,26 @@ arrival, the unread dot and the avatar bubble; the sprout-editor controls come l
   chat window re-reads the listing's `home` flag on focus and every 10 minutes (it can't know the
   core's date), so yesterday's row drops into history.
 
-## Unread dot, avatar bubble, live arrival (#961)
+## Unread dot, avatar bubble, jump-down pill (#961)
 
+- **The pending count is the only source of truth.** The bubble, the Home row's dot and the pill show
+  while it's above zero; nothing hides them by which chat is visible, and nothing pushes posts into an
+  open Home. Any delivery failure leaves an indicator on screen instead of losing a post. Don't bring
+  back live push / seen-tracking / visibility-aware drains: four review rounds each found a new
+  silent-loss P1 there (slow remote save, minimized window, standby host, restore race, reattach).
 - The bubble is one job `home:posts` (kind `home`, state `done` — never `running`, so no spinner,
   Stop, keep-awake or update block; `count` = pending posts), built by `homeJob()` in
-  `task-status.ts`. Host `home-bubble.ts` recounts it on insert (`RoutineHostDeps.onHomePost`), on
-  a draining save (`onDrained`), at boot, at the soonest pending expiry, and every
-  `HOME_RECONCILE_MS` — only the lease holder gets `onHomePost`, so posts `bean-core` inserts on the
-  same data dir surface there. Every recount goes through one `refresh()`: past the boot baseline, a
-  newer newest pending post (`newestPendingHomePost`, not the count — the cap can keep it flat)
-  counts as an arrival, whichever recount sees it first (an expiry or drain may beat the poll). Its
-  click opens Home and never dismisses it.
-- An arrival pushes `homePost` (mount kind `home`) to the chat holding today's Home and moves the
-  bubble to the newest slot. That chat re-asks `chatThreadGet("home")` only while **seen**: its tab
-  shown and the chat window not hidden/minimized — from main's `chatWindowVisible` push
-  (BrowserWindow show/restore/hide/minimize), not `document.visibilityState`, which stays "visible"
-  under Playwright; macOS emits `hide` a beat late (the e2e waits for the push). Shown again it pulls.
-  A nudge during Home's restore is pulled once the restore lands; picking Home when it's already
-  open pulls too (and re-pins it on a restarted remote core, as does every remote re-attach). A
-  failed Home restore clears the active Home (bubble and dot come back); the row, or a nudge, retries.
-- No timers decide the bubble: the chat window sends `chatHomeSeen` and main leaves the `home:posts`
-  job out of the `taskStatus` broadcast while a Home is seen (it's draining what lands), so neither
-  the bubble nor the Home-row dot flashes, local or remote, however slow the save.
-- The Home-row dot reads that feed (after one `homePending` read on mount).
+  `task-status.ts`. Host `home-bubble.ts` recounts it on insert (`RoutineHostDeps.onHomePost`, lease
+  holder only), on a draining save (`onDrained`), at boot, at the soonest pending expiry, and every
+  `HOME_RECONCILE_MS` (a standby host's only way to see the holder's posts). Its click opens Home and
+  never dismisses it.
+- Drain happens only when Home is **opened**: shown, picked again (row, bubble, banner, avatar), or the
+  pill clicked (`ChatPanel` `homePosts`: the `bean-jump-down` pill shows even at the bottom). Each asks
+  `chatThreadGet("home")`; a failed read appends nothing and a failed save drains nothing, so the count
+  stays and the next open retries (an open with nothing new re-saves).
 - Remote shell: no job feed, so `createRemoteHomePoll` (remote-core.ts) reads `homePending` on
-  attach, every `HOME_POLL_MS`, on a `home` push and after a `chatThreadSave`; only the latest read's
-  reply counts. Main broadcasts `[homeJob(n)]` as the whole job list.
+  attach, every `HOME_POLL_MS` and after a `chatThreadSave`; only the latest read's reply counts.
+  Main broadcasts `[homeJob(n)]` as the whole job list.
 - "Open on Home": main's `openChatHome` (bubble, a sprout banner with `meta.open: "home"`, and the
   avatar's plain open-chat when a fresh `homePending` read is positive) pushes `chatShowHome` to an
   open window and leaves `getPendingChatHome` for one still loading. Main also replays the job list

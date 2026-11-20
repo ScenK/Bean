@@ -18,7 +18,6 @@ export const PUSH_ROUTES = {
   [IPC.chatImageProgress]: "mount",
   [IPC.memoryUpdated]: "mount",
   [IPC.showChatMount]: "mount",
-  [IPC.homePost]: "mount",
   [IPC.themeChanged]: "broadcast",
   [IPC.taskStatus]: "broadcast",
   [IPC.chatopsEvent]: "broadcast",
@@ -30,7 +29,6 @@ export const PUSH_ROUTES = {
   [IPC.componentDroppedUrl]: "window",
   [IPC.dashboardTarget]: "window",
   [IPC.chatShowHome]: "window",
-  [IPC.chatWindowVisible]: "window",
   [IPC.proposeRun]: "window",
   [IPC.chatPrompt]: "window",
   [IPC.interruptedRunNotice]: "window",
@@ -55,7 +53,7 @@ export interface Push {
 
 /** The host's mount pushes (`HostPush`), by kind → channel. */
 export const HOST_PUSH_CHANNELS: Record<MountPushKind, MountPush> = {
-  delegate: IPC.delegateEvent, live: IPC.liveEvent, memory: IPC.memoryUpdated, imageProgress: IPC.chatImageProgress, sprout: IPC.sproutEvent, home: IPC.homePost,
+  delegate: IPC.delegateEvent, live: IPC.liveEvent, memory: IPC.memoryUpdated, imageProgress: IPC.chatImageProgress, sprout: IPC.sproutEvent,
 };
 export const hostPush = (push: Push): HostPush => (mountId, kind, payload) => push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
 

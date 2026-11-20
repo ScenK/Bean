@@ -418,8 +418,6 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     },
     /** The open chat (mount key) that holds this thread, if any. */
     holderOf: holder,
-    /** The chat holding today's Home (#961) — where a new post's nudge goes. */
-    homeHolder: (): string | undefined => holder(homeThreadId(now())),
     /** The thread this chat writes, once pinned. */
     pinnedOf: (key: string): string | undefined => threads.get(key),
     exists: (id: string): boolean => deps.getDesktopChat(deps.dbFile, id) !== undefined,

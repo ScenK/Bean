@@ -83,6 +83,8 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
 
 export function ChatPanel({
   hidden,
+  homePosts = false,
+  onHomePosts,
   mountId,
   inputRef,
   terminalOpen,
@@ -155,6 +157,10 @@ export function ChatPanel({
 }: {
   /** A chat kept mounted in the background while another one is shown. */
   hidden?: boolean;
+  /** Today's Home with posts pending (#961): the jump-down pill shows even at the bottom, and its
+   * click loads them. A failed load leaves the count, so the pill stays for the next click. */
+  homePosts?: boolean;
+  onHomePosts?: () => void;
   /** This chat's mount: its terminal pane's shell is keyed by it. */
   mountId: string;
   /** The composer, owned by ChatSession: an unsent draft keeps the chat mounted on a switch. */
@@ -956,8 +962,11 @@ export function ChatPanel({
         </div>
       ) : (
       <div class="bean-chat-input">
-        {showJump ? (
-          <button type="button" class="bean-jump-down" aria-label="Jump to latest" onClick={scrollToBottom}>
+        {showJump || homePosts ? (
+          <button
+            type="button" class="bean-jump-down" aria-label={homePosts ? "New posts" : "Jump to latest"}
+            onClick={() => { scrollToBottom(); if (homePosts) onHomePosts?.(); }}
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></svg>
           </button>
         ) : null}

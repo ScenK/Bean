@@ -313,9 +313,9 @@ export type RemoteCore = ReturnType<typeof createRemoteCore>;
 export const HOME_POLL_MS = 60_000;
 
 /** A remote shell's Home count (#961): the core sends it no job feed, so the shell asks `homePending`
- * on every attach, on a bounded poll while attached, and when something may have changed it (a post's
- * nudge, a transcript save). Only the latest read's reply counts: one from an earlier connection or
- * overtaken by a newer read is discarded. While a seen Home drains, main hides the bubble anyway. */
+ * on every attach, on a bounded poll while attached, and after a transcript save (it may have
+ * drained). Only the latest read's reply counts: one from an earlier connection or overtaken by a
+ * newer read is discarded. */
 export function createRemoteHomePoll(deps: {
   call: (op: string, args: unknown[]) => Promise<unknown>;
   onCount: (n: number) => void;

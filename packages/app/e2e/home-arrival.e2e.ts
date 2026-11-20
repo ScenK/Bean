@@ -11,9 +11,10 @@ const runNow = (page: Page, name: string): Promise<void> => page.evaluate((n) =>
 }, name);
 
 // #961: posts left pending bring the avatar's Home bubble back at boot; its click opens Home, which
-// drains them and clears it. A post landing while Home is shown appears there with no bubble; one
-// landing while another chat is shown raises the bubble and the Home row's dot until Home is opened.
-test("home: boot bubble, live arrival on a shown Home, and the dot while another chat is shown", async () => {
+// drains them and clears it. A post landing while Home is shown raises the jump-down pill (and the
+// bubble); its click appends and drains it. One landing while another chat is shown raises the bubble
+// and the Home row's dot until Home is opened.
+test("home: boot bubble, the pill on a shown Home, and the dot while another chat is shown", async () => {
   const home = await makeBeanHome({ autoMemory: false, disabledClis: ["claude", "codex", "opencode"] });
   const stub = await startStubOpenAI(); // nothing queued: the post's brief falls back to the step output
   const dir = join(home.homeDir, ".bean");
@@ -34,34 +35,19 @@ test("home: boot bubble, live arrival on a shown Home, and the dot while another
     await expect(chat.locator(".bean-chat-sidebar-home")).toHaveClass(/bean-chat-sidebar-home--active/);
     await expect(bubble).toHaveCount(0);
 
-    // Home shown: the post appears in place, drained before the bubble's grace runs out.
+    // Home shown: nothing is pushed in; the count raises the pill, whose click loads and drains.
     await runNow(avatar, "poster");
+    const pill = chat.locator('.bean-jump-down[aria-label="New posts"]');
+    await expect(pill).toBeVisible({ timeout: 15_000 });
+    await expect(bubble).toContainText("Bean has 1 post for you");
+    await expect(chat.locator(".bean-post")).toHaveCount(1);
+    await pill.click();
     await expect(chat.locator(".bean-post")).toHaveCount(2);
     await expect(chat.locator(".bean-post").last()).toContainText("fresh-post");
     await expect.poll(() => listPendingHomePosts(file).length).toBe(0);
-    await avatar.waitForTimeout(2_000); // a seen Home keeps the bubble out: nothing shows meanwhile
+    await expect(pill).toHaveCount(0);
     await expect(bubble).toHaveCount(0);
     await expect(chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).toHaveCount(0);
-
-    // Home selected but the window hidden (Cmd+W): nothing drains unseen; showing it again does.
-    const chatWindow = (show: boolean) => app.evaluate(({ BrowserWindow }, on) => {
-      const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith("/chat.html"))!;
-      if (on) w.show(); else w.hide();
-    }, show);
-    // macOS emits `hide` a beat later: wait for the push to land before the post does.
-    const hidden = chat.evaluate(() => new Promise<void>((done) => {
-      (window as unknown as { bean: { onChatWindowVisible: (cb: (v: boolean) => void) => void } }).bean
-        .onChatWindowVisible((v) => { if (!v) done(); });
-    }));
-    await chatWindow(false);
-    await hidden;
-    await runNow(avatar, "poster");
-    await expect(bubble).toContainText("Bean has 1 post for you", { timeout: 15_000 });
-    expect(listPendingHomePosts(file)).toHaveLength(1);
-    await expect(chat.locator(".bean-post")).toHaveCount(2);
-    await chatWindow(true);
-    await expect(chat.locator(".bean-post")).toHaveCount(3);
-    await expect(bubble).toHaveCount(0);
 
     // Another chat shown: the bubble and the Home row's dot, until Home is opened.
     await chat.locator(".bean-chat-sidebar-new").click();
@@ -71,7 +57,7 @@ test("home: boot bubble, live arrival on a shown Home, and the dot while another
     await expect(chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).toBeVisible();
     await expect(chat.locator(".bean-post")).toHaveCount(0);
     await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
-    await expect(chat.locator(".bean-post")).toHaveCount(4);
+    await expect(chat.locator(".bean-post")).toHaveCount(3);
     await expect(bubble).toHaveCount(0);
     await expect(chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-dot")).toHaveCount(0);
   } finally {

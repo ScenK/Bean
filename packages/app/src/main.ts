@@ -180,17 +180,7 @@ app.whenReady().then(async () => {
   // shell's whole job list is that bubble (the core sends it no job feed).
   let homeCount = 0;
   let remoteJobs: TaskJob[] = [];
-  // A seen Home (its tab shown, the chat window up) is draining its posts as they land: the bubble and
-  // the Home row's dot would only flash over what's already on screen, so they're left out meanwhile.
-  let homeSeen = false;
-  const broadcastJobs = (jobs: TaskJob[] = host?.taskStatus.list() ?? remoteJobs): void => {
-    push.broadcast(IPC.taskStatus, homeSeen ? jobs.filter((j) => j.id !== HOME_JOB_ID) : jobs);
-  };
-  const setHomeSeen = (seen: boolean): void => {
-    if (seen === homeSeen) return;
-    homeSeen = seen;
-    if (!avatarControls.reloading()) broadcastJobs();
-  };
+  const broadcastJobs = (jobs: TaskJob[] = host?.taskStatus.list() ?? remoteJobs): void => push.broadcast(IPC.taskStatus, jobs);
   const push = createPush({
     clientOfMount: (mountId) => host?.handlers.chat.clientOf(mountId) ?? remoteMounts.get(mountId),
     client: (id) => webContents.fromId(id),
@@ -512,14 +502,9 @@ app.whenReady().then(async () => {
         componentWindows.set(kind, win);
         sendToWindow(win, IPC.reviewBeforeClose, quitClosing);
       });
-      // A Home drains only where it can be seen (#961): the renderer's own visibility can't tell.
-      for (const [event, visible] of [["show", true], ["restore", true], ["hide", false], ["minimize", false]] as const) {
-        win.on(event as "show", () => sendToWindow(win, IPC.chatWindowVisible, visible));
-      }
       // Captured now: the webContents is destroyed by the time `closed` fires.
       const clientId = win.webContents.id;
       win.on("closed", () => {
-        setHomeSeen(false);
         host?.delegateTasks.cancelAll();
         host?.liveTasks.stopClient(clientId);
         host?.handlers.chat.releaseClient(clientId);
@@ -741,7 +726,6 @@ app.whenReady().then(async () => {
         cli: coreCli(remoteTarget),
         onPush: (mountId, kind, payload) => {
           if (Object.hasOwn(HOST_PUSH_CHANNELS, kind)) push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
-          if (kind === "home") homePoll.check();
         },
         onStatus: (status) => {
           push.broadcast(IPC.coreStatusChanged, status);
@@ -823,7 +807,6 @@ app.whenReady().then(async () => {
           .catch(() => homeCount)
           .then((n) => (typeof n === "number" && n > 0 ? openChatHome() : openComponent("chat")));
       },
-      setChatHomeSeen: (seen) => setHomeSeen(seen),
       openChatHome,
       getPendingChatHome: () => { const h = pendingHome; pendingHome = false; return h; },
       getPendingPlan: planStore.get,
