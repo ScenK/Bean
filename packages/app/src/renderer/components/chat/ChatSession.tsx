@@ -496,12 +496,11 @@ export function ChatSession({
     flushRef.current = true;
     return true;
   };
-  // A hidden Home doesn't drain: its posts wait until it's shown, and a Home shown again (it stayed
-  // mounted) asks main for posts that landed meanwhile.
+  // A hidden Home doesn't drain. Shown (again), it asks main for the pending posts first: that list
+  // replaces the held one, so a post that expired or landed meanwhile is right. A failed read appends
+  // nothing; the next show asks again.
   useEffect(() => {
-    if (hidden) return;
-    if (waitingPostsRef.current.length > 0 && appendPosts()) setItems(itemsRef.current);
-    if (!homeRef.current) return;
+    if (hidden || !homeRef.current) return;
     window.bean.chatThreadGet("home", mountId).then((t) => {
       if (goneRef.current || hiddenRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
       for (const p of t.home.posts) undrainedRef.current.add(p.id);

@@ -135,6 +135,21 @@ describe("ChatWindow Home", () => {
     expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
   });
 
+  it("a Home restored while hidden appends main's list when shown, so a post that expired meanwhile stays out", async () => {
+    let resolve!: (t: unknown) => void;
+    bean.chatThreadGet!.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    bean.chatThreadGet!.mockResolvedValueOnce(homeThread([posts[1]!])); // p1 expired while hidden
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    await click([...root.querySelectorAll(".bean-chat-sidebar-row")].find((r) => r.textContent?.includes("DM"))!.querySelector(".bean-chat-sidebar-open"));
+    await act(async () => { resolve(homeThread()); });
+    await flush();
+    await click(homeRow());
+    expect(shownChat().querySelectorAll(".bean-post")).toHaveLength(1);
+    await vi.waitFor(() => expect(savedPosts()).toEqual(["p2"]));
+  });
+
   it("Home's Off the record opens a separate off-the-record chat; Home is never taken off the record", async () => {
     bean.chatThreadGet!.mockResolvedValueOnce(homeThread([]));
     await act(async () => { render(h(ChatWindow, {}), root); });

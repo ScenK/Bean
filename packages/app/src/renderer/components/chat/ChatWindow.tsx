@@ -52,6 +52,9 @@ export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
   return { title: `Closing stops ${count} tasks in ${busy.length} chat${busy.length === 1 ? "" : "s"}.`, stop: "Stop & close" };
 }
 
+/** How often the window re-reads which thread is today's Home (#960). */
+export const HOME_POLL_MS = 10 * 60_000;
+
 /** The chat window: the history sidebar plus the chat it shows. A switch or New chat shows the pick
  * — the BrowserWindow itself stays. The chat left behind is evicted when idle, otherwise it stays
  * mounted, hidden, until it's idle at a later switch (#517); a pick already mounted is just shown.
@@ -180,14 +183,19 @@ export function ChatWindow() {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
     window.bean.chatThreadList().then((t) => setThreads(t ?? []), () => {});
-    // Today's Home is the core's call (its local date): on focus, re-read which listed thread it is, so
-    // yesterday's Home drops into history after midnight. Only the flag — the rows follow save acks.
-    window.addEventListener("focus", () => {
+    // Today's Home is the core's call (its local date): re-read which listed thread it is, so yesterday's
+    // Home drops into history after midnight. Only the flag — the rows follow save acks.
+    const refreshHome = (): void => {
       window.bean.chatThreadList().then((fresh) => {
         const home = (fresh ?? []).find((t) => t.home)?.id;
-        setThreads((prev) => prev.map(({ home: _h, ...t }) => (t.id === home ? { ...t, home: true } : t)));
+        setThreads((prev) => (prev.find((t) => t.home)?.id === home ? prev
+          : prev.map(({ home: _h, ...t }) => (t.id === home ? { ...t, home: true } : t))));
       }, () => {});
-    });
+    };
+    window.addEventListener("focus", refreshHome);
+    // ponytail: a 10-minute poll, not a midnight timer — the shell doesn't know the core's local date
+    // (a remote core's zone may differ), so yesterday's row can stay hidden that long past midnight.
+    const homePoll = setInterval(refreshHome, HOME_POLL_MS);
     const refreshSynced = (): void => { window.bean.syncedChatList().then((c) => setSynced(c ?? []), () => {}); };
     refreshSynced();
     window.bean.chatopsStatus().then((st) => {
@@ -232,6 +240,10 @@ export function ChatWindow() {
       if (thread !== undefined) openThreadRef.current(thread);
       else if (mountId === shownRef.current) { setOverlayOpen(false); setSyncedShown(undefined); } // not saved yet, but on screen
     });
+    return () => {
+      window.removeEventListener("focus", refreshHome);
+      clearInterval(homePoll);
+    };
   }, []);
 
   // ChatPanel's prefill effect fires on a change to `droppedUrl` — flipping it back to

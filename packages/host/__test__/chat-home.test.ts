@@ -49,6 +49,18 @@ describe("Home thread", () => {
     expect(pending()).toEqual([p0, p2]);
   });
 
+  it("a post item the restore would drop (missing a field) drains nothing", () => {
+    const { threads, post, pending, home } = setup();
+    const p1 = post("one");
+    threads.get("a", HOME_TARGET);
+    const [item] = posts(p1);
+    const { text: _t, ...noText } = item!;
+    threads.save("a", { id: home, title: "Home", items: [noText, { ...item!, id: 7 }] });
+    expect(pending()).toEqual([p1]);
+    threads.save("a", { id: home, title: "Home", items: [item] });
+    expect(pending()).toEqual([]);
+  });
+
   it("after midnight yesterday's Home can't keep posts it never saved; today's Home gets them", () => {
     const { threads, clock, post, pending, home } = setup(new Date(2026, 10, 19, 23, 59));
     const p1 = post("one");

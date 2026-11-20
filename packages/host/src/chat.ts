@@ -243,6 +243,14 @@ export interface ChatThreadHandlerDeps {
   dbFile: string;
 }
 
+/** A saved `post` item the shell's restore keeps (chat-thread.ts normalizeItem — keep in step): only
+ * such an item may drain its post, so a drained post always comes back with the transcript. */
+function postShape(it: unknown): { postId: string } | undefined {
+  const p = it as { kind?: unknown; id?: unknown; postId?: unknown; sprout?: unknown; at?: unknown; text?: unknown } | null;
+  return typeof p === "object" && p !== null && p.kind === "post" && typeof p.id === "string" && typeof p.postId === "string"
+    && typeof p.sprout === "string" && typeof p.at === "string" && typeof p.text === "string" ? { postId: p.postId } : undefined;
+}
+
 /** `chatThreadGet`'s name for today's Home thread (#960) — the shell can't know the core-local date. */
 export const HOME_TARGET = "home";
 
@@ -382,8 +390,8 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       // whose ids were handed to this chat with this thread — never another chat's, never a guess.
       const mine = handed.get(key);
       const drained = mine?.thread !== o.id ? [] : [...new Set(o.items.flatMap((it) => {
-        const p = it as { kind?: unknown; postId?: unknown } | null;
-        return p?.kind === "post" && typeof p.postId === "string" && mine.ids.has(p.postId) ? [p.postId] : [];
+        const p = postShape(it);
+        return p && mine.ids.has(p.postId) ? [p.postId] : [];
       }))];
       // Past midnight they belong to today's Home (which may hold them already): yesterday's can't keep them.
       if (drained.length > 0 && !isHome(o.id)) throw new Error("Home's day ended — its new posts go to today's Home");
