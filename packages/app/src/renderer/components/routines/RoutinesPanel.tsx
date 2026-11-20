@@ -322,9 +322,23 @@ export function RoutinesPanel() {
   // Keyed on the selected routine's saved content, not the list's identity: a refresh for some
   // other routine (a build finishing) must not wipe unsaved edits here.
   const savedJson = JSON.stringify(routines.find((r) => r.name === selected) ?? null);
+  // The saved copy the draft was loaded from; `name: undefined` = take the next saved copy whole
+  // (set by this panel's own saves).
+  const loaded = useRef<{ name?: string; json: string }>({ json: "" });
+  const adoptSaved = (): void => { loaded.current = { json: "" }; };
   useEffect(() => {
     if (!selected) return;
-    setDraft(routines.find((r) => r.name === selected) ?? emptyRoutine());
+    const saved = routines.find((r) => r.name === selected);
+    const prev = loaded.current;
+    loaded.current = { name: selected, json: savedJson };
+    // Unsaved edits when the core moves this sprout (an ending, a flip elsewhere): keep them and
+    // take only its switch and end, so Save can't send the pre-ending ones.
+    if (saved && prev.name === selected && JSON.stringify(draft) !== prev.json) {
+      const { until: _until, ...rest } = draft;
+      setDraft({ ...rest, ...(saved.until !== undefined ? { until: saved.until } : {}), enabled: saved.enabled });
+      return;
+    }
+    setDraft(saved ?? emptyRoutine());
     setError("");
     setNotice("");
     setCustomCron(false);
@@ -480,6 +494,7 @@ export function RoutinesPanel() {
     if (selected) {
       try {
         await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
+        adoptSaved();
       } catch (e) {
         setDraft(draft);
         setError(ipcErrorMessage(e) ?? "couldn't change it");
@@ -500,6 +515,7 @@ export function RoutinesPanel() {
     if (selected && !restoring) {
       try {
         await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
+        adoptSaved();
         await refresh();
       } catch (e) {
         setError(ipcErrorMessage(e) ?? "couldn't save the type change");
@@ -512,6 +528,7 @@ export function RoutinesPanel() {
     setSavedName(undefined);
     try {
       await window.bean.routinesSave({ ...draft, sinks: cleanChatSinks(draft.sinks) });
+      adoptSaved();
       setError("");
       await refresh();
       setSelected(draft.name);

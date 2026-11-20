@@ -55,6 +55,9 @@ process.stdin.on("data", (d) => {
     };
     const value = m.op === "getModel" ? "gpt-remote" : m.op === "getConfig" ? config
       : m.op === "listSkills" ? [{ name: "remote-skill", description: "On the core.", body: "Do it." }]
+      : m.op === "routinesList" ? [{ name: "old-ask", description: "ping me when it lands", enabled: false, until: "2020-01-02", cron: "0 9 * * *", sinks: {}, steps: [{ kind: "chat", instruction: "x" }] }]
+      : m.op === "routinesState" ? { "old-ask": { history: [], running: false, runningCount: 0, ended: { archived: true, text: "Nothing by Jan 2" } } }
+      : m.op === "routinesBuilds" ? []
       : ["listProjects", "availableClis", "availableModels", "detectedClis"].includes(m.op) ? [] : undefined;
     send({ type: "result", id: m.id, ok: true, value });
   }
@@ -160,6 +163,12 @@ test("remote core: capability-gated chat and key-preserving Settings", async () 
     const skills = await open("skills");
     await expect(skills.locator(".bean-skills-row-name", { hasText: "remote-skill" })).toBeVisible();
     await expect(skills.locator(".bean-skills-proposals-tab")).toHaveCount(0);
+
+    // #983: the Sprouts list reads over the wire; Archived is the core's call, not the shell clock's.
+    const sprouts = await open("routines");
+    const archived = sprouts.locator('.bean-routines-section[data-section="!archived"]');
+    await archived.locator(".bean-notes-group").click();
+    await expect(archived.locator(".bean-routines-row", { hasText: "old-ask" })).toContainText("Nothing by Jan 2");
 
     const settings = await open("settings");
     const key = settings.locator('input[type="password"]');

@@ -172,6 +172,11 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
     return h.saveProjects(projects);
   }, arr(project)),
   availableClis: op((h) => h.availableClis()),
+  // The Sprouts list, read-only (#983): its sections — Archived included — are the core's. Every
+  // sprout write stays local-only.
+  routinesList: op((h) => h.routines.list()),
+  routinesState: op((h) => h.routines.state()),
+  routinesBuilds: op((h) => h.routines.builds()),
   availableModels: op((h) => h.models()),
   // The core's self-update from a shell's About (#838).
   coreUpdateStatus: { args: [], run: (d) => updates(d).updateStatus() },

@@ -13,8 +13,9 @@ export interface RoutineDraftDeps {
   loadRoutines: () => Promise<Routine[]>;
   /** The Sprouts panel's save (`buildRoutineHandlers().save`): the lane, restore and rebase. */
   save: (routine: Routine) => Promise<void>;
-  /** Seeds a saved watch from now and turns it on (the scheduler's `enableWatch`). */
-  enableWatch: (name: string) => Promise<unknown>;
+  /** Seeds a saved watch from now and turns it on with `until` (null = none) committed alongside
+   * (the scheduler's `enableWatch`). */
+  enableWatch: (name: string, until: string | null) => Promise<unknown>;
   cliModels: () => CliModels[];
   destinations: () => Destination[];
   newId: () => string;
@@ -84,10 +85,14 @@ export function buildRoutineDraftHandlers(deps: RoutineDraftDeps) {
       const draft = prior?.projects && p.routine.projects === undefined ? { ...p.routine, projects: prior.projects } : p.routine;
       try {
         if (draft.watch) {
-          // Saved off, then seeded from now: items already in the feed aren't news.
-          await deps.save({ ...draft, enabled: false });
+          // Saved off, then seeded from now: items already in the feed aren't news. Replacing an
+          // ended sprout keeps its old end until the seed commits the new one with `enabled` (the
+          // save refuses a later end on an ended sprout that stays off).
+          const { until: _until, ...rest } = draft;
+          const keep = prior && !prior.enabled && hasEnded(prior, at) ? prior.until : draft.until;
+          await deps.save({ ...rest, ...(keep !== undefined ? { until: keep } : {}), enabled: false });
           try {
-            await deps.enableWatch(name);
+            await deps.enableWatch(name, draft.until ?? null);
           } catch (err) {
             return { ok: false, error: `Saved "${name}" switched off — couldn't check its feed: ${err instanceof Error ? err.message : String(err)}` };
           }
