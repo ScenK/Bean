@@ -190,7 +190,7 @@ export interface ChatSessionApi {
   /** Nothing said, staged or saved yet: a pushed prompt can start here instead of in a new chat. */
   blank: () => boolean;
   /** Something unsent that leaving would lose: images or a PDF staged but not sent, or composer text
-   * with no saved thread to keep it (hasWork keeps a saved thread's draft mounted). */
+   * with no saved thread, in a chat the leave evicts or discards (one kept mounted keeps its draft). */
   draft: () => boolean;
   /** Not continued in Discord (that leaves the chat read-only). */
   writable: () => boolean;
@@ -1665,11 +1665,17 @@ export function ChatSession({
   // a pushed prompt can start here (a staged PDF would ride along with it).
   const untouched = (): boolean => !threadRef.current && itemsRef.current.length === 0 && !pdfRef.current && !restoringRef.current;
 
-  // Unsent work a leave would lose: staged images or PDF, or composer text with no saved thread to keep
-  // it (hasWork keeps a saved thread's typed draft mounted).
-  const draft = (): boolean => (pdfRef.current !== undefined && !pdfRef.current.sent)
+  // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no sidebar
+  // row to come back to — kept hidden, it would be unreachable).
+  const discardsOnLeave = (): boolean =>
+    incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0);
+  // Unsent work a leave would lose: staged images or PDF, or composer text with no saved thread, in a
+  // chat the leave evicts or discards. One kept mounted (hasWork: a saved thread's typed draft, a
+  // running turn) comes back with its draft and attachments as they were.
+  const draft = (): boolean => ((pdfRef.current !== undefined && !pdfRef.current.sent)
     || composerRef.current?.closest(".bean-chat")?.querySelector(".bean-chat-pending-image img") != null
-    || ((threadRef.current === undefined || unsavableRef.current) && (composerRef.current?.value.trim() ?? "") !== "");
+    || ((threadRef.current === undefined || unsavableRef.current) && (composerRef.current?.value.trim() ?? "") !== ""))
+    && (discardsOnLeave() || !hasWork());
 
   // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
@@ -1681,9 +1687,7 @@ export function ChatSession({
     // Every switch (sidebar, the avatar's main conversation, a pushed prompt, a drop) stops here
     // rather than silently dropping an unsent draft.
     if (draft()) { addStatus("Send or clear your draft first — switching chats would lose it.", "error"); return; }
-    // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
-    // sidebar row to come back to — kept hidden, it would be unreachable).
-    if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {
+    if (discardsOnLeave()) {
       leavingRef.current = true;
       void tasks().then((t) => {
         leavingRef.current = false;

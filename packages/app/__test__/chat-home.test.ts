@@ -368,5 +368,21 @@ describe("ChatWindow Home", () => {
     expect(bean.chatAttach!.mock.calls.at(-1)![0]).not.toBe(used);
     expect(shownChat().textContent).not.toContain("work on a");
     expect((shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement).value).toContain("https://example.com/b");
+
+    // A saved task chat's draft with a staged image stays mounted on a switch: nothing is lost, so the
+    // avatar's main conversation opens and the chat keeps both for the way back.
+    composer().value = "";
+    await send("work on b");
+    composer().value = "with this shot";
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "shot.png", { type: "image/png" });
+    Object.defineProperty(paste, "clipboardData", { value: { items: [{ kind: "file", type: "image/png", getAsFile: () => png }] } });
+    await act(async () => { composer().dispatchEvent(paste); });
+    await vi.waitFor(() => expect(shownChat().querySelector(".bean-chat-pending-image img")).not.toBeNull());
+    await act(async () => { listeners.onChatShowHome!(); });
+    await flush();
+    await vi.waitFor(() => expect(root.querySelector(".bean-chat-sidebar-home--active")).not.toBeNull());
+    const kept = root.querySelector(".bean-chat[hidden] .bean-chat-pending-image img")?.closest(".bean-chat");
+    expect(kept?.querySelector<HTMLTextAreaElement>("textarea.bean-input--composer")?.value).toBe("with this shot");
   });
 });
