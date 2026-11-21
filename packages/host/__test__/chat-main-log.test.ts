@@ -82,6 +82,33 @@ describe("Home on the main log", () => {
     expect(again.gapMarker).toBeUndefined(); // the shell's own claim is ignored
   });
 
+  it("bounds the log before the model sees it: past the byte budget the oldest fold into a summary in the log", async () => {
+    const { dbFile, flags, threads, chat, seen, log } = setup();
+    flags.cutover = true;
+    threads.get("a", HOME_TARGET);
+    const store = new ConversationStore(dbFile);
+    const big = "x".repeat(60_000);
+    for (let i = 0; i < 5; i++) store.append(MAIN_CONVERSATION_ID, { role: "user", content: `${i}${big}` }); // 300 KB, 5 turns
+    await chat({ history: [], message: "short follow-up", turnId: "t1" }, 1, "a");
+    const sent = said(seen.at(-1)!).join("").length;
+    expect(sent).toBeLessThan(200_000);
+    expect(log()[0]!.content).toMatch(/^\[Summary of the earlier conversation/);
+    expect(log().map((t) => t.content).join("").length).toBeLessThan(200_000);
+  });
+
+  it("a drain replayed after compaction doesn't bring the post back", () => {
+    const { dbFile, flags, threads, log } = setup();
+    flags.cutover = true;
+    const p1 = insertHomePost(dbFile, { sprout: "digest", body: "news" });
+    threads.get("a", HOME_TARGET);
+    const items = [{ kind: "post", id: "i1", postId: p1, sprout: "digest", at: new Date().toISOString(), text: "news" }];
+    threads.save("a", { id: HOME_THREAD_ID, title: "Home", items });
+    const store = new ConversationStore(dbFile);
+    expect(store.replaceOldest(MAIN_CONVERSATION_ID, store.oldest(MAIN_CONVERSATION_ID, 1), { role: "user", content: "summary" })).toBe(true);
+    saveDesktopChatDraining(dbFile, { id: HOME_THREAD_ID, title: "Home", itemsJson: "[]", noteSlug: null }, [p1], new Date(), { mainLog: true });
+    expect(log()).toEqual([{ role: "user", content: "summary" }]);
+  });
+
   it("a save flushes its turns once, and a re-run drain appends each post once", () => {
     const { dbFile, flags, threads, log } = setup();
     flags.cutover = true;

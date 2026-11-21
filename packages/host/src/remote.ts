@@ -89,11 +89,14 @@ export function frameReader(onFrame: (msg: unknown) => void, onError: (why: stri
 // its test checks every op here is a `core` channel with the same arity).
 const { str, num, bool, obj, arr, opt, oneOf, shape } = g;
 const turn = shape({ role: oneOf("user", "assistant", "system"), content: str, id: opt(str) });
+const keyedTurn = shape({ key: str, role: oneOf("user", "assistant"), content: str });
 const chatRequest = shape({
   history: arr(turn), summary: opt(str), message: str, gap: opt(bool), source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
   linkedNote: opt(obj), images: opt(arr(shape({ data: str, mimeType: str }))), documents: opt(arr(() => true)), turnId: opt(str),
-  delta: opt(arr(shape({ key: str, role: oneOf("user", "assistant"), content: str }))),
+  delta: opt(arr(keyedTurn)),
 });
+// Home over SSH (#997): its open and its saves, so a remote shell reaches the main conversation too.
+const threadSave = shape({ id: str, title: str, items: arr(() => true), noteSlug: opt(str), turns: opt(arr(keyedTurn)) });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
 const delegateStart = shape({ projectPath: str, prompt: str, instruction: str, model: opt(str), cli: opt(str), skillName: opt(str) });
 const liveStart = shape({
@@ -149,6 +152,9 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
   chat: op((h, c, req, mountId) => h.chat.chat(c, mountId, req), chatRequest, str),
   chatStop: op((h, c, mountId, turnId) => h.chat.stop(c, mountId, turnId), str, str),
   chatIncognito: op((h, c, on, mountId) => h.chat.incognito(c, mountId, on), bool, str),
+  // Mount-checked like every chat op: a chat's thread pin and Home's drain are the host's, per mount.
+  chatThreadSave: op((h, c, req, mountId) => h.chat.threadSave(c, mountId, req), threadSave, str),
+  chatThreadGet: op((h, c, id, mountId) => h.chat.threadGet(c, mountId, id), str, str),
   rememberOnClose: op((h, c, transcript, opts) => h.chat.rememberOnClose(c, transcript, opts), arr(turn), closeOpts),
   delegateStart: op((h, c, req, mountId) => h.chat.delegateStart(c, mountId, req), delegateStart, str),
   chatSproutRun: op((h, c, name, thread, mountId) => h.chat.sproutRun(c, mountId, name, thread), str, str, str),

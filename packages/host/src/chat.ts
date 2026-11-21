@@ -5,7 +5,7 @@ import {
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
   DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, HOME_THREAD_TITLE, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
-  CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, maybeCompact, type ChatTurn, type ConversationStore, type KeyedTurn,
+  CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, formatSummaryBlock, type ChatTurn, type ConversationStore, type KeyedTurn,
 } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -138,7 +138,15 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       const last = log.lastTurnAt(MAIN_CONVERSATION_ID);
       if (last !== undefined && arrived.getTime() - Date.parse(last) >= CHAT_GAP_MS) gapMarker = gapMarkerLine(arrived);
       appendDelta(log, delta);
-      history = log.history(MAIN_CONVERSATION_ID);
+      // The desktop budget (#975) on the log, before the model sees it: past 60 turns or 200 KB the
+      // oldest fold into one summary that replaces them in the log (compare-and-swap: a turn another
+      // writer added meanwhile is never lost — the swap is just skipped and this request still bounded).
+      const rows = log.oldest(MAIN_CONVERSATION_ID, log.turnCount(MAIN_CONVERSATION_ID));
+      const bounded = await compactHistory(rows.map(({ role, content }) => ({ role, content })), undefined, { chat: deps.converse, model: deps.getModel() }, signal);
+      if (bounded.summary) {
+        log.replaceOldest(MAIN_CONVERSATION_ID, rows.slice(0, bounded.summary.covers), { role: "user", content: formatSummaryBlock(bounded.summary.text) });
+      }
+      history = bounded.history;
     } else {
       // Bounded here, on the core (a remote shell never holds the API key): the summary rides back
       // with the reply and the shell keeps it as a hidden item (#975).
@@ -202,7 +210,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     if (memoryTools && memoryTools.forgotten.length > 0) result.forgotten = memoryTools.forgotten;
     if (log) {
       // This turn and its reply join the log, keyed by the shell's turn id: the shell's own copy of
-      // the user turn (a later delta, a save) then appends nothing. Compaction runs on the log.
+      // the user turn (a later delta, a save) then appends nothing. The next turn bounds the log.
       const key = req.turnId ?? randomUUID();
       const said = [
         gapMarker ? `${gapMarker}\n${req.message}` : req.message,
@@ -213,8 +221,6 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       if (result.reply.trim()) {
         log.append(MAIN_CONVERSATION_ID, { role: "assistant", content: result.reply }, { surface: "desktop", turnKey: desktopTurnKey(`${key}:reply`) });
       }
-      void maybeCompact(MAIN_CONVERSATION_ID, log, { chat: deps.converse, model: deps.getModel() })
-        .catch((err) => console.warn("bean: main conversation compaction failed:", err instanceof Error ? err.message : err));
     }
     return result;
   };

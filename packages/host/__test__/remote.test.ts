@@ -106,6 +106,7 @@ describe("remote attach over the unix socket", () => {
     const send = attachments.push(() => {});
     push = send;
     const getModel = vi.fn(() => "gpt-test");
+    const saved: unknown[] = [];
     const handlers = {
       chat: {
         attach: (c: number, m: string) => { mounts.set(m, c); },
@@ -113,6 +114,15 @@ describe("remote attach over the unix socket", () => {
           if (mounts.get(m) !== c) throw new Error("not your chat");
           push(m, "delegate", { taskId: "t1", type: "started", mountId: m });
           return { reply: `echo: ${req.message}` };
+        },
+        threadGet: (c: number, m: string, id: string) => {
+          if (mounts.get(m) !== c) throw new Error("not your chat");
+          return { id: id === "home" ? "home-id" : id, title: "Home", items: [], noteSlug: null, home: { posts: [], log: true } };
+        },
+        threadSave: (c: number, m: string, req: { id: string; title: string; turns?: unknown[] }) => {
+          if (mounts.get(m) !== c) throw new Error("not your chat");
+          saved.push(req);
+          return { id: req.id, title: req.title, updatedAt: "now", home: true };
         },
       },
       getConfig,
@@ -130,7 +140,7 @@ describe("remote attach over the unix socket", () => {
     } as unknown as HostHandlers;
     const server = await listenRemote(dir, { handshake: buildHandshake("1.0.0", "linux", []), attachments, handlers, ...extra });
     close = server.close;
-    return { path: server.path, getConfig, applyConfig, saveProjects, projectDir, getModel, attachments };
+    return { path: server.path, getConfig, applyConfig, saveProjects, projectDir, getModel, attachments, saved };
   }
 
   // #837: `bean-core update` asks the running core, which answers before it exits.
@@ -211,6 +221,24 @@ describe("remote attach over the unix socket", () => {
     const event = await shell.next((m) => m.type === "push");
     expect(event).toMatchObject({ mountId: "m1", seq: 1, kind: "delegate", payload: { taskId: "t1", type: "started" } });
     expect(await shell.call("getModel")).toMatchObject({ ok: true, value: "gpt-test" });
+    shell.send({ type: "detach" });
+    await shell.closed;
+  });
+
+  it("opens and saves Home over the wire (#997): the main-log flag out, keyed turns in", async () => {
+    const { path, saved } = await serve();
+    const shell = shellOverBridge(path);
+    shell.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
+    await shell.next((m) => m.type === "attached");
+    await shell.call("chatAttach", "m1");
+    expect(await shell.call("chatThreadGet", "home", "m1")).toMatchObject({ ok: true, value: { home: { log: true } } });
+    const turns = [{ key: "r1", role: "assistant", content: "[card: note — saved]" }];
+    expect(await shell.call("chatThreadSave", { id: "home-id", title: "Home", items: [], turns }, "m1")).toMatchObject({ ok: true, value: { home: true } });
+    expect(saved).toEqual([expect.objectContaining({ turns })]);
+    expect(await shell.call("chatThreadSave", { id: "home-id", title: "Home", items: [], turns: [{ key: "x", role: "system", content: "" }] }, "m1"))
+      .toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
+    // Another client's mount is refused by the handler, never served.
+    expect(await shell.call("chatThreadGet", "home", "m-other")).toMatchObject({ ok: false });
     shell.send({ type: "detach" });
     await shell.closed;
   });

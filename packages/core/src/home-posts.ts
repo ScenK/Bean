@@ -107,13 +107,15 @@ export function saveDesktopChatDraining(
   db.exec("BEGIN IMMEDIATE");
   try {
     const title = saveDesktopChat(file, chat, now);
+    // Only posts this save drains: a replayed drain must not re-add one compaction already folded away.
+    const get = db.prepare("SELECT sprout, body FROM home_posts WHERE id = ? AND drained_at IS NULL");
+    const fresh = opts.mainLog ? drained.flatMap((id) => {
+      const p = get.get(id) as { sprout: string; body: string } | undefined;
+      return p ? [{ id, ...p }] : [];
+    }) : [];
     markHomePostsDrained(file, drained, () => now);
-    if (opts.mainLog) {
-      const get = db.prepare("SELECT sprout, body FROM home_posts WHERE id = ?");
-      for (const id of drained) {
-        const p = get.get(id) as { sprout: string; body: string } | undefined;
-        if (p) insertTurn(db, MAIN_CONVERSATION_ID, { role: "user", content: postTurn({ sprout: p.sprout, text: p.body }) }, { surface: "desktop", turnKey: postTurnKey(id) });
-      }
+    for (const p of fresh) {
+      insertTurn(db, MAIN_CONVERSATION_ID, { role: "user", content: postTurn({ sprout: p.sprout, text: p.body }) }, { surface: "desktop", turnKey: postTurnKey(p.id) });
     }
     db.exec("COMMIT");
     return title;
