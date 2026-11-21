@@ -1,7 +1,7 @@
 # project — Home's and the owner DMs' model history on the main log (#997, #998)
 
 Part of the one-conversation epic (#995). **Dark until the cutover marker** (`memory_meta` key
-`mainConversationCutoverAt`, `mainCutover()`; written by #999 with the fold of the old histories).
+`mainConversationCutoverAt`, `mainCutover()`; written by #999 with the fold of the old histories — see Cutover below).
 Without it every path below is skipped and Home runs on renderer history (#975) exactly as before.
 
 - **Log:** `chatops_turns` under `MAIN_CONVERSATION_ID` ("main"), the same `ConversationStore` the
@@ -54,3 +54,18 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
 - **Outbox:** `appendDelivery` (core) maps a delivery only when it provably went to the owner's 1:1
   (Discord: no `userId` or the owner's, or a named destination that is the owner's DM channel; Teams: `ownerDmRefs` on the ref), under the existing
   `context` rule, keyed `delivery:<outbox id>` so a Teams fan-out to several owner DMs appends once.
+
+## Cutover (#999)
+
+- **Who/when:** core `runMainCutover`, called by the host each time it takes the scheduler lease
+  (`startScheduler`) — the holder has the API key in remote setups. Marker present → no-op.
+- **Fold:** Home's latest renderer `summary` (as the previous summary) + its user/reply/post items after
+  it (cards skipped), and every live owner `dm` catalog row's turns (configured owner, `owner_alt_id`
+  too), interleaved by time — undated Home items first in saved order. Summarized in ≤ 200 KB calls.
+- **Commit:** one `BEGIN IMMEDIATE`: re-read the sources, and only if byte-identical to the fold's read,
+  archive each owner DM's turns (`archiveTurns`, the `/new` archive form), write the summary as the
+  log's first turn and the marker. A source written mid-fold → `changed`, nothing written; a failed
+  summary call throws. Either way the **next boot** retries — no in-process retry.
+- **Status entry:** the marker's value is the cutover time; #1000 renders it once.
+- **Sidebar:** after the marker `listChatopsConversations` leaves out live owner-`dm` rows; their
+  pre-cutover history lists as an archive (pruned like `/new` archives, 90 days).

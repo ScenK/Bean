@@ -16,7 +16,7 @@ import {
   deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
-  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover,
+  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover, runMainCutover,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -385,7 +385,15 @@ export async function createHost(deps: HostDeps) {
   // the lease holder recovers todos: anything stuck `running` was interrupted by the previous
   // holder (quit/crash) — fail it visibly (retryable). A standby host must not touch them: the
   // current holder is still running them.
-  startScheduler = () => { void routines.start(); };
+  // The lease holder also runs the one-conversation cutover (#999): it holds the API key in remote
+  // setups. A failure (or a source written mid-fold) leaves everything dark; the next boot retries.
+  const cutover = (): void => {
+    void loadChatopsOwners(dir)
+      .then((owners) => runMainCutover(db, owners, { chat: runtime.converse, model: runtime.getModel() }))
+      .then((r) => { if (r === "changed") console.warn("bean: main conversation cutover deferred: a history changed mid-fold"); })
+      .catch((err: unknown) => console.error("bean: main conversation cutover failed", err));
+  };
+  startScheduler = () => { void routines.start(); cutover(); };
   stopScheduler = () => routineScheduler.stop();
   if (schedulerLeaseHeld) startScheduler();
   deps.onQuit(() => routineScheduler.stop());
