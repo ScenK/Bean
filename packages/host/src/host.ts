@@ -16,7 +16,7 @@ import {
   deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
-  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover, runMainCutover,
+  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -386,17 +386,17 @@ export async function createHost(deps: HostDeps) {
   // holder (quit/crash) — fail it visibly (retryable). A standby host must not touch them: the
   // current holder is still running them.
   // The lease holder also runs the one-conversation cutover (#999): it holds the API key in remote
-  // setups. A failure (or a source written mid-fold) leaves everything dark; the next boot retries.
-  // Home's restore waits on it (`cutoverRunning`), so no Home opens on the shell's history mid-fold.
-  let cutoverRun: Promise<void> | undefined;
+  // setups. A failure, a source written mid-fold, or a Home open meanwhile (it runs on the shell's
+  // history until reopened) leaves everything dark; the next boot retries.
+  let homeHolder: (() => string | undefined) | undefined; // wired once the thread handlers exist
   const cutover = (): void => {
     if (mainCutover(db)) return;
-    const run = loadChatopsOwners(dir)
-      .then((owners) => runMainCutover(db, owners, { chat: runtime.converse, model: runtime.getModel() }))
-      .then((r) => { if (r === "changed") console.warn("bean: main conversation cutover deferred: a history changed mid-fold"); })
-      .catch((err: unknown) => console.error("bean: main conversation cutover failed", err))
-      .finally(() => { if (cutoverRun === run) cutoverRun = undefined; });
-    cutoverRun = run;
+    void loadChatopsOwners(dir)
+      .then((owners) => runMainCutover(db, owners, { chat: runtime.converse, model: runtime.getModel() }, {
+        inUse: () => homeHolder?.() !== undefined,
+      }))
+      .then((r) => { if (r === "changed") console.warn("bean: main conversation cutover deferred to the next boot: Home was open or a history changed mid-fold"); })
+      .catch((err: unknown) => console.error("bean: main conversation cutover failed", err));
   };
   startScheduler = () => { void routines.start(); cutover(); };
   stopScheduler = () => routineScheduler.stop();
@@ -520,6 +520,7 @@ export async function createHost(deps: HostDeps) {
     mainLog,
     onDrained: () => homeBubble?.refresh(),
   });
+  homeHolder = () => threads.holderOf(HOME_THREAD_ID);
   homeBubble = createHomeBubble({
     count: () => countPendingHomePosts(db),
     nextExpiry: () => nextHomePostExpiry(db),
@@ -531,7 +532,6 @@ export async function createHost(deps: HostDeps) {
     isChatClient, chat, memory, threads, delegateTasks, liveTasks, push,
     onRelease: deps.onChatRelease,
     refuseStart,
-    cutoverRunning: () => cutoverRun,
     track,
     // Lease holder only, like a bot's tap: the holder's start closes any other host's open dispatch.
     sproutRun: (name, origin) => (schedulerLease.held()

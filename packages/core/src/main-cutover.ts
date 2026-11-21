@@ -133,12 +133,16 @@ export type CutoverResult = "done" | "already" | "changed";
  * in one BEGIN IMMEDIATE re-reads them and — only if nothing changed meanwhile — archives each owner
  * DM's own history (listed read-only on the desktop), writes the summary as the main log's first
  * turn and the marker (its value, the cutover time, is the status entry the desktop renders once).
- * `changed` = a source moved during the summary: nothing written, the next boot retries. A failed
+ * `changed` = a source moved during the summary, or `inUse` (the host: a Home is open — it runs on the
+ * shell's history until reopened, so its later turns would miss the log): nothing written, the next
+ * boot retries. A failed
  * summary call throws, leaving everything as before. The log is empty before the marker: nothing
  * writes it while it is dark. `owners` = each surface's configured owner (loadChatopsOwners). */
 export async function runMainCutover(
-  file: string, owners: readonly { surface: ChatopsSurface; ownerId: string }[], deps: ConverseDeps, now: () => Date = () => new Date(),
+  file: string, owners: readonly { surface: ChatopsSurface; ownerId: string }[], deps: ConverseDeps,
+  opts: { now?: () => Date; inUse?: () => boolean } = {},
 ): Promise<CutoverResult> {
+  const now = opts.now ?? ((): Date => new Date());
   const db = openDb(file);
   const marked = (): boolean => db.prepare("SELECT 1 FROM memory_meta WHERE key = ?").get(MAIN_CUTOVER_KEY) !== undefined;
   if (marked()) return "already";
@@ -150,7 +154,7 @@ export async function runMainCutover(
   try {
     let result: CutoverResult = "done";
     if (marked()) result = "already";
-    else if (JSON.stringify(readSources(db, owners)) !== seen) result = "changed";
+    else if (opts.inUse?.() || JSON.stringify(readSources(db, owners)) !== seen) result = "changed";
     else {
       // Dated now, not the DM's last activity: an archive gets the full retention window from the cutover.
       const at = now().toISOString();

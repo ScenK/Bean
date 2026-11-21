@@ -10,7 +10,7 @@ const THREAD = "c0000000-0000-4000-8000-000000000001";
 const OTHER = "c0000000-0000-4000-8000-000000000002";
 
 // Real chat sessions + thread pins (#921); the sprout trigger, history rows and push are fakes.
-function setup(extra: Partial<Parameters<typeof createChatSessions>[0]> = {}) {
+function setup() {
   const saved = new Map<string, string>();
   const threads = buildChatThreadHandlers({
     dbFile: "x",
@@ -38,7 +38,6 @@ function setup(extra: Partial<Parameters<typeof createChatSessions>[0]> = {}) {
     sproutRun: sproutRun as never,
     todoDispatch,
     sproutOutcomes: sproutOutcomes as never,
-    ...extra,
   });
   return { sessions, saved, incognito, push, sproutRun, todoDispatch, sproutOutcomes };
 }
@@ -126,23 +125,5 @@ describe("a desktop todo card's Run now / Queue (#923)", () => {
     expect(t.push).toHaveBeenLastCalledWith(A, "sprout", expect.objectContaining({ mountId: A, jobId: "job-1", status: "ok" }));
     await expect(t.sessions.todoDispatch(CLIENT, A, "nightly", "fix it", "later", THREAD)).rejects.toThrow(/run or queue/);
     await expect(t.sessions.todoDispatch(CLIENT, B, "nightly", "fix it", "queue", THREAD)).rejects.toThrow();
-  });
-});
-
-describe("Home's restore during the main conversation cutover (#999)", () => {
-  it("waits for a running cutover; other chats restore at once", async () => {
-    let finish!: () => void;
-    let running: Promise<void> | undefined = new Promise<void>((r) => { finish = r; });
-    const t = setup({ cutoverRunning: () => running });
-    t.sessions.attach(CLIENT, A);
-    t.sessions.attach(CLIENT, B);
-    expect("then" in (t.sessions.threadGet(CLIENT, B, THREAD) as object)).toBe(false);
-    let done = false;
-    const home = Promise.resolve(t.sessions.threadGet(CLIENT, A, "home")).then((v) => { done = true; return v; });
-    await Promise.resolve();
-    expect(done).toBe(false);
-    finish();
-    running = undefined;
-    expect(await home).toMatchObject({ items: [] });
   });
 });

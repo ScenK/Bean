@@ -310,10 +310,6 @@ export function ChatSession({
   // A history pick still loading: not blank (a pushed prompt would merge into the restored thread),
   // so New chat and pushed prompts switch away instead. Cleared when the restore settles.
   const restoringRef = useRef(restoreId !== undefined);
-  // Sends wait for the restore (shown busy): Home's can take seconds while the core folds the main
-  // conversation (#999), and a send before it lands would start a separate thread.
-  const [restoring, setRestoring] = useState(restoreId !== undefined);
-  const endRestore = (): void => { restoringRef.current = false; setRestoring(false); };
   // Unmounted (evicted, discarded): a restore settling after that changes nothing.
   const goneRef = useRef(false);
   const unsavableRef = useRef(false);
@@ -556,13 +552,13 @@ export function ChatSession({
     window.bean.chatThreadGet(restoreId, mountId).then(async (t) => {
       if (goneRef.current) return;
       if ("missing" in t) {
-        endRestore();
+        restoringRef.current = false;
         addStatus("That chat is no longer in history — it was deleted, or not opened for 90 days.", "info");
         return;
       }
       const note = t.noteSlug ? (await window.bean.listNotes().catch(() => [])).find((n) => n.slug === t.noteSlug) : undefined;
       if (goneRef.current) return;
-      endRestore();
+      restoringRef.current = false;
       if (note) {
         const linked = { slug: note.slug, title: note.title, version: note.version, body: note.body };
         linkedNoteRef.current = linked;
@@ -611,7 +607,7 @@ export function ChatSession({
       }
     }, (err: unknown) => {
       if (goneRef.current) return;
-      endRestore();
+      restoringRef.current = false;
       // Not on Home after all: the Home row takes a click again, which retries (#961).
       if (restoreId === "home" && !hiddenRef.current) onActive(undefined, false);
       addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error");
@@ -1789,7 +1785,7 @@ export function ChatSession({
         onShells={onShells}
         terminalShortcut={terminalShortcutRef}
         items={shownItems}
-        busy={busy || evicting || restoring}
+        busy={busy || evicting}
         model={model}
         status={status}
         prefillUrl={prefillUrl}

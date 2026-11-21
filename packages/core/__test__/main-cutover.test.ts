@@ -92,6 +92,17 @@ describe("main conversation cutover (#999)", () => {
     expect(t.calls.at(-1)).toContain("mid-fold");
   });
 
+  test("a Home open at commit time defers the cutover (it runs on the shell's history until reopened)", async () => {
+    const t = setup();
+    t.dm("discord", "discord:dm1", "u1", [["user", "first", "2026-11-01T09:00:00Z"]]);
+    let open = true;
+    expect(await runMainCutover(t.file, t.owners, t.deps, { inUse: () => open })).toBe("changed");
+    expect(mainCutover(t.file)).toBe(false);
+    expect(t.store.history("discord:dm1")).toHaveLength(1);
+    open = false;
+    expect(await runMainCutover(t.file, t.owners, t.deps, { inUse: () => open })).toBe("done");
+  });
+
   test("a failed summary call writes nothing", async () => {
     const t = setup();
     t.dm("discord", "discord:dm1", "u1", [["user", "first", "2026-11-01T09:00:00Z"]]);

@@ -1,8 +1,8 @@
-import { HOME_THREAD_ID, dispatchContext, stageImages, type ChatRequest, type ConverseResult, type Dispatch, type SproutOrigin, type TriggerResult } from "@bean/core";
+import { dispatchContext, stageImages, type ChatRequest, type ConverseResult, type Dispatch, type SproutOrigin, type TriggerResult } from "@bean/core";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildChatMounts, HOME_TARGET, THREAD_ID, type buildChatHandler, type buildChatThreadHandlers, type SproutEvent, type SproutOutcome, type SproutStarted } from "./chat.js";
+import { buildChatMounts, THREAD_ID, type buildChatHandler, type buildChatThreadHandlers, type SproutEvent, type SproutOutcome, type SproutStarted } from "./chat.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks, LiveOwner } from "./live-tasks.js";
 import { EPISODE_IDLE_MS, toTranscript, type buildMemoryHandlers, type CloseTurn } from "./memory.js";
@@ -35,9 +35,6 @@ export interface ChatSessionsDeps {
     => Promise<TodoDispatchAnswer>;
   /** A restored thread's sprout dispatches, the closed ones marked delivered (#921). */
   sproutOutcomes?: (thread: string) => SproutOutcome[];
-  /** The main conversation's cutover while it runs (#999), else undefined: Home's restore waits for
-   * it, so a Home never opens on the shell's history and then finds its turns on the log. */
-  cutoverRunning?: () => Promise<void> | undefined;
 }
 
 /** What a todo card's tap did (#923): `jobId` names the dispatch its result comes back under. */
@@ -101,16 +98,6 @@ export function createChatSessions(deps: ChatSessionsDeps) {
   // Agent-mode images: a paste or browser drag has no file on disk, so it's written to a private
   // temp dir (one per run) and the agent reads it by path. stageImages checks mime + size.
   let stageDir: Promise<string> | undefined;
-
-  // A restored thread carries its sprout runs' outcomes: its running cards settle (and loop the
-  // result back) from them, however long the chat was closed.
-  const restore = (client: ClientId, mountId: unknown, id: unknown) => {
-    const t = deps.threads.get(key(client, mountId), id);
-    if ("missing" in t || !deps.sproutOutcomes) return t;
-    let sprouts: SproutOutcome[] = [];
-    try { sprouts = deps.sproutOutcomes(t.id); } catch (err) { console.error("bean: reading a chat's sprout runs failed", err); }
-    return sprouts.length > 0 ? { ...t, sprouts } : t;
-  };
 
   return {
     key,
@@ -224,9 +211,14 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       try { deps.threads.setIncognito(k, on === true); } catch (err) { console.error("chat history delete failed:", err); }
     },
     threadSave: (client: ClientId, mountId: unknown, req: unknown, opts?: { keepNote?: boolean }) => deps.threads.save(key(client, mountId), req, opts),
+    // A restored thread carries its sprout runs' outcomes: its running cards settle (and loop the
+    // result back) from them, however long the chat was closed.
     threadGet: (client: ClientId, mountId: unknown, id: unknown) => {
-      const running = id === HOME_TARGET || id === HOME_THREAD_ID ? deps.cutoverRunning?.() : undefined;
-      return running ? running.then(() => restore(client, mountId, id)) : restore(client, mountId, id);
+      const t = deps.threads.get(key(client, mountId), id);
+      if ("missing" in t || !deps.sproutOutcomes) return t;
+      let sprouts: SproutOutcome[] = [];
+      try { sprouts = deps.sproutOutcomes(t.id); } catch (err) { console.error("bean: reading a chat's sprout runs failed", err); }
+      return sprouts.length > 0 ? { ...t, sprouts } : t;
     },
     /** A sprout card's Run (#921): answers at admission with the run's job id (or why it didn't
      * start). Its end reaches the chat holding `thread` as a `sprout` push (`deliverSprout`). */
