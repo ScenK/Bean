@@ -118,6 +118,22 @@ describe("ChatWindow Home", () => {
     expect(shownChat().textContent).not.toContain("Already continued");
   });
 
+  it("holds sends while Home restores (the core may be folding the main conversation, #999)", async () => {
+    let resolve!: (t: unknown) => void;
+    bean.chatThreadGet!.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    expect((shownChat().querySelector(".bean-send") as HTMLButtonElement).disabled).toBe(true);
+    await send("too early");
+    expect(bean.chat).not.toHaveBeenCalled();
+    expect(bean.chatThreadSave).not.toHaveBeenCalled();
+    await act(async () => { resolve({ ...homeThread([]), home: { posts: [], log: true } }); });
+    await flush();
+    await send("now");
+    expect(bean.chat).toHaveBeenCalledTimes(1);
+  });
+
   it("a failed save keeps the posts undrained for the next save", async () => {
     bean.chatThreadSave!.mockRejectedValueOnce(new Error("disk full"));
     await act(async () => { render(h(ChatWindow, {}), root); });

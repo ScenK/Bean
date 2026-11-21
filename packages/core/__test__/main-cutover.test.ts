@@ -42,6 +42,7 @@ describe("main conversation cutover (#999)", () => {
         { kind: "reply", id: "c", text: "desk reply", at: "2026-11-01T10:00:00Z" },
         { kind: "proposal", id: "d", state: "expired", run: { skillName: "ship" } },
         { kind: "send", id: "e", state: "sent", at: "2026-11-01T10:30:00Z" },
+        { kind: "sprout", id: "f", state: "done", plan: { action: "check", routine: "inbox" }, result: "nothing new", at: "2026-11-01T10:40:00Z" },
       ]),
     });
     t.dm("discord", "discord:dm1", "u1", [["user", "discord fact", "2026-11-01T09:00:00Z"]]);
@@ -57,7 +58,7 @@ describe("main conversation cutover (#999)", () => {
     expect(prompt).toContain("Summary so far:\nhome so far");
     expect(prompt).not.toContain("old, covered");
     expect(prompt).not.toContain("member secret");
-    const order = ["undated desk", '[card: run "ship" — expired]', "discord fact", "desk reply", "[card: send — sent]", "teams fact"].map((s) => prompt.indexOf(s));
+    const order = ["undated desk", '[card: run "ship" — expired]', "discord fact", "desk reply", "[card: send — sent]", '[card: sprout "inbox" — checked]', "teams fact"].map((s) => prompt.indexOf(s));
     expect(order.every((n, i) => n >= 0 && (i === 0 || n > order[i - 1]!))).toBe(true);
 
     expect(mainCutover(t.file)).toBe(true);

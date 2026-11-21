@@ -7,6 +7,7 @@ import { newId, type ChatItem } from "../../shared/chat-types.js";
 // .memory/project-desktop-chat-history.md.
 
 export const THREAD_TEXT_MAX = 20_000;
+// core main-cutover.ts keeps a copy (node-free bundle rule) — keep in step.
 export const SPROUT_UNKNOWN = "Started — see the Dashboard for how it went";
 export const THREAD_ITEMS_MAX = 500;
 // Renderer copy of core's DESKTOP_CHAT_MAX_BYTES (node-free bundle rule) — keep in step.

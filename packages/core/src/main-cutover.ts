@@ -35,6 +35,9 @@ const timeOf = (at: unknown): number | undefined => {
   return Number.isNaN(t) ? undefined : t;
 };
 
+// The renderer's SPROUT_UNKNOWN (chat-thread.ts): a sprout/todo card settled without a known end.
+const SPROUT_UNKNOWN = "Started — see the Dashboard for how it went";
+
 // A Home card item's record kind and catalog name (the renderer's cardItemRecord, read loosely).
 const CARDS: Record<string, { kind: CardRecordKind; name?: (it: Record<string, unknown>) => unknown }> = {
   proposal: { kind: "run", name: (it) => (it.run as Record<string, unknown> | undefined)?.skillName },
@@ -52,9 +55,15 @@ const CARDS: Record<string, { kind: CardRecordKind; name?: (it: Record<string, u
 function cardLine(it: Record<string, unknown>): string | undefined {
   const card = CARDS[typeof it.kind === "string" ? it.kind : ""];
   if (!card || typeof it.state !== "string") return undefined;
+  const result = typeof it.result === "string" ? it.result : "";
+  const plan = it.plan as Record<string, unknown> | undefined;
   const state = it.state === "confirmed" ? "started"
     : it.state !== "done" ? it.state
-    : it.kind === "delegate" || typeof it.result !== "string" ? "finished" : runEndState(it.result);
+    : it.kind === "delegate" ? "finished"
+    : result === SPROUT_UNKNOWN ? "unknown"
+    : it.kind === "sprout" && plan?.action === "check" ? (it.failed ? "failed" : "checked")
+    : it.kind === "sprout" && it.jobId === undefined ? "didn't start"
+    : runEndState(result);
   const name = card.name?.(it);
   return cardRecord(card.kind, state as CardRecordState, typeof name === "string" ? name : undefined);
 }

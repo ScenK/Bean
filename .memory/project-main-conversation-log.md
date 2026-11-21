@@ -69,7 +69,9 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
   summary call throws. Either way the **next boot** retries — no in-process retry.
 - **Home waits:** while the fold runs, `chatThreadGet` for Home waits on it (`cutoverRunning`) — a Home
   restored on the shell's history mid-fold would keep it after the marker (no deltas), and its later turns
-  never reach the log. Known gap: a standby host taking the lease later with Home already open.
+  never reach the log. The renderer holds sends (`busy`) until any restore lands, so a send can't
+  start a separate thread meanwhile. Known gaps: a standby host taking the lease later with Home
+  already open; an owner-DM turn in flight at the commit appends to its legacy id (deferred P2).
 - **Status entry:** the marker's value is the cutover time; #1000 renders it once.
 - **Sidebar:** after the marker `listChatopsConversations` leaves out live owner-`dm` rows; their
   pre-cutover history lists as an archive (pruned like `/new` archives, 90 days).
