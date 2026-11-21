@@ -94,7 +94,8 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
 - **Ping:** a bot's `saved` for `MAIN_CONVERSATION_ID` is swallowed by the host (not a sidebar row) and
   becomes a text-free mount push `main` (payload = the mount id) to Home's holder — over SSH too. Replay
   evicts old `main` pings like output lines (any later pull covers them); the shell also pulls on every
-  remote (re)attach, since a ping acked just before a drop never replays.
+  remote (re)attach — first re-opening Home (`chatThreadGet("home")`), since a restarted core lost the
+  chat's thread pin and refuses the pull without it — since a ping acked just before a drop never replays.
 - **Renderer:** `dm` items (`applyMainPull`): pulled on show, focus, the ping and each Bean turn's end
   (deferred while one runs). Inert, labelled "via Discord/Teams", never in `chatTurns`/`keyedTurns`
   (so not in the delta or close-time memory), no unread mark.

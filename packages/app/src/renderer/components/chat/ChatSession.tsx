@@ -184,6 +184,8 @@ export interface ChatSessionApi {
   imageProgress: () => void;
   /** A bot wrote the main log (#1000): Home pulls the owner's DM rows. */
   mainChanged: () => void;
+  /** A remote core (re)attached: Home re-opens on it (a restarted core lost its pin), then pulls. */
+  reattached: () => void;
   runPrompt: (p: ChatPrompt) => void;
   /** Nothing said, staged or saved yet: a pushed prompt can start here instead of in a new chat. */
   blank: () => boolean;
@@ -530,14 +532,19 @@ export function ChatSession({
   // for the pending posts first: that list replaces the held one, so a post that expired or landed
   // meanwhile is right. A failed read appends nothing; a failed save drains nothing (#961: the count,
   // so the bubble, dot and pill, stays) — the next open asks again, and re-saves posts already here.
-  const pullPosts = (): void => {
-    if (hiddenRef.current || !homeRef.current) return;
+  // `after` (a remote core reattached, #1000): run even while hidden — the open also re-pins Home on a
+  // restarted core, which the DM pull and the saves need — then call it.
+  const pullPosts = (after?: () => void): void => {
+    if ((hiddenRef.current && !after) || !homeRef.current) return;
     window.bean.chatThreadGet("home", mountId).then((t) => {
-      if (goneRef.current || hiddenRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
-      for (const p of t.home.posts) undrainedRef.current.add(p.id);
-      waitingPostsRef.current = t.home.posts;
-      if (appendPosts()) setItems(itemsRef.current);
-      else void saveThread();
+      if (goneRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
+      if (!hiddenRef.current) {
+        for (const p of t.home.posts) undrainedRef.current.add(p.id);
+        waitingPostsRef.current = t.home.posts;
+        if (appendPosts()) setItems(itemsRef.current);
+        else void saveThread();
+      }
+      after?.();
     }, () => {});
   };
   // Home on the main log (#1000): the owner's DM rows past the cursor — on show, focus, a bot's ping
@@ -571,8 +578,10 @@ export function ChatSession({
     return () => window.removeEventListener("focus", onFocus);
   }, []);
   useEffect(() => {
-    window.bean.getModel().then(setModel);
-    window.bean.listProjects().then(setProjects);
+    // A remote core may be reconnecting when a chat mounts: keep the defaults (a turn's reply still
+    // carries the model) rather than throw an unhandled rejection.
+    window.bean.getModel().then(setModel, () => {});
+    window.bean.listProjects().then(setProjects, () => {});
     refreshCatalogs();
     // An absent key stays absent (project: keep the window's; model: default). A pick made before
     // the read lands wins over it.
@@ -1726,6 +1735,7 @@ export function ChatSession({
       setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
     },
     mainChanged: pullMain,
+    reattached: () => pullPosts(pullMain),
     runPrompt,
     blank: untouched,
     writable: () => !continuedTo(itemsRef.current),

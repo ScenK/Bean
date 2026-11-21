@@ -153,6 +153,26 @@ describe("ChatWindow Home", () => {
     expect(bean.chatMainSince!.mock.calls.length).toBeGreaterThan(calls);
   });
 
+  it("#1000: a remote core reattaching re-opens Home on it (a restarted core lost the pin), then pulls", async () => {
+    bean.chatThreadGet!.mockResolvedValue({ ...homeThread([]), home: { posts: [], log: true, cursor: 0 } });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    const gets = bean.chatThreadGet!.mock.calls.length;
+    const pulls = bean.chatMainSince!.mock.calls.length;
+    try {
+      await act(async () => { listeners.onCoreStatus!({ kind: "remote", host: "me@box", state: "attached" }); });
+      await flush();
+      expect(bean.chatThreadGet!.mock.calls.slice(gets).map((c) => c[0])).toEqual(["home"]);
+      expect(bean.chatMainSince!.mock.calls.length).toBeGreaterThan(pulls);
+      // The re-open came first: the pull rides on the restored pin.
+      const getAt = bean.chatThreadGet!.mock.invocationCallOrder.at(-1)!;
+      expect(bean.chatMainSince!.mock.invocationCallOrder.at(-1)!).toBeGreaterThan(getAt);
+    } finally {
+      await act(async () => { listeners.onCoreStatus!({ kind: "local" }); });
+    }
+  });
+
   it("#1000: a chat not on the main log never pulls DM rows", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
