@@ -53,6 +53,7 @@ describe("ChatWindow Home", () => {
       setChatIncognito: vi.fn(),
       rememberOnClose: vi.fn(),
       homePending: vi.fn(async () => 0),
+      chatMainSince: vi.fn(async () => ({ rows: [], cursor: 0, trimmed: false })),
     };
     (window as unknown as { bean: unknown }).bean = new Proxy(bean, {
       get: (t, k: string) => t[k] ?? (k.startsWith("on") ? (cb: (...a: unknown[]) => void) => { listeners[k] = cb; } : async () => undefined),
@@ -97,6 +98,86 @@ describe("ChatWindow Home", () => {
       { role: "user", content: '[sprout "inbox" posted]: <<<\n[card: run "deploy" — started]\n>>>', source: "loopback" },
     ]);
     expect(root.querySelectorAll(".bean-post")).toHaveLength(2); // not appended twice
+  });
+
+  it("on the main log (#997): sends keyed deltas instead of history, never re-sends an acked turn, and drops a stale Discord pointer", async () => {
+    bean.chatThreadGet!.mockResolvedValue({
+      ...homeThread([]), home: { posts: [], log: true },
+      items: [{ kind: "user", id: "old", text: "before" }, { kind: "continued", id: "c", surface: "discord", conversationId: "t", title: "moved" }],
+    });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    await send("first");
+    const first = bean.chat!.mock.calls[0]![0] as { history: unknown[]; delta?: unknown[]; summary?: string; turnId: string };
+    expect(first.history).toEqual([]);
+    expect(first.delta).toEqual([]); // restored turns were flushed by the save that kept them
+    expect(first.turnId).toMatch(/^item-[0-9a-f]{8}-\d+$/); // unique across renderer loads
+    await send("second");
+    const second = bean.chat!.mock.calls[1]![0] as { delta?: unknown[] };
+    expect(second.delta).toEqual([]); // the first turn and its reply were acked by the host
+    expect(shownChat().textContent).not.toContain("Already continued");
+  });
+
+  it("#1000: shows the owner's DM exchanges labelled, once each, never in the delta or close-time memory", async () => {
+    const dm = (seq: number, role: string, text: string, via = "discord") => ({ seq, via, row: { role, text } });
+    const cutover = "Your Discord and Teams DMs are now part of this conversation — Bean remembers them.";
+    bean.chatThreadGet!.mockResolvedValue({ ...homeThread([]), home: { posts: [], log: true, cursor: 0 } });
+    bean.chatMainSince!
+      .mockResolvedValueOnce({ rows: [dm(2, "user", "from my phone"), dm(3, "bean", "got it")], cursor: 3, trimmed: false, cutover })
+      .mockResolvedValue({ rows: [dm(3, "bean", "got it"), dm(5, "status", "Card: note — saved", "teams")], cursor: 6, trimmed: false });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    const chat = shownChat();
+    expect(bean.chatMainSince).toHaveBeenCalledWith(0, expect.any(String));
+    expect(chat.querySelector(".bean-dm .bean-bubble--user")?.textContent).toContain("from my phone");
+    expect(chat.querySelector(".bean-dm-via")?.textContent).toBe("via Discord");
+    expect(chat.textContent).toContain("got it");
+    expect(chat.textContent).toContain(cutover);
+    await vi.waitFor(() => expect(bean.chatThreadSave!.mock.calls.at(-1)?.[0]).toMatchObject({ mainCursor: 3 }));
+
+    // A bot's ping pulls again: the seen row isn't doubled, the new one shows labelled.
+    await act(async () => { listeners.onChatMainChanged!(bean.chatAttach!.mock.calls.at(-1)![0]); });
+    await flush();
+    expect(bean.chatMainSince).toHaveBeenLastCalledWith(3, expect.any(String));
+    expect(chat.textContent?.match(/got it/g)).toHaveLength(1);
+    expect(chat.textContent).toContain("Card: note — saved · via Teams");
+    expect(chat.textContent?.split(cutover)).toHaveLength(2); // once
+
+    // A desktop turn: the pulled rows never ride in the delta, and the turn's end pulls.
+    const calls = bean.chatMainSince!.mock.calls.length;
+    await send("thanks");
+    const req = bean.chat!.mock.calls[0]![0] as { delta?: Array<{ content: string }> };
+    expect(req.delta?.map((t) => t.content).join("\n") ?? "").not.toMatch(/from my phone|got it|Card: note/);
+    expect(bean.chatMainSince!.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it("#1000: a remote core reattaching re-opens Home on it (a restarted core lost the pin), then pulls", async () => {
+    bean.chatThreadGet!.mockResolvedValue({ ...homeThread([]), home: { posts: [], log: true, cursor: 0 } });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    const gets = bean.chatThreadGet!.mock.calls.length;
+    const pulls = bean.chatMainSince!.mock.calls.length;
+    try {
+      await act(async () => { listeners.onCoreStatus!({ kind: "remote", host: "me@box", state: "attached" }); });
+      await flush();
+      expect(bean.chatThreadGet!.mock.calls.slice(gets).map((c) => c[0])).toEqual(["home"]);
+      expect(bean.chatMainSince!.mock.calls.length).toBeGreaterThan(pulls);
+      // The re-open came first: the pull rides on the restored pin.
+      const getAt = bean.chatThreadGet!.mock.invocationCallOrder.at(-1)!;
+      expect(bean.chatMainSince!.mock.invocationCallOrder.at(-1)!).toBeGreaterThan(getAt);
+    } finally {
+      await act(async () => { listeners.onCoreStatus!({ kind: "local" }); });
+    }
+  });
+
+  it("#1000: a chat not on the main log never pulls DM rows", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    expect(bean.chatMainSince).not.toHaveBeenCalled();
   });
 
   it("a failed save keeps the posts undrained for the next save", async () => {
@@ -226,12 +307,82 @@ describe("ChatWindow Home", () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
     await click(homeRow());
-    expect(shownChat().textContent).toContain("Sprouts set to Post to Home land here.");
+    expect(shownChat().textContent).toContain("Sprouts set to post to your chat with Bean land here.");
     await click(shownChat().querySelector(".bean-chat-incognito"));
     expect(bean.setChatIncognito!.mock.calls).toEqual([[true, expect.any(String)]]);
     const homeMount = bean.chatThreadGet!.mock.calls[0]![1];
     expect(bean.setChatIncognito!.mock.calls[0]![1]).not.toBe(homeMount);
     expect(shownChat().querySelector(".bean-chat-incognito--on")).not.toBeNull();
     expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+  });
+
+  // #1001: the main conversation is the avatar's default, never where a pushed task or a drop lands.
+  it("on the main conversation, a pushed prompt (even Add to current chat) and a dropped URL open a task chat", async () => {
+    bean.chatThreadGet!.mockResolvedValue(homeThread([]));
+    bean.getPersona = vi.fn(async () => ({ name: "Pip", tags: ["Warm"] }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    expect(root.querySelector(".bean-chat-sidebar-home-title")?.textContent).toBe("🏠 Pip");
+    await vi.waitFor(() => expect(shownChat().textContent).toContain("Sprouts set to post to your chat with Pip land here."));
+    const mainMount = bean.chatAttach!.mock.calls.at(-1)![0];
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "pick up the note", label: "Continue: n", here: true }); listeners.onChatPrompt!(undefined); });
+    await flush();
+    expect(bean.chat!.mock.calls.map((c) => c[1])).toHaveLength(1);
+    expect(bean.chat!.mock.calls[0]![1]).not.toBe(mainMount);
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+
+    await click(homeRow());
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).not.toBeNull();
+    await act(async () => { listeners.onComponentDroppedUrl!("https://example.com/a"); });
+    await flush();
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+    expect((shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement).value).toContain("https://example.com/a");
+
+    // An unused task chat holding an unsent draft refuses the drop, visibly, and keeps the draft.
+    const composer = (): HTMLTextAreaElement => shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    composer().value = "half a thought";
+    await act(async () => { listeners.onComponentDroppedUrl!("https://example.com/c"); });
+    await flush();
+    expect(composer().value).toBe("half a thought");
+    expect(shownChat().textContent).toContain("Send or clear your draft first");
+    // Dropped again: the refusal's error row made the chat non-blank, and the draft still holds it.
+    const mounts = bean.chatAttach!.mock.calls.length;
+    await act(async () => { listeners.onComponentDroppedUrl!("https://example.com/c"); });
+    await flush();
+    expect(composer().value).toBe("half a thought");
+    expect(bean.chatAttach!.mock.calls.length).toBe(mounts);
+    // Nor does the avatar's main conversation take the window off it: the draft would be lost.
+    await act(async () => { listeners.onChatShowHome!(); });
+    await flush();
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+    expect(composer().value).toBe("half a thought");
+    expect(shownChat().textContent).toContain("switching chats would lose it");
+    composer().value = "";
+
+    // A used task chat doesn't take the next drop either: it starts another one.
+    await send("work on a");
+    const used = bean.chat!.mock.calls.at(-1)![1];
+    await act(async () => { listeners.onComponentDroppedUrl!("https://example.com/b"); });
+    await flush();
+    expect(bean.chatAttach!.mock.calls.at(-1)![0]).not.toBe(used);
+    expect(shownChat().textContent).not.toContain("work on a");
+    expect((shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement).value).toContain("https://example.com/b");
+
+    // A saved task chat's draft with a staged image stays mounted on a switch: nothing is lost, so the
+    // avatar's main conversation opens and the chat keeps both for the way back.
+    composer().value = "";
+    await send("work on b");
+    composer().value = "with this shot";
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "shot.png", { type: "image/png" });
+    Object.defineProperty(paste, "clipboardData", { value: { items: [{ kind: "file", type: "image/png", getAsFile: () => png }] } });
+    await act(async () => { composer().dispatchEvent(paste); });
+    await vi.waitFor(() => expect(shownChat().querySelector(".bean-chat-pending-image img")).not.toBeNull());
+    await act(async () => { listeners.onChatShowHome!(); });
+    await flush();
+    await vi.waitFor(() => expect(root.querySelector(".bean-chat-sidebar-home--active")).not.toBeNull());
+    const kept = root.querySelector(".bean-chat[hidden] .bean-chat-pending-image img")?.closest(".bean-chat");
+    expect(kept?.querySelector<HTMLTextAreaElement>("textarea.bean-input--composer")?.value).toBe("with this shot");
   });
 });

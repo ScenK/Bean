@@ -13,18 +13,29 @@ import { buildChatThreadHandlers, HOME_TARGET } from "../src/chat.js";
 function setup(at = new Date(2026, 10, 19, 12), onDrained = () => {}) {
   const dbFile = join(mkdtempSync(join(tmpdir(), "bean-home-")), "bean.db");
   const clock = { now: at };
+  const persona = { name: "Pip" };
   const threads = buildChatThreadHandlers({
     dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats,
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (f) => listPendingHomePosts(f, () => clock.now), saveDesktopChatDraining,
-    now: () => clock.now, onDrained,
+    now: () => clock.now, onDrained, personaName: () => persona.name,
   });
   const post = (body: string): string => insertHomePost(dbFile, { sprout: "digest", body }, undefined, () => clock.now);
   const pending = (): string[] => listPendingHomePosts(dbFile, () => clock.now).map((p) => p.id);
-  return { dbFile, threads, clock, post, pending, home: HOME_THREAD_ID };
+  return { dbFile, threads, clock, post, pending, persona, home: HOME_THREAD_ID };
 }
 const posts = (...ids: string[]) => ids.map((postId) => ({ kind: "post", id: `i-${postId}`, postId, sprout: "digest", at: "x", text: "t" }));
 
 describe("Home thread", () => {
+  it("is named after the persona on get and list, whatever title it was stored under (#1001)", () => {
+    const { threads, persona, home } = setup();
+    threads.save("a", { id: home, title: "Home", items: [{ kind: "user", id: "u1", text: "hi" }] });
+    threads.release("a");
+    expect(threads.list().find((t) => t.id === home)).toMatchObject({ title: "Pip", home: true });
+    persona.name = "Mr. Bean";
+    expect(threads.get("b", HOME_TARGET)).toMatchObject({ id: home, title: "Mr. Bean" });
+    expect(threads.list().find((t) => t.id === home)).toMatchObject({ title: "Mr. Bean" });
+  });
+
   it("a draining save (only) recounts the bubble (#961)", () => {
     let recounts = 0;
     const { threads, post, home } = setup(undefined, () => { recounts++; });
@@ -75,7 +86,7 @@ describe("Home thread", () => {
   it("stays one thread across midnight: posts handed before it drain with a save after it (#976)", () => {
     const { threads, clock, post, pending, home } = setup(new Date(2026, 10, 19, 23, 59));
     const p1 = post("one");
-    expect(threads.get("a", HOME_TARGET)).toMatchObject({ id: home, title: "Home" });
+    expect(threads.get("a", HOME_TARGET)).toMatchObject({ id: home, title: "Pip" });
     clock.now = new Date(2026, 10, 20, 0, 1);
     expect(threads.save("a", { id: home, title: "Home", items: posts(p1) })).toMatchObject({ id: home, home: true });
     expect(pending()).toEqual([]);

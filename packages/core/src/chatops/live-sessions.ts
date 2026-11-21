@@ -55,6 +55,9 @@ export interface LiveSessionStart {
   /** A fresh session's CLI id, once its `delegate_runs` row is written (never on a resume, a
    * failed write, or without the registry's `surface`). */
   onSessionId?: (sessionId: string) => void;
+  /** Each piece of agent output as it streams — prose in proseOnly mode, else raw lines — for a
+   * card's "where it stopped" line (a stopped turn never reaches onTurnResult). */
+  onAgentText?: (text: string) => void;
 }
 
 type StartFn = (
@@ -243,10 +246,13 @@ export class LiveSessionRegistry {
       { cli: input.cli, projectPath: input.projectPath, prompt: input.instruction, model: input.model, resume: input.resume },
       {
         onOutput: (line) => {
-          if (!this.opts.proseOnly) append(line);
+          if (this.opts.proseOnly) return;
+          append(line);
+          input.onAgentText?.(line);
         },
         onText: (text) => {
           if (!this.opts.proseOnly) return;
+          input.onAgentText?.(text);
           // One bubble per agent message: the previous message (if any is still unsealed) is final.
           if (s.buf.length > (s.seals[s.seals.length - 1] ?? 0)) s.seals.push(s.buf.length);
           append(text);

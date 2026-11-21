@@ -111,7 +111,7 @@ test("error releases the run's record and reports the message", async () => {
   const ev = events();
   await reg.start(req, ev, meta);
   calls[0]?.cb.onError(new Error("boom"));
-  expect(ev.onError).toHaveBeenCalledWith("boom", undefined);
+  expect(ev.onError).toHaveBeenCalledWith("boom", undefined, undefined);
   expect(runFiles(dir)).toEqual([]);
 });
 
@@ -133,7 +133,7 @@ test("a run that settles synchronously (spawn failure) leaves no record behind",
   }, { dir, botKind: "discord" });
   const ev = events();
   const id = await reg.start(req, ev, meta);
-  expect(ev.onError).toHaveBeenCalledWith("spawn failed", undefined);
+  expect(ev.onError).toHaveBeenCalledWith("spawn failed", undefined, undefined);
   expect(runFiles(dir)).toEqual([]);
   expect(reg.cancel(id)).toBe(false); // never registered
 });
@@ -168,6 +168,25 @@ test("cancel cancels the underlying handle and fires onCancelled", async () => {
   expect(ev.onCancelled).toHaveBeenCalled();
   expect(runFiles(dir)).toEqual([]);
   expect(reg.cancel(id)).toBe(false);
+});
+
+test("terminal events carry the latest output, not the last throttled tail (#1002)", async () => {
+  const { fn, calls } = fakeRun();
+  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord", proseOnly: true });
+  const ev = events();
+  const id = await reg.start(req, ev, meta);
+  calls[0]?.cb.onText?.("Reading the logs.");
+  vi.advanceTimersByTime(5000);
+  expect(ev.onTail).toHaveBeenCalledWith("Reading the logs.");
+  calls[0]?.cb.onText?.("Found it: a stale lock.");
+  reg.cancel(id);
+  expect(ev.onCancelled).toHaveBeenCalledWith(undefined, "Found it: a stale lock.");
+
+  const ev2 = events();
+  await reg.start(req, ev2, meta);
+  calls[1]?.cb.onText?.("Halfway.");
+  calls[1]?.cb.onError(new Error("boom"));
+  expect(ev2.onError).toHaveBeenCalledWith("boom", undefined, "Halfway.");
 });
 
 test("cancel does not release the run record until the handle confirms the child actually stopped", async () => {
@@ -275,11 +294,11 @@ test("every started run (not just resumes) is recorded, and error/cancel carry t
   await reg.start(req, ev, meta);
   calls[0]?.cb.onSessionStart?.(123, "s-err");
   calls[0]?.cb.onError(new Error("boom"));
-  expect(ev.onError).toHaveBeenCalledWith("boom", "s-err");
+  expect(ev.onError).toHaveBeenCalledWith("boom", "s-err", undefined);
   const id = (await reg.start(req, ev, meta))!;
   calls[1]?.cb.onSessionStart?.(124, "s-cancel");
   reg.cancel(id);
-  expect(ev.onCancelled).toHaveBeenCalledWith("s-cancel");
+  expect(ev.onCancelled).toHaveBeenCalledWith("s-cancel", undefined);
   await reg.start(req, ev, meta);
   calls[2]?.cb.onSessionStart?.(125, "--help"); // option-like: no row, no receipt
   calls[2]?.cb.onDone("ok", "--help");

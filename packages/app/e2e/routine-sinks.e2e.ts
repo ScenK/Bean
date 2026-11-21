@@ -195,7 +195,7 @@ test("routines: chat sinks show and edit a DM plus several channels per transpor
   }
 });
 
-/** "Post to Home chat" (#962): ticking saves `sinks.home`, the minutes field sets `ttlMinutes`
+/** "Post to your chat with Bean" (#962, #1001): ticking saves `sinks.home`, the minutes field sets `ttlMinutes`
  * (an invalid value is refused with a message, the file untouched), the enabled and todo-driven
  * flips keep it, and unticking removes it while the other sinks stay. */
 test("routines: Post to Home chat round-trips sinks.home and its unread timeout", async () => {
@@ -207,7 +207,7 @@ test("routines: Post to Home chat round-trips sinks.home and its unread timeout"
   }), "utf8");
   const saved = async (): Promise<Record<string, unknown>> =>
     (JSON.parse(await readFile(file, "utf8")) as { sinks: Record<string, unknown> }).sinks;
-  const ttl = "Drop the Home post if unread after this many minutes";
+  const ttl = "Drop the post to your chat with Bean if unread after this many minutes";
 
   const app = await launchBean({ HOME: home.homeDir });
   try {
@@ -218,8 +218,8 @@ test("routines: Post to Home chat round-trips sinks.home and its unread timeout"
     ]);
     await win.locator(".bean-routines-row", { hasText: "homey" }).click();
     await expect(win.getByLabel(ttl)).toHaveCount(0);
-    await win.getByLabel("Post to Home chat").check();
-    await expect(win.locator(".bean-routines-digest-line")).toContainText("Posts a brief to your Home chat and a digest to your Daily Dashboard");
+    await win.getByLabel("Post to your chat with Bean", { exact: true }).check();
+    await expect(win.locator(".bean-routines-digest-line")).toContainText("Posts a brief to your chat with Bean and a digest to your Daily Dashboard");
     await win.getByRole("button", { name: "Save sprout" }).click();
     await expect.poll(saved).toEqual({ note: true, home: {} });
     // Edit only once the save has settled, or its late "Saved ✓" lands on the edited draft.
@@ -253,7 +253,7 @@ test("routines: Post to Home chat round-trips sinks.home and its unread timeout"
     await win.reload();
     await win.locator(".bean-routines-row", { hasText: "homey" }).click();
     await expect(win.getByLabel(ttl)).toHaveValue("45");
-    await win.getByLabel("Post to Home chat").uncheck();
+    await win.getByLabel("Post to your chat with Bean", { exact: true }).uncheck();
     await win.getByRole("button", { name: "Save sprout" }).click();
     await expect.poll(saved).toEqual({ note: true });
   } finally {

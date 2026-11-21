@@ -8,6 +8,7 @@ import { StepsEditor } from "./StepsEditor.js";
 import { remapStepMissing, stepProblemsText, withStepIds } from "./step-ids.js";
 import { intervalText, WATCH_MINUTES } from "./watch-status.js";
 import { destinations } from "./chat-sinks.js";
+import { usePersonaName } from "../../shared/persona-name.js";
 
 // The describe-it builder: 2a (sentence → editable brief), 2b (building, cancellable), 2c
 // (review before enabling). The manual editor stays one link away ("Start from a blank form").
@@ -493,6 +494,7 @@ export function ReviewPane(props: {
   onEnabled: (note: string) => void;
 }) {
   const { routine } = props;
+  const beanName = usePersonaName();
   const [preview, setPreview] = useState<{ items?: WatchItem[]; error?: string }>({});
   const [queueExisting, setQueueExisting] = useState(false);
   const [recipients, setRecipients] = useState<SinkRecipients | undefined>(undefined);
@@ -527,7 +529,7 @@ export function ReviewPane(props: {
 
   const every = watch.everyMinutes ?? 15;
   const items = preview.items ?? [];
-  const dest = destinations(routine.sinks, recipients);
+  const dest = destinations(routine.sinks, recipients, beanName);
   const stepProblems = stepProblemsText(routine.steps, props.clis, props.models);
 
   return (

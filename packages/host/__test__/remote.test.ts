@@ -106,6 +106,7 @@ describe("remote attach over the unix socket", () => {
     const send = attachments.push(() => {});
     push = send;
     const getModel = vi.fn(() => "gpt-test");
+    const saved: unknown[] = [];
     const handlers = {
       chat: {
         attach: (c: number, m: string) => { mounts.set(m, c); },
@@ -113,6 +114,15 @@ describe("remote attach over the unix socket", () => {
           if (mounts.get(m) !== c) throw new Error("not your chat");
           push(m, "delegate", { taskId: "t1", type: "started", mountId: m });
           return { reply: `echo: ${req.message}` };
+        },
+        threadGet: (c: number, m: string, id: string) => {
+          if (mounts.get(m) !== c) throw new Error("not your chat");
+          return { id: id === "home" ? "home-id" : id, title: "Home", items: [], noteSlug: null, home: { posts: [], log: true } };
+        },
+        threadSave: (c: number, m: string, req: { id: string; title: string; turns?: unknown[] }, opts?: unknown) => {
+          if (mounts.get(m) !== c) throw new Error("not your chat");
+          saved.push({ ...req, opts });
+          return { id: req.id, title: req.title, updatedAt: "now", home: true };
         },
       },
       getConfig,
@@ -130,7 +140,7 @@ describe("remote attach over the unix socket", () => {
     } as unknown as HostHandlers;
     const server = await listenRemote(dir, { handshake: buildHandshake("1.0.0", "linux", []), attachments, handlers, ...extra });
     close = server.close;
-    return { path: server.path, getConfig, applyConfig, saveProjects, projectDir, getModel, attachments };
+    return { path: server.path, getConfig, applyConfig, saveProjects, projectDir, getModel, attachments, saved };
   }
 
   // #837: `bean-core update` asks the running core, which answers before it exits.
@@ -203,9 +213,32 @@ describe("remote attach over the unix socket", () => {
     shell.send({ type: "resume", acks: {} });
     const result = await shell.call("chat", { history: [], message: "hi", source: "typed" }, "m1");
     expect(result).toMatchObject({ ok: true, value: { reply: "echo: hi" } });
+    // v4 (#997): a keyed delta passes the wire guard; a malformed one is refused before the handler.
+    const delta = [{ key: "u1", role: "user", content: "earlier" }];
+    expect(await shell.call("chat", { history: [], message: "hi", delta }, "m1")).toMatchObject({ ok: true });
+    expect(await shell.call("chat", { history: [], message: "hi", delta: [{ key: 1, role: "user", content: "x" }] }, "m1"))
+      .toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
     const event = await shell.next((m) => m.type === "push");
     expect(event).toMatchObject({ mountId: "m1", seq: 1, kind: "delegate", payload: { taskId: "t1", type: "started" } });
     expect(await shell.call("getModel")).toMatchObject({ ok: true, value: "gpt-test" });
+    shell.send({ type: "detach" });
+    await shell.closed;
+  });
+
+  it("opens and saves Home over the wire (#997): the main-log flag out, keyed turns in", async () => {
+    const { path, saved } = await serve();
+    const shell = shellOverBridge(path);
+    shell.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
+    await shell.next((m) => m.type === "attached");
+    await shell.call("chatAttach", "m1");
+    expect(await shell.call("chatThreadGet", "home", "m1")).toMatchObject({ ok: true, value: { home: { log: true } } });
+    const turns = [{ key: "r1", role: "assistant", content: "[card: note — saved]" }];
+    expect(await shell.call("chatThreadSave", { id: "home-id", title: "Home", items: [], turns }, "m1")).toMatchObject({ ok: true, value: { home: true } });
+    expect(saved).toEqual([expect.objectContaining({ turns, opts: { keepNote: true } })]); // no notes over SSH: never unlinks
+    expect(await shell.call("chatThreadSave", { id: "home-id", title: "Home", items: [], turns: [{ key: "x", role: "system", content: "" }] }, "m1"))
+      .toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
+    // Another client's mount is refused by the handler, never served.
+    expect(await shell.call("chatThreadGet", "home", "m-other")).toMatchObject({ ok: false });
     shell.send({ type: "detach" });
     await shell.closed;
   });
@@ -270,6 +303,12 @@ describe("remote attach over the unix socket", () => {
     b.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION + 1 });
     expect(await b.next((m) => m.type === "error")).toMatchObject({ handshake: { contract: CONTRACT_VERSION } });
     await b.closed;
+    // A v4 shell (pre-#1000: its core would refuse the DM pull) is refused too.
+    expect(CONTRACT_VERSION).toBe(5);
+    const c = shellOverBridge(path);
+    c.send({ type: "attach", shellId: SHELL, contract: 4 });
+    expect(await c.next((m) => m.type === "error")).toMatchObject({ message: expect.stringMatching(/mismatch/) });
+    await c.closed;
   });
 
   it("a frame that throws closes only its own connection, never the core", async () => {

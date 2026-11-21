@@ -14,8 +14,9 @@ export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks)
 export interface RunEvents {
   onTail: (line: string) => void;
   onDone: (result: string, sessionId?: string) => void;
-  onError: (message: string, sessionId?: string) => void;
-  onCancelled: (sessionId?: string) => void;
+  /** `last`: the agent's latest output (prose when proseOnly), unthrottled — where it stopped. */
+  onError: (message: string, sessionId?: string, last?: string) => void;
+  onCancelled: (sessionId?: string, last?: string) => void;
 }
 
 /** Reporting context for a run — carried only so interruptAll() can tell the requesting
@@ -50,6 +51,8 @@ interface ActiveRun {
   released: boolean;
   meta: RunMeta;
   sessionId?: string;
+  /** The latest tail line, kept past the throttle's flush for the terminal events. */
+  last?: string;
 }
 
 /** Active delegate runs keyed by run id (what a card's Cancel carries); any number may share a
@@ -106,8 +109,8 @@ export class RunRegistry {
       ? {
           onTail: callerEvents.onTail, // output stays in the channel; see activity.ts
           onDone: (result, sessionId) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result, sessionId); },
-          onError: (message, sessionId) => { act({ type: "run", phase: "failed", id: runId, name }); callerEvents.onError(message, sessionId); },
-          onCancelled: (sessionId) => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(sessionId); },
+          onError: (message, sessionId, last) => { act({ type: "run", phase: "failed", id: runId, name }); callerEvents.onError(message, sessionId, last); },
+          onCancelled: (sessionId, last) => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(sessionId, last); },
         }
       : callerEvents;
     act?.({ type: "run", phase: "start", id: runId, name });
@@ -133,10 +136,10 @@ export class RunRegistry {
     };
     run.handle = this.runDelegate(req, {
       onOutput: (line) => {
-        if (!run.released && !this.opts.proseOnly) latest = line;
+        if (!run.released && !this.opts.proseOnly) latest = run.last = line;
       },
       onText: (text) => {
-        if (!run.released && this.opts.proseOnly) latest = text;
+        if (!run.released && this.opts.proseOnly) latest = run.last = text;
       },
       onDone: (result) => {
         if (run.released) return;
@@ -146,7 +149,7 @@ export class RunRegistry {
       onError: (err) => {
         if (run.released) return;
         free();
-        events.onError(err.message, run.sessionId);
+        events.onError(err.message, run.sessionId, run.last);
       },
       // A resumed run may re-spawn fresh if the CLI rejects the id; the first child is dead by
       // then, so a record on its pid would miss the live retry. Keep this (live) process's pid
@@ -186,7 +189,7 @@ export class RunRegistry {
     run.handle?.cancel(() => {
       this.stopping.delete(run);
       releaseRun(this.opts.dir, runId);
-      run.events.onCancelled(run.sessionId);
+      run.events.onCancelled(run.sessionId, run.last);
     });
     return true;
   }

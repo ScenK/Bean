@@ -5,7 +5,7 @@ import type {
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, SproutPush, TodoDispatchAnswer } from "@bean/host";
+import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, MainPull, SproutPush, TodoDispatchAnswer } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "./terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
 import type { InterruptedRunNotice } from "./ipc.js";
@@ -190,6 +190,8 @@ contextBridge.exposeInMainWorld("bean", {
   chatThreadSave: (req: ChatThreadSaveRequest, mountId: string): Promise<ChatThreadAck | undefined> =>
     ipcRenderer.invoke(IPC.chatThreadSave, req, mountId),
   chatThreadGet: (id: string, mountId: string): Promise<PendingChatThread> => ipcRenderer.invoke(IPC.chatThreadGet, id, mountId),
+  chatMainSince: (cursor: number, mountId: string): Promise<MainPull> => ipcRenderer.invoke(IPC.chatMainSince, cursor, mountId),
+  onChatMainChanged: (cb: (mountId: string) => void) => ipcRenderer.on(IPC.chatMainChanged, (_e, mountId: string) => cb(mountId)),
   chatThreadList: (): Promise<DesktopChatListing[]> => ipcRenderer.invoke(IPC.chatThreadList),
   chatThreadDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.chatThreadDelete, id),
   chatThreadStar: (id: string, starred: boolean): Promise<string | undefined> => ipcRenderer.invoke(IPC.chatThreadStar, id, starred),

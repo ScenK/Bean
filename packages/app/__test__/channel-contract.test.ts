@@ -20,6 +20,9 @@ describe("service contract (#807)", () => {
       expect(c?.owner === "core" ? c.args.length : -1, name).toBe(op.args.length);
     }
     for (const denied of ["launch", "terminalStart", "chatOpenPath", "revealInFinder", "pickProjectFolder"]) expect(Object.hasOwn(REMOTE_OPS, denied)).toBe(false);
+    // The persona is read over the wire (#1001: the main conversation's name), never written.
+    expect(Object.hasOwn(REMOTE_OPS, "getPersona")).toBe(true);
+    expect(Object.hasOwn(REMOTE_OPS, "savePersona")).toBe(false);
   });
 
   it("a remote shell reaches the chat's sprout dispatch (#922) and only the Sprouts list's reads (#983)", () => {

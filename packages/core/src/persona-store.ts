@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DEFAULT_PERSONA, isValidPersona, type Persona } from "./persona.js";
@@ -17,6 +18,17 @@ export async function loadPersona(file: string, fallbackFile?: string): Promise<
     (fallbackFile ? await tryReadPersona(fallbackFile) : undefined) ??
     DEFAULT_PERSONA
   );
+}
+
+/** `loadPersona` for a sync caller (a title, a bubble line): just the name. */
+export function loadPersonaNameSync(file: string, fallbackFile?: string): string {
+  for (const f of fallbackFile ? [file, fallbackFile] : [file]) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(f, "utf8"));
+      if (isValidPersona(parsed)) return parsed.name;
+    } catch { /* next */ }
+  }
+  return DEFAULT_PERSONA.name;
 }
 
 export async function savePersona(file: string, persona: Persona): Promise<void> {

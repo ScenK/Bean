@@ -2,6 +2,8 @@ import { expect, test, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { ConversationCatalog, listChatopsConversations } from "../src/chatops/catalog.js";
 import { closeDb, openDb } from "../src/db.js";
@@ -74,7 +76,7 @@ test("setAmbientCutoff overwrites the previous value for that conversation", () 
 test("replaceOldest collapses the oldest n turns into one summary turn, keeping the rest", () => {
   const s = new ConversationStore(file);
   for (let i = 0; i < 10; i++) s.append("c1", { role: "user", content: `m${i}` });
-  s.replaceOldest("c1", 6, { role: "system", content: "summary of m0..m5" });
+  expect(s.replaceOldest("c1", s.oldest("c1", 6), { role: "system", content: "summary of m0..m5" })).toBe(true);
   const h = s.history("c1");
   expect(h.map((t) => t.content)).toEqual(["summary of m0..m5", "m6", "m7", "m8", "m9"]);
   expect(h[0]?.role).toBe("system");
@@ -85,7 +87,7 @@ test("onChange fires once per append, replaceOldest and clear", () => {
   const s = new ConversationStore(file, { onChange: (id) => changed.push(id) });
   s.append("c1", { role: "user", content: "a" });
   s.append("c1", { role: "user", content: "b" });
-  s.replaceOldest("c1", 1, { role: "assistant", content: "summary" });
+  s.replaceOldest("c1", s.oldest("c1", 1), { role: "assistant", content: "summary" });
   s.clear("c1");
   expect(changed).toEqual(["c1", "c1", "c1", "c1"]);
 });
@@ -233,3 +235,88 @@ test("ownerSubjectIds: config owners plus the catalog's id for an AAD-configured
   expect((await loadMemories(file, ["29:owner", ...ids])).map((x) => x.id).sort()).toEqual(["d", "s", "t"]);
   expect((await loadMemories(file, "disc-member")).map((x) => x.id).sort()).toEqual(["m", "s"]);
 });
+
+test("an append with an existing turn_key stores nothing and reports it", () => {
+  const changed: string[] = [];
+  const s = new ConversationStore(file, { onChange: (id) => changed.push(id) });
+  expect(s.append("c1", { role: "user", content: "hi" }, { surface: "discord", turnKey: "msg-1" })).toBe(true);
+  expect(s.append("c1", { role: "user", content: "hi again" }, { surface: "discord", turnKey: "msg-1" })).toBe(false);
+  // Unique per conversation, and keyless appends never collide.
+  expect(s.append("c2", { role: "user", content: "hi" }, { turnKey: "msg-1" })).toBe(true);
+  expect(s.append("c1", { role: "assistant", content: "a" })).toBe(true);
+  expect(s.append("c1", { role: "assistant", content: "b" })).toBe(true);
+  expect(s.history("c1").map((t) => t.content)).toEqual(["hi", "a", "b"]);
+  expect(changed).toEqual(["c1", "c2", "c1", "c1"]);
+  const row = openDb(file).prepare("SELECT surface, turn_key FROM chatops_turns WHERE conversation_id = 'c1' AND seq = 1").get();
+  expect(row).toEqual({ surface: "discord", turn_key: "msg-1" });
+});
+
+test("replaceOldest skips a stale snapshot: another pass compacted it, or /new reset the conversation", () => {
+  const s = new ConversationStore(file);
+  for (let i = 0; i < 10; i++) s.append("c1", { role: "user", content: `m${i}` });
+  const a = s.oldest("c1", 6);
+  const b = s.oldest("c1", 6);
+  expect(s.replaceOldest("c1", a, { role: "user", content: "A" })).toBe(true);
+  expect(s.replaceOldest("c1", b, { role: "user", content: "B" })).toBe(false);
+  expect(s.history("c1").map((t) => t.content)).toEqual(["A", "m6", "m7", "m8", "m9"]);
+
+  // Same seqs, roles and contents after a /new — only created_at tells them apart.
+  s.append("c2", { role: "user", content: "x" });
+  const stale = s.oldest("c2", 1);
+  s.clear("c2");
+  s.append("c2", { role: "user", content: "x" });
+  const fresh = s.oldest("c2", 1)[0]!;
+  const snap = fresh.createdAt === stale[0]!.createdAt ? [{ ...stale[0]!, createdAt: "1970-01-01T00:00:00.000Z" }] : stale;
+  expect(s.replaceOldest("c2", snap, { role: "user", content: "stale" })).toBe(false);
+  expect(s.history("c2")).toEqual([{ role: "user", content: "x" }]);
+});
+
+test("an older bean.db gains surface/turn_key and the per-conversation key index", () => {
+  closeDb(file);
+  const old = new DatabaseSync(file);
+  old.exec(
+    "CREATE TABLE chatops_turns (conversation_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, " +
+      "content TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (conversation_id, seq));" +
+      "INSERT INTO chatops_turns VALUES ('c1', 1, 'user', 'legacy', '2026-01-01T00:00:00.000Z');",
+  );
+  old.close();
+  const s = new ConversationStore(file);
+  expect(s.append("c1", { role: "user", content: "new" }, { turnKey: "k" })).toBe(true);
+  expect(s.append("c1", { role: "user", content: "dup" }, { turnKey: "k" })).toBe(false);
+  expect(s.history("c1").map((t) => t.content)).toEqual(["legacy", "new"]);
+});
+
+const WRITER = join(import.meta.dirname, "fixtures", "conversation-writer.mjs");
+function writer(args: string[]): { proc: ReturnType<typeof spawn>; out: Promise<string> } {
+  const proc = spawn(process.execPath, [WRITER, ...args], { stdio: ["pipe", "pipe", "inherit"] });
+  const out = new Promise<string>((resolve, reject) => {
+    let text = "";
+    proc.stdout!.on("data", (d: Buffer) => { text += d.toString(); });
+    proc.on("error", reject);
+    proc.on("exit", (code) => (code === 0 ? resolve(text) : reject(new Error(`writer exited ${code}`))));
+  });
+  return { proc, out };
+}
+
+test("two processes appending to one conversation: no UNIQUE error, every turn stored once", async () => {
+  new ConversationStore(file); // create the schema before the race
+  await Promise.all([writer(["append", file, "c1", "150", "a"]).out, writer(["append", file, "c1", "150", "b"]).out]);
+  const contents = new ConversationStore(file).history("c1").map((t) => t.content);
+  expect(contents).toHaveLength(300);
+  expect(new Set(contents).size).toBe(300);
+}, 30_000);
+
+test("overlapping compaction from two processes: the stale pass skips, no turn lost", async () => {
+  const s = new ConversationStore(file);
+  for (let i = 0; i < 10; i++) s.append("c1", { role: "user", content: `m${i}` });
+  const ws = [writer(["compact", file, "c1", "6"]), writer(["compact", file, "c1", "6"])];
+  // Both snapshot the same oldest 6 before either replaces.
+  await Promise.all(ws.map(({ proc }) => new Promise<void>((r) => proc.stdout!.once("data", () => r()))));
+  for (const { proc } of ws) proc.stdin!.end("go\n");
+  const results = (await Promise.all(ws.map((w) => w.out))).map((o) => o.trim().split("\n").pop());
+  expect(results.sort()).toEqual(["false", "true"]);
+  const h = s.history("c1").map((t) => t.content);
+  expect(h).toHaveLength(5);
+  expect(h[0]).toMatch(/^summary-/);
+  expect(h.slice(1)).toEqual(["m6", "m7", "m8", "m9"]);
+}, 30_000);

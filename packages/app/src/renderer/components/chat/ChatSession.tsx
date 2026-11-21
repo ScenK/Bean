@@ -3,13 +3,13 @@ import { ChatPanel, type StopTarget } from "./ChatPanel.js";
 import { MAX_IMAGES_PER_MESSAGE, PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
-  HANDOFF_ITEMS, chatTurns, modelHistory, placeSummary, sinceSummary, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
+  HANDOFF_ITEMS, chatTurns, keyedTurns, modelHistory, placeSummary, sinceSummary, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
   LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
   LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths, type LabeledImage,
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
-import { applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, resumesAfterGap, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
+import { applyMainPull, applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, resumesAfterGap, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, linkedNoteData } from "@bean/core/prompt";
@@ -17,7 +17,7 @@ import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { CARD_LEAD } from "@bean/core/card-record";
 import { dataUrlToAttachment, labelNoteImages } from "../../shared/note-images.js";
 import type {
-  AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
+  AvailableModel, CliName, DesktopChatListing, ImageAttachment, KeyedTurn, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
 import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult, SproutEvent, SproutPush } from "@bean/host";
@@ -182,9 +182,16 @@ export interface ChatSessionApi {
   /** A per-turn "Memory updated" receipt for this chat (the shell routes by mount and thread). */
   memoryUpdated: (saved: Array<{ id: string; text: string; category?: string }>) => void;
   imageProgress: () => void;
+  /** A bot wrote the main log (#1000): Home pulls the owner's DM rows. */
+  mainChanged: () => void;
+  /** A remote core (re)attached: Home re-opens on it (a restarted core lost its pin), then pulls. */
+  reattached: () => void;
   runPrompt: (p: ChatPrompt) => void;
   /** Nothing said, staged or saved yet: a pushed prompt can start here instead of in a new chat. */
   blank: () => boolean;
+  /** Something unsent that leaving would lose: images or a PDF staged but not sent, or composer text
+   * with no saved thread, in a chat the leave evicts or discards (one kept mounted keeps its draft). */
+  draft: () => boolean;
   /** Not continued in Discord (that leaves the chat read-only). */
   writable: () => boolean;
   notices: (notices: InterruptedRunNotice[]) => void;
@@ -322,6 +329,20 @@ export function ChatSession({
   const [home, setHome] = useState(false);
   const waitingPostsRef = useRef<Array<{ id: string; sprout: string; body: string; createdAt: string }>>([]);
   const undrainedRef = useRef(new Set<string>());
+  // Home on the main log (#997): the host holds the model history; this chat sends only the keyed
+  // turns it hasn't had acked (a chat turn or a save acks them — a lost ack just re-sends, and the
+  // host appends a key once). Restored items count as acked: the save that kept them flushed them.
+  const logRef = useRef(false);
+  const ackedRef = useRef(new Set<string>());
+  const pendingTurns = (): KeyedTurn[] => keyedTurns(itemsRef.current)
+    // Bean's turn in flight joins the log with its reply (host-side), marker included.
+    .filter((t) => !ackedRef.current.has(t.key) && t.key !== beanTurnRef.current?.id);
+  const ackKeys = (keys: Iterable<string>): void => { for (const k of keys) ackedRef.current.add(k); };
+  // The owner's DM exchanges (#1000): pulled from the log past this cursor (the host keeps it beside
+  // the thread; each save stores it). One pull at a time; one asked for meanwhile runs after it.
+  const mainCursorRef = useRef(0);
+  const pullingMainRef = useRef(false);
+  const pullMainAgainRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushRef = useRef(false);
   // Each write resolves to whether it landed (it never rejects) — a switch waits on that.
@@ -455,7 +476,7 @@ export function ChatSession({
   // through a ref — a direct reference would close over a stale render's `busy`/`items`.
   const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[], source?: TurnSource) => Promise<void>>(async () => {});
 
-  const snapshot = (): string => JSON.stringify([normalizeForSave(itemsRef.current), linkedNoteRef.current?.slug ?? null]);
+  const snapshot = (): string => JSON.stringify([normalizeForSave(itemsRef.current), linkedNoteRef.current?.slug ?? null, logRef.current ? mainCursorRef.current : null]);
   // Writes run one at a time, in order; a failed one is retried by the next change. Resolves to
   // whether the current snapshot is saved (true when there's nothing to save).
   const saveThread = (): Promise<boolean> => {
@@ -466,14 +487,16 @@ export function ChatSession({
     const snap = snapshot();
     if (snap === savedRef.current) return savingRef.current;
     savedRef.current = snap;
-    const [items, noteSlug] = JSON.parse(snap) as [ChatItem[], string | null];
+    const [items, noteSlug, mainCursor] = JSON.parse(snap) as [ChatItem[], string | null, number | null];
     // Home posts this save holds are drained by it (main reads them from `items`, one transaction), so
     // a failed save leaves them pending.
     const drained = [...undrainedRef.current].filter((id) => items.some((it) => it.kind === "post" && it.postId === id));
+    const turns = logRef.current ? pendingTurns() : undefined;
     savingRef.current = savingRef.current
-      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}) }, mountId))
+      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}), ...(turns ? { turns } : {}), ...(mainCursor !== null ? { mainCursor } : {}) }, mountId))
       .then((ack) => {
         for (const id of drained) undrainedRef.current.delete(id);
+        if (ack && turns) ackKeys(turns.map((x) => x.key));
         if (ack) setThreads((prev) => withSaveAck(prev, ack, items));
         return true;
       }, (err: unknown) => {
@@ -512,20 +535,56 @@ export function ChatSession({
   // for the pending posts first: that list replaces the held one, so a post that expired or landed
   // meanwhile is right. A failed read appends nothing; a failed save drains nothing (#961: the count,
   // so the bubble, dot and pill, stays) — the next open asks again, and re-saves posts already here.
-  const pullPosts = (): void => {
-    if (hiddenRef.current || !homeRef.current) return;
+  // `after` (a remote core reattached, #1000): run even while hidden — the open also re-pins Home on a
+  // restarted core, which the DM pull and the saves need — then call it.
+  const pullPosts = (after?: () => void): void => {
+    if ((hiddenRef.current && !after) || !homeRef.current) return;
     window.bean.chatThreadGet("home", mountId).then((t) => {
-      if (goneRef.current || hiddenRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
-      for (const p of t.home.posts) undrainedRef.current.add(p.id);
-      waitingPostsRef.current = t.home.posts;
-      if (appendPosts()) setItems(itemsRef.current);
-      else void saveThread();
+      if (goneRef.current || !homeRef.current || "missing" in t || !t.home || t.id !== threadRef.current?.id) return;
+      if (!hiddenRef.current) {
+        for (const p of t.home.posts) undrainedRef.current.add(p.id);
+        waitingPostsRef.current = t.home.posts;
+        if (appendPosts()) setItems(itemsRef.current);
+        else void saveThread();
+      }
+      after?.();
     }, () => {});
   };
-  useEffect(() => { if (!hidden) pullPosts(); }, [hidden]);
+  // Home on the main log (#1000): the owner's DM rows past the cursor — on show, focus, a bot's ping
+  // and the end of a desktop turn (deferred while one is in flight: its end pulls). No unread mark: the
+  // owner wrote them. A failed read changes nothing; the next trigger asks again.
+  const pullMain = (): void => {
+    if (!logRef.current || goneRef.current) return;
+    if (busyRef.current || pullingMainRef.current) { pullMainAgainRef.current = true; return; }
+    pullingMainRef.current = true;
+    window.bean.chatMainSince(mainCursorRef.current, mountId).then((pull) => {
+      if (goneRef.current || !logRef.current) return;
+      const before = mainCursorRef.current;
+      mainCursorRef.current = pull.cursor;
+      const next = applyMainPull(itemsRef.current, pull);
+      if (next !== itemsRef.current) {
+        itemsRef.current = next;
+        flushRef.current = true;
+        setItems(next);
+      } else if (pull.cursor !== before) void saveThread();
+    }, () => {}).finally(() => {
+      pullingMainRef.current = false;
+      if (!pullMainAgainRef.current) return;
+      pullMainAgainRef.current = false;
+      pullMain();
+    });
+  };
+  useEffect(() => { if (!hidden) { pullPosts(); pullMain(); } }, [hidden]);
   useEffect(() => {
-    window.bean.getModel().then(setModel);
-    window.bean.listProjects().then(setProjects);
+    const onFocus = (): void => { if (!hiddenRef.current) pullMain(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+  useEffect(() => {
+    // A remote core may be reconnecting when a chat mounts: keep the defaults (a turn's reply still
+    // carries the model) rather than throw an unhandled rejection.
+    window.bean.getModel().then(setModel, () => {});
+    window.bean.listProjects().then(setProjects, () => {});
     refreshCatalogs();
     // An absent key stays absent (project: keep the window's; model: default). A pick made before
     // the read lands wins over it.
@@ -561,8 +620,17 @@ export function ChatSession({
         waitingPostsRef.current = t.home.posts;
         for (const p of t.home.posts) undrainedRef.current.add(p.id);
       }
+      let saved = restoreItems(t.items);
+      if (t.home?.log) {
+        logRef.current = true;
+        mainCursorRef.current = t.home.cursor ?? 0;
+        ackKeys(keyedTurns(saved).map((x) => x.key));
+        // A pre-cutover Continue in Discord pointer would keep the main conversation read-only for
+        // good: dropped here, and from the row by the next save.
+        saved = saved.filter((it) => it.kind !== "continued");
+      }
       // Running sprout cards settle from main's record of their runs (their results loop back below).
-      const sprouts = settleRestoredSprouts(restoreItems(t.items), t.sprouts);
+      const sprouts = settleRestoredSprouts(saved, t.sprouts);
       const restored = sprouts.items;
       // PDF bytes are never saved: ask for the file again. Part of the baseline, so viewing still
       // never writes; restoredPdf skips the ask once a later save has kept it.
@@ -580,6 +648,7 @@ export function ChatSession({
       if (!hiddenRef.current) appendPosts();
       setItems(itemsRef.current);
       for (const lb of sprouts.loopbacks) void sendRef.current(lb.text, lb.display, true, undefined, lb.source);
+      pullMain();
       // An end pushed while the thread loaded found no card and waited: its card is here now.
       for (const [jobId, e] of pendingSproutEndsRef.current) {
         if (!itemsRef.current.some((it) => "jobId" in it && it.jobId === jobId)) continue;
@@ -677,11 +746,16 @@ export function ChatSession({
     // Image bytes ride only on the current turn; older turns keep a text placeholder
     // (mirrors chatops — see core's latestUserImages doc comment). The latest rolling summary
     // stands for everything before it; the core folds more in once past its budget (#975).
-    const { summary, turns: history, owners } = modelHistory(itemsRef.current);
+    // On the main log (#997) the host builds the history: this chat sends its unacked turns instead.
+    const delta = logRef.current ? pendingTurns() : undefined;
+    const { summary, turns: history, owners } = delta ? { summary: undefined, turns: [], owners: [] } : modelHistory(itemsRef.current);
+    const replyId = newId();
 
     try {
       const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
-      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
+      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), ...(delta ? { delta } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
+      // The host appended the delta, this turn and its reply.
+      if (delta) ackKeys([...delta.map((x) => x.key), turnId, replyId]);
       if (res.model) setModel(res.model);
       // Stopped while attaching: the file may be what hung, so it's unpinned like a failure. A PDF an
       // earlier turn already read stays pinned.
@@ -701,7 +775,7 @@ export function ChatSession({
           (g): g is { path: string; dataUrl: string } => typeof g.dataUrl === "string",
         );
         if (res.reply.trim() || generated?.length) {
-          next.push({ kind: "reply", id: newId(), text: res.reply, images: generated?.length ? generated : undefined, at: new Date().toISOString() });
+          next.push({ kind: "reply", id: replyId, text: res.reply, images: generated?.length ? generated : undefined, at: new Date().toISOString() });
         }
         if (res.proposedRun) {
           next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
@@ -760,6 +834,7 @@ export function ChatSession({
       }
       if (beanTurnRef.current?.id === turnId) setBeanTurn(undefined);
       setTurnsSettled((n) => n + 1);
+      pullMain();
     }
   };
   sendRef.current = sendMessage;
@@ -1590,6 +1665,18 @@ export function ChatSession({
   // a pushed prompt can start here (a staged PDF would ride along with it).
   const untouched = (): boolean => !threadRef.current && itemsRef.current.length === 0 && !pdfRef.current && !restoringRef.current;
 
+  // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no sidebar
+  // row to come back to — kept hidden, it would be unreachable).
+  const discardsOnLeave = (): boolean =>
+    incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0);
+  // Unsent work a leave would lose: staged images or PDF, or composer text with no saved thread, in a
+  // chat the leave evicts or discards. One kept mounted (hasWork: a saved thread's typed draft, a
+  // running turn) comes back with its draft and attachments as they were.
+  const draft = (): boolean => ((pdfRef.current !== undefined && !pdfRef.current.sent)
+    || composerRef.current?.closest(".bean-chat")?.querySelector(".bean-chat-pending-image img") != null
+    || ((threadRef.current === undefined || unsavableRef.current) && (composerRef.current?.value.trim() ?? "") !== ""))
+    && (discardsOnLeave() || !hasWork());
+
   // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
     if (evictingRef.current || leavingRef.current) return;
@@ -1597,9 +1684,10 @@ export function ChatSession({
     // mount still restoring Home counts as Home: the restore brings the posts.
     if (target === "home" && (homeRef.current || (restoreId === "home" && restoringRef.current))) { pullPosts(); return; }
     if (target === "new" ? untouched() : target === threadRef.current?.id) return;
-    // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
-    // sidebar row to come back to — kept hidden, it would be unreachable).
-    if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {
+    // Every switch (sidebar, the avatar's main conversation, a pushed prompt, a drop) stops here
+    // rather than silently dropping an unsent draft.
+    if (draft()) { addStatus("Send or clear your draft first — switching chats would lose it.", "error"); return; }
+    if (discardsOnLeave()) {
       leavingRef.current = true;
       void tasks().then((t) => {
         leavingRef.current = false;
@@ -1662,8 +1750,11 @@ export function ChatSession({
       if (beanTurnRef.current?.stopping) return; // the row is on its way out
       setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
     },
+    mainChanged: pullMain,
+    reattached: () => pullPosts(pullMain),
     runPrompt,
     blank: untouched,
+    draft,
     writable: () => !continuedTo(itemsRef.current),
     // Rendered as a `reply` (not `status`) so it enters conversation history: a later "retry" needs
     // the full instruction (notice.text) in context, not just the short bubble text (notice.display).
@@ -1691,6 +1782,7 @@ export function ChatSession({
     : busy || evicting || live?.busy ? "Wait for the current turn to finish."
     : incognito ? "Off-the-record chats stay on this Mac."
     : continued ? "Already continued in Discord."
+    : logRef.current ? "This conversation already follows you to your DMs — start a task chat to continue in a channel."
     : live && !live.sessionId ? "The agent session is still starting."
     : !threadRef.current || !items.some((it) => it.kind === "user" || it.kind === "reply") ? "Nothing to continue yet."
     : undefined;

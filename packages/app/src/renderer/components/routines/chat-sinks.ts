@@ -43,7 +43,7 @@ export function chatTargets(chatops: RoutineChatopsSink[] | undefined): string[]
 }
 
 /** The builder review's destination list — every chat entry, not just the first per transport. */
-export function destinations(sinks: RoutineSinks, recipients: SinkRecipients | undefined): { on: string[]; off: string[] } {
+export function destinations(sinks: RoutineSinks, recipients: SinkRecipients | undefined, beanName = "Bean"): { on: string[]; off: string[] } {
   const on: string[] = [];
   const off: string[] = [];
   for (const transport of ["discord", "teams"] as const) {
@@ -65,6 +65,6 @@ export function destinations(sinks: RoutineSinks, recipients: SinkRecipients | u
   }
   if (sinks.note) on.push("Saved as a note on your Daily Dashboard"); else off.push("no note");
   if (sinks.notify) on.push("Desktop notification"); else off.push("no desktop notification");
-  if (sinks.home) on.push("Posted to your Home chat"); else off.push("no Home chat");
+  if (sinks.home) on.push(`Posted to your chat with ${beanName}`); else off.push(`no post to your chat with ${beanName}`);
   return { on, off };
 }

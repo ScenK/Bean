@@ -17,7 +17,8 @@ import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGua
 import {
   HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, imageLabelNumbers, isLiveAgent, labelPreviews, mappedImageLabels, offerAgent, parseSlash, removeImageLabel, type ImageLabels,
 } from "./agent-mode.js";
-import { dividerLabel, timeDividers } from "./chat-thread.js";
+import { dividerLabel, timeDividers, TRIM_NOTICE, trimNoticeText } from "./chat-thread.js";
+import { usePersonaName } from "../../shared/persona-name.js";
 import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
 import { copyPath, useCapabilities } from "../../shared/capabilities.js";
@@ -560,6 +561,8 @@ export function ChatPanel({
   // A remote core (#811): its host on the header; while it's unreachable the composer is read-only.
   const core = useCoreStatus();
   const offline = coreOffline(core);
+  // The main conversation is named after the persona (#1001).
+  const beanName = usePersonaName();
   const submit = (): void => {
     const el = inputRef.current;
     // Type-ahead: while Bean answers the draft and images stay put — return before clearing.
@@ -678,7 +681,7 @@ export function ChatPanel({
           role="switch"
           class={`bean-chat-incognito${incognito ? " bean-chat-incognito--on" : ""}`}
           aria-checked={incognito}
-          title={home ? "Home stays on the record — this opens a separate, off-the-record chat."
+          title={home ? `Your chat with ${beanName} stays on the record — this opens a separate, off-the-record chat.`
             : incognito ? "This chat won't be remembered or kept in history" : "Off the record — also removes this chat from history."}
           onClick={onToggleIncognito}
         >
@@ -699,8 +702,8 @@ export function ChatPanel({
       </div>
       <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
         {items.length === 0 && home ? (
-          <PanelEmptyState message="Home">
-            <div class="bean-panel-empty-text">Sprouts set to Post to Home land here.</div>
+          <PanelEmptyState message={beanName}>
+            <div class="bean-panel-empty-text">Sprouts set to post to your chat with {beanName} land here.</div>
           </PanelEmptyState>
         ) : items.length === 0 ? (
           <PanelEmptyState message="What are we brewing today?">
@@ -794,7 +797,7 @@ export function ChatPanel({
                 </div>
               );
             }
-            if (!it.details?.length) return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
+            if (!it.details?.length) return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text === TRIM_NOTICE ? trimNoticeText(beanName) : it.text}</div>;
             return (
               <details key={it.id} class={`bean-status bean-status--${it.tone} bean-status--details`}>
                 <summary>{it.text} ▸</summary>
@@ -821,6 +824,30 @@ export function ChatPanel({
                 <summary>While you were away · {batch.length}</summary>
                 {batch.map(one)}
               </details>
+            );
+          }
+          if (it.kind === "dm") {
+            // The owner's DM exchange (#1000): inert, labelled with its surface.
+            const via = `via ${it.via === "discord" ? "Discord" : "Teams"}`;
+            if (it.role === "status") return <div key={it.id} class="bean-status bean-status--info">{it.text} · {via}</div>;
+            if (it.role === "user") {
+              return (
+                <div key={it.id} class="bean-dm">
+                  <div class="bean-bubble bean-bubble--user"><span class="bean-sr-only">You ({via}): </span>{it.text}</div>
+                  <div class="bean-dm-via" aria-hidden="true">{via}</div>
+                </div>
+              );
+            }
+            const agent = it.role === "agent" ? it.agent ?? "bean" : "bean";
+            return (
+              <div key={it.id} class="bean-chat-row">
+                <span class="bean-chat-row-avatar"><AgentAvatar agent={agent} /></span>
+                <div class="bean-bubble bean-bubble--bean">
+                  <span class="bean-sr-only">{AGENT_NAMES[agent]}: </span>
+                  <div class="bean-post-head">{via}</div>
+                  <Markdown text={it.text} />
+                </div>
+              </div>
             );
           }
           if (it.kind === "continued") {

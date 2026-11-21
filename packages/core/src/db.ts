@@ -28,7 +28,8 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 
 -- Dream bookkeeping (memory/dream.ts): lastDreamAt, the lastDream digest, and the dreamLease
--- that keeps two processes/triggers from consolidating at once. Plain KV, JSON values.
+-- that keeps two processes/triggers from consolidating at once. Plain KV, JSON values. Also the
+-- main conversation's cutover marker (main-conversation.ts).
 CREATE TABLE IF NOT EXISTS memory_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -95,6 +96,8 @@ CREATE TABLE IF NOT EXISTS chatops_turns (
   role            TEXT NOT NULL,
   content         TEXT NOT NULL,
   created_at      TEXT NOT NULL,
+  surface         TEXT,
+  turn_key        TEXT,
   PRIMARY KEY (conversation_id, seq)
 );
 CREATE INDEX IF NOT EXISTS chatops_turns_conv ON chatops_turns(conversation_id);
@@ -466,6 +469,10 @@ export function openDb(file: string): DatabaseSync {
     ["desktop_chats", "starred", "INTEGER NOT NULL DEFAULT 0"],
     // Named groups of starred desktop chats (#763): NULL = ungrouped.
     ["desktop_chats", "group_name", "TEXT"],
+    // One conversation, several writers (#996): which surface wrote a turn (NULL = unknown/legacy)
+    // and its idempotency key (NULL = none; unique per conversation via chatops_turns_key below).
+    ["chatops_turns", "surface", "TEXT"],
+    ["chatops_turns", "turn_key", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");
@@ -477,6 +484,8 @@ export function openDb(file: string): DatabaseSync {
       throw err;
     }
   }
+  // After the ALTERs: on an older bean.db turn_key only exists from here. NULLs never collide.
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS chatops_turns_key ON chatops_turns(conversation_id, turn_key)");
   cache.set(file, db);
   if (isNew) migrateFromFiles(db, dirname(file));
   migrateNoteSearch(db);

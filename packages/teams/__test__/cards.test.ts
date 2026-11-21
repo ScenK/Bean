@@ -265,3 +265,31 @@ test("send card (#689): required destination ChoiceSet pre-picked, Cancel submit
   expect(done.actions).toEqual([]);
   expect(flatten(done)).toContain("Queued → ops");
 });
+
+test("finished/ended cards say what Continue live resumes, or why it's missing (#1002)", () => {
+  const finished = JSON.stringify(finishedCard({
+    projectName: "bean", instruction: "fix it", startedBy: "bob", outcome: "done", agent: "claude", lastLine: "All green.", resumeLiveId: "sess-1",
+  }));
+  expect(finished).toContain('{"title":"Agent","value":"claude"}');
+  expect(finished).toContain('{"title":"Project","value":"bean"}');
+  expect(finished).toContain("Last: All green.");
+  expect(finished).toContain("Continue live reopens this claude session with everything it did so far.");
+  expect(JSON.stringify(finishedCard({ projectName: "bean", instruction: "x", startedBy: "bob", outcome: "error", agent: "codex", noContinue: "cli-missing" })))
+    .toContain("codex isn't installed here any more");
+  expect(JSON.stringify(finishedCard({ projectName: "bean", instruction: "x", startedBy: "bob", outcome: "error", noContinue: "disabled" })))
+    .toContain("live sessions are off");
+
+  const ended = JSON.stringify(liveSessionResultCard({
+    projectName: "bean", startedBy: "bob", outcome: "ended", prompt: "fix the login bug", agent: "claude", turns: 2, lastLine: "Done?", resumeLiveId: "sess-1",
+  }));
+  expect(ended).toContain('{"title":"Turns","value":"2"}');
+  expect(ended).toContain("fix the login bug");
+  expect(ended).toContain("Last: Done?");
+  expect(ended).toContain("Continue live reopens this claude session");
+  expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "ended", agent: "claude", turns: 0, noContinue: "surface" })))
+    .toContain("can't be offered on this surface");
+  expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "started", agent: "claude" }))).not.toContain("FactSet");
+  // Instruction/prompt are clamped for display.
+  expect(JSON.stringify(finishedCard({ projectName: "bean", instruction: "i".repeat(3000), startedBy: "bob", outcome: "done" }))).not.toContain("i".repeat(1000));
+  expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "ended", prompt: "p".repeat(3000) }))).not.toContain("p".repeat(1000));
+});

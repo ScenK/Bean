@@ -30,13 +30,15 @@ is model-facing). A sprout dispatch notice (#920) carries both — `context: tru
 `displayBody` — since its saved `body` is the fenced brief; every drain branch still appends
 `body` exactly once per delivery, so a message carrying both can't double-write.
 
-Delivery-side appends go through each server's local `appendDelivered`, which also fires
+Delivery-side appends go through each server's local `appendDelivered` (core `appendDelivery`;
+an owner-DM delivery joins the main log after the cutover, #998), which also fires
 `maybeCompact` — `bot.ts` only compacts after an *inbound* turn, so a channel that merely
 receives digests would grow unbounded. `maybeCompact` is serialized per conversation
 (`chatops/compact.ts`) because it now has several fire-and-forget callers: two overlapping
 passes both snapshot the same oldest 40 turns and the second `replaceOldest` deletes the
 first's summary plus every newer turn — 22 turns collapsed to 1 in the regression test.
-Serialization is in-process only; see the `ponytail:` note there.
+Across processes (#996) `replaceOldest` is a compare-and-swap on the snapshot, so the stale pass
+skips instead; the in-process queue only saves the wasted summary call.
 
 Default is off on purpose: every digest kept as context costs tokens on every later turn in
 that conversation, including the ones nobody asks about.
