@@ -759,6 +759,9 @@ app.whenReady().then(async () => {
         // As the local save does: a CLI switched off in Settings leaves every picker.
         onConfigSaved: () => push.broadcast(IPC.cliAvailabilityChanged, undefined),
       });
+      // A rename on the core re-labels the bubble when the user comes back to Bean (#1001), not only at
+      // the next poll. check() is a no-op while detached.
+      app.on("browser-window-focus", () => homePoll.check());
       app.on("before-quit", () => { if (quitting) r.detach(); });
       stopCore = () => r.detach();
       r.connect();

@@ -165,6 +165,8 @@ export function ChatWindow() {
   const pendingPromptRef = useRef<ChatPrompt | undefined>(undefined);
   // A drop starts a new task chat (#1001) — unless the shown one is an unused task chat — and lands in
   // it once the switch does (switchTo). Never into the main conversation, nor into another task.
+  // An unused chat with an unsent draft *is* the new chat (New task chat is a no-op there too), so the
+  // URL joins the draft (ChatPanel's prefill) rather than evicting it unsaved.
   const pendingDropRef = useRef<ChatDrop | undefined>(undefined);
   const takeDrop = (u: ChatDrop): void => {
     setSyncedShown(undefined);
