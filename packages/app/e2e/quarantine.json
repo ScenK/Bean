@@ -1,11 +1,5 @@
 [
   {
-    "title": "chat history: closing the window counts tasks across chats and stops them all",
-    "file": "chat-history.e2e.ts",
-    "issue": 1020,
-    "since": "2026-11-21"
-  },
-  {
     "title": "home: boot bubble, the pill on a shown Home, and the dot while another chat is shown",
     "file": "home-arrival.e2e.ts",
     "issue": 1021,

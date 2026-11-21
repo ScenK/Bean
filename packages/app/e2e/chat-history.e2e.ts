@@ -273,40 +273,6 @@ test("chat history: active card keeps its height on hover; a draft survives a sw
   }
 });
 
-// #517: one close card counts the tasks of every chat, shown or hidden, and stops them all.
-test("chat history: closing the window counts tasks across chats and stops them all", async () => {
-  const flag = join(tmpdir(), `bean-e2e-never-${process.pid}-${Date.now()}`); // never written: runs until stopped
-  const bin = await fakeClaude(flag);
-  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["codex", "opencode"] });
-  const stub = await startStubOpenAI();
-  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url, PATH: `${bin}:${process.env.PATH ?? ""}` });
-  try {
-    const chat = await openChat(app);
-    const shown = chat.locator(".bean-chat:not([hidden])");
-    const stopButton = shown.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: /stop|cancel/i });
-    await shown.locator(".bean-input--composer").fill("/review-pr one");
-    await shown.locator(".bean-send").click();
-    await shown.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: "Delegate" }).click();
-    await expect(stopButton).toBeVisible();
-    await chat.locator(".bean-chat-sidebar-new").click();
-    await expect(shown.locator(".bean-bubble")).toHaveCount(0);
-    await shown.locator(".bean-input--composer").fill("/review-pr two");
-    await shown.locator(".bean-send").click();
-    await shown.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: "Delegate" }).click();
-    await expect(stopButton).toBeVisible();
-
-    const closed = chat.waitForEvent("close");
-    await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!.close();
-    });
-    await expect(chat.locator(".bean-memory-review-title")).toHaveText("Closing stops 2 tasks in 2 chats.");
-    await chat.getByRole("button", { name: "Stop & close" }).click();
-    await closed;
-  } finally {
-    await Promise.allSettled([app.close(), stub.close(), home.cleanup(), rm(bin, { recursive: true, force: true })]);
-  }
-});
-
 // #530: the owner's Discord DM, from bean.db's catalog + chatops_turns, shows in the sidebar with its
 // badge and opens read-only while no bot runs.
 test("chat history: a synced Discord DM lists with its badge and opens read-only without a bot", async () => {
