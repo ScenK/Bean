@@ -19,5 +19,12 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
   (`saveDesktopChatDraining(…, { mainLog })`) appends each in the same transaction as `post:<id>`.
 - **Gap marker:** host-side from the log's newest `created_at`, read before the delta lands;
   `req.gap` is ignored on the log.
-- **Continue in Discord** is refused for the main conversation (ipc.ts) — use a task chat.
+- **Item ids** (`newId`) carry a per-load random segment: keys live in the log for good, so a reopened
+  chat's ids must never repeat an earlier load's.
+- **Continue in Discord** is refused for the main conversation (ipc.ts; the button is disabled) — use a
+  task chat. A pre-cutover `continued` pointer is dropped when Home restores on the log.
+- **Not over SSH yet:** `chatThreadGet`/`chatThreadSave` aren't in `REMOTE_OPS`, so a remote shell
+  can't open Home at all (true before #997 too); only the `chat` guard carries `delta`.
+- **Known gap (deferred P2):** a card left pending is expired by the restore, but restored keys count
+  as acked, so the log keeps its `pending` line.
 - Wire: `CONTRACT_VERSION` 4 (`delta` in both chat guards, `turns` in the save guard).

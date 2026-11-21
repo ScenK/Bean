@@ -572,10 +572,13 @@ export function ChatSession({
         waitingPostsRef.current = t.home.posts;
         for (const p of t.home.posts) undrainedRef.current.add(p.id);
       }
-      const saved = restoreItems(t.items);
+      let saved = restoreItems(t.items);
       if (t.home?.log) {
         logRef.current = true;
         ackKeys(keyedTurns(saved).map((x) => x.key));
+        // A pre-cutover Continue in Discord pointer would keep the main conversation read-only for
+        // good: dropped here, and from the row by the next save.
+        saved = saved.filter((it) => it.kind !== "continued");
       }
       // Running sprout cards settle from main's record of their runs (their results loop back below).
       const sprouts = settleRestoredSprouts(saved, t.sprouts);
@@ -1712,6 +1715,7 @@ export function ChatSession({
     : busy || evicting || live?.busy ? "Wait for the current turn to finish."
     : incognito ? "Off-the-record chats stay on this Mac."
     : continued ? "Already continued in Discord."
+    : logRef.current ? "This conversation already follows you to your DMs — start a task chat to continue in a channel."
     : live && !live.sessionId ? "The agent session is still starting."
     : !threadRef.current || !items.some((it) => it.kind === "user" || it.kind === "reply") ? "Nothing to continue yet."
     : undefined;

@@ -138,10 +138,13 @@ export function startsAgentRun(items: ChatItem[], i: number): boolean {
   return agent !== undefined && (prev === undefined || itemAgent(prev) !== agent);
 }
 
+// Unique across renderer loads, not just within one: Home's main log (#997) keys turns by item id for
+// good, so a reopened chat's `item-8` must never match an earlier load's.
+const LOAD = crypto.randomUUID().slice(0, 8);
 let counter = 0;
 export function newId(): string {
   counter += 1;
-  return `item-${counter}`;
+  return `item-${LOAD}-${counter}`;
 }
 
 export function insertDroppedPath(value: string, path: string, start: number, end: number): { value: string; cursor: number } {

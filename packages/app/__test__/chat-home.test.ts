@@ -99,6 +99,25 @@ describe("ChatWindow Home", () => {
     expect(root.querySelectorAll(".bean-post")).toHaveLength(2); // not appended twice
   });
 
+  it("on the main log (#997): sends keyed deltas instead of history, never re-sends an acked turn, and drops a stale Discord pointer", async () => {
+    bean.chatThreadGet!.mockResolvedValue({
+      ...homeThread([]), home: { posts: [], log: true },
+      items: [{ kind: "user", id: "old", text: "before" }, { kind: "continued", id: "c", surface: "discord", conversationId: "t", title: "moved" }],
+    });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    await send("first");
+    const first = bean.chat!.mock.calls[0]![0] as { history: unknown[]; delta?: unknown[]; summary?: string; turnId: string };
+    expect(first.history).toEqual([]);
+    expect(first.delta).toEqual([]); // restored turns were flushed by the save that kept them
+    expect(first.turnId).toMatch(/^item-[0-9a-f]{8}-\d+$/); // unique across renderer loads
+    await send("second");
+    const second = bean.chat!.mock.calls[1]![0] as { delta?: unknown[] };
+    expect(second.delta).toEqual([]); // the first turn and its reply were acked by the host
+    expect(shownChat().textContent).not.toContain("Already continued");
+  });
+
   it("a failed save keeps the posts undrained for the next save", async () => {
     bean.chatThreadSave!.mockRejectedValueOnce(new Error("disk full"));
     await act(async () => { render(h(ChatWindow, {}), root); });
