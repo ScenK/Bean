@@ -4,7 +4,7 @@ import type {
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
 import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult, CoreListing, CoreStatus, CoreSwitchOutcome, CoreUpdateStatus, RemoteUpdateResult } from "../channels.js";
-import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, SproutPush, TodoDispatchAnswer } from "@bean/host";
+import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, MainPull, SproutPush, TodoDispatchAnswer } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
 import type { InterruptedRunNotice } from "../ipc.js";
@@ -203,6 +203,10 @@ declare global {
       chatThreadSave(req: ChatThreadSaveRequest, mountId: string): Promise<ChatThreadAck | undefined>;
       /** A saved thread for this chat (mount) to restore; refused if another open chat holds it. */
       chatThreadGet(id: string, mountId: string): Promise<PendingChatThread>;
+      /** Home on the main log (#1000): the owner's DM rows past `cursor`; refused for any other chat. */
+      chatMainSince(cursor: number, mountId: string): Promise<MainPull>;
+      /** A bot wrote the main log: the chat (mount) holding Home should pull. */
+      onChatMainChanged(cb: (mountId: string) => void): void;
       /** Saved threads, newest first (main prunes past 90 days on each list). */
       chatThreadList(): Promise<DesktopChatListing[]>;
       /** Refused for a thread any open chat holds. */

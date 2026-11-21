@@ -39,6 +39,22 @@ export function insertTurn(db: DatabaseSync, conversationId: string, turn: ChatT
   return true;
 }
 
+/** Moves a catalogued conversation's turns to a new archive id (`<id>~<uuid>`) with a copy of each
+ * catalog row marked `archived_from` (read-only on the desktop; no model read ever names it). For a
+ * caller inside its own BEGIN IMMEDIATE. Undefined = not catalogued or no turns: nothing moved. */
+export function archiveTurns(db: DatabaseSync, conversationId: string): string | undefined {
+  const has = (table: string): boolean =>
+    !!db.prepare(`SELECT 1 FROM ${table} WHERE conversation_id = ? LIMIT 1`).get(conversationId);
+  if (!has("chatops_conversations") || !has("chatops_turns")) return undefined;
+  const archiveId = `${conversationId}~${randomUUID()}`;
+  db.prepare("UPDATE chatops_turns SET conversation_id = ? WHERE conversation_id = ?").run(archiveId, conversationId);
+  db.prepare(
+    "INSERT INTO chatops_conversations (conversation_id, surface, kind, title, owner_id, owner_alt_id, live_cli, live_session_id, updated_at, archived_from) " +
+      "SELECT ?, surface, kind, title, owner_id, owner_alt_id, live_cli, NULL, updated_at, conversation_id FROM chatops_conversations WHERE conversation_id = ?",
+  ).run(archiveId, conversationId);
+  return archiveId;
+}
+
 /** Per-thread chat history backed by the shared bean.db (chatops_turns table) — persists across
  * bot restarts, unlike the old in-memory Map. turnCount/oldest/replaceOldest back
  * chatops/compact.ts's silent summarization pass, which keeps long conversations bounded the
@@ -112,18 +128,8 @@ export class ConversationStore {
     let archiveId: string | undefined;
     db.exec("BEGIN IMMEDIATE");
     try {
-      const has = (table: string): boolean =>
-        !!db.prepare(`SELECT 1 FROM ${table} WHERE conversation_id = ? LIMIT 1`).get(conversationId);
-      if (has("chatops_conversations") && has("chatops_turns")) {
-        archiveId = `${conversationId}~${randomUUID()}`;
-        db.prepare("UPDATE chatops_turns SET conversation_id = ? WHERE conversation_id = ?").run(archiveId, conversationId);
-        db.prepare(
-          "INSERT INTO chatops_conversations (conversation_id, surface, kind, title, owner_id, owner_alt_id, live_cli, live_session_id, updated_at, archived_from) " +
-            "SELECT ?, surface, kind, title, owner_id, owner_alt_id, live_cli, NULL, updated_at, conversation_id FROM chatops_conversations WHERE conversation_id = ?",
-        ).run(archiveId, conversationId);
-      } else {
-        db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
-      }
+      archiveId = archiveTurns(db, conversationId);
+      if (!archiveId) db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
       db.prepare("DELETE FROM thread_sessions WHERE conversation_id = ?").run(conversationId);
       // Bumped on archive so the fresh conversation lists above its archive.
       db.prepare(

@@ -86,12 +86,12 @@ export function createTaskStatus(
 
 export type TaskStatus = ReturnType<typeof createTaskStatus>;
 
-/** The avatar's Home bubble (#961): one job while posts are pending. Never "running" — no spinner,
+/** The avatar's Home bubble (#961): one job while posts are pending, named after the persona (#1001). Never "running" — no spinner,
  * Stop, keep-awake or update block — and never lingers: only a recount to zero removes it. The local
  * host and a remote shell (which polls `homePending`) both build it here. */
 export const HOME_JOB_ID = "home:posts";
-export const homeJob = (count: number, startedAt = Date.now()): TaskJob => ({
-  id: HOME_JOB_ID, kind: "home", name: "Home", line: `Bean has ${count} post${count === 1 ? "" : "s"} for you`,
+export const homeJob = (count: number, name: string, startedAt = Date.now()): TaskJob => ({
+  id: HOME_JOB_ID, kind: "home", name, line: `${name} has ${count} post${count === 1 ? "" : "s"} for you`,
   detail: "", startedAt, state: "done", count,
 });
 

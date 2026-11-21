@@ -4,8 +4,9 @@ import {
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
-  DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, HOME_THREAD_TITLE, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
+  DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, DEFAULT_PERSONA, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
   CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, boundMainLog, type ChatTurn, type ConversationStore, type KeyedTurn,
+  mainSince, homeMainCursor, setHomeMainCursor, type MainSince,
 } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -278,6 +279,8 @@ export interface ChatThreadSaveRequest {
   /** Home on the main log (#997): the turns new since the shell's last ack — card outcomes and live
    * finals flush with the save, not only with the next model turn. */
   turns?: KeyedTurn[];
+  /** Home on the main log (#1000): the pull cursor of the owner-DM rows this save holds. */
+  mainCursor?: number;
 }
 export interface ChatThreadAck { id: string; title: string; updatedAt: string; home?: true }
 /** What a chat restores: a saved thread, or `missing` when the picked one is gone (deleted or
@@ -285,8 +288,9 @@ export interface ChatThreadAck { id: string; title: string; updatedAt: string; h
 export type PendingChatThread = {
   id: string; title: string; items: unknown[]; noteSlug: string | null; sprouts?: SproutOutcome[];
   /** Home (#960): its pending posts, handed to this chat to append and drain with its next save.
-   * `log` (#997): Home's model history is the main log — the shell sends deltas, not history. */
-  home?: { posts: HomePost[]; log?: true };
+   * `log` (#997): Home's model history is the main log — the shell sends deltas, not history.
+   * `cursor` (#1000): where its owner-DM pull left off (0 = never pulled). */
+  home?: { posts: HomePost[]; log?: true; cursor?: number };
 } | { missing: true };
 
 /** A sprout run a desktop chat started (#921), as its card learns it: `status` absent = still
@@ -316,9 +320,18 @@ export interface ChatThreadHandlerDeps {
   mainLog?: () => ConversationStore | undefined;
   /** A save drained Home posts (#961): the host recounts its bubble. */
   onDrained?: () => void;
+  /** The persona's name: the main conversation's title (#1001) and the cutover's status line (#1000). */
+  personaName?: () => string;
   now?: () => Date;
   dbFile: string;
 }
+
+/** Home's owner-DM pull (#1000): the core read, plus — on the first pull with history to mention (core
+ * `cutoverAt`) — the cutover's status line; the shell shows it once (by its text). */
+export interface MainPull extends Omit<MainSince, "cutoverAt"> { cutover?: string }
+
+export const cutoverLine = (name: string): string =>
+  `Your Discord and Teams DMs are now part of this conversation — ${name} remembers them.`;
 
 /** A saved `post` item the shell's restore keeps (chat-thread.ts normalizeItem — keep in step): only
  * such an item may drain its post, so a drained post always comes back with the transcript. */
@@ -379,6 +392,10 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
   const handed = new Map<string, { thread: string; ids: Set<string> }>();
   const now = (): Date => deps.now?.() ?? new Date();
   const isHome = (id: string): boolean => id === HOME_THREAD_ID;
+  // The main conversation is named after the persona (#1001), whatever title it was stored under.
+  const mainTitle = (): string => {
+    try { return deps.personaName?.() || DEFAULT_PERSONA.name; } catch { return DEFAULT_PERSONA.name; }
+  };
   const holder = (id: string): string | undefined => [...threads].find(([, t]) => t === id)?.[0];
   /** A saved thread for this chat to restore (pinned to it), or `missing` when it's gone. Home
    * (`HOME_TARGET` or its id) is never missing: an empty thread until its first save, with the
@@ -396,18 +413,18 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     let items: unknown = [];
     if (row) try { items = JSON.parse(row.itemsJson); } catch { items = []; }
     if (!unsavable.has(key)) threads.set(key, id);
-    const thread = { id, title: row?.title ?? HOME_THREAD_TITLE, items: Array.isArray(items) ? items : [], noteSlug: row?.noteSlug ?? null };
+    const thread = { id, title: home ? mainTitle() : row!.title, items: Array.isArray(items) ? items : [], noteSlug: row?.noteSlug ?? null };
     if (!home || unsavable.has(key)) return thread;
     const posts = deps.listPendingHomePosts?.(deps.dbFile) ?? [];
     handed.set(key, { thread: id, ids: new Set([...(handed.get(key)?.thread === id ? handed.get(key)!.ids : []), ...posts.map((p) => p.id)]) });
-    return { ...thread, home: { posts, ...(deps.mainLog?.() ? { log: true as const } : {}) } };
+    return { ...thread, home: { posts, ...(deps.mainLog?.() ? { log: true as const, cursor: homeMainCursor(deps.dbFile) } : {}) } };
   };
   /** Home is pinned in the sidebar: never deleted, starred, renamed or grouped. */
   const notHome = (id: string, what: string): void => {
     if (isHome(id)) throw new Error(`Home can't be ${what}`);
   };
   return {
-    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile).map((t) => (isHome(t.id) ? { ...t, home: true } : t)),
+    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile).map((t) => (isHome(t.id) ? { ...t, title: mainTitle(), home: true } : t)),
     /** Sidebar delete: never a thread an open chat holds. */
     delete: (id: unknown): void => {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
@@ -479,6 +496,8 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
         ? deps.saveDesktopChatDraining(deps.dbFile, chat, drained, at, { mainLog: log !== undefined })
         : deps.saveDesktopChat(deps.dbFile, chat, at);
       for (const x of drained) mine?.ids.delete(x);
+      // After the save that holds the pulled rows: a cursor lost here only re-pulls (deduped by seq).
+      if (log && typeof o.mainCursor === "number") setHomeMainCursor(deps.dbFile, o.mainCursor);
       threads.set(key, o.id);
       if (drained.length > 0) deps.onDrained?.();
       return { id: o.id, title, updatedAt: at.toISOString(), ...(isHome(o.id) ? { home: true as const } : {}) };
@@ -499,6 +518,14 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     pinnedOf: (key: string): string | undefined => threads.get(key),
     /** Whether this chat (mount key) is Home on the main log (#997). */
     isMain: (key: string): boolean => threads.get(key) === HOME_THREAD_ID && deps.mainLog?.() !== undefined,
+    /** The owner's DM exchanges past `cursor` (#1000) — only for the chat holding Home on the log. */
+    mainSince: async (key: string, cursor: unknown): Promise<MainPull> => {
+      if (threads.get(key) !== HOME_THREAD_ID || !deps.mainLog?.()) throw new Error("not the main conversation");
+      const from = typeof cursor === "number" && Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0;
+      const { cutoverAt, ...pull } = mainSince(deps.dbFile, from);
+      if (cutoverAt === undefined) return pull;
+      return { ...pull, cutover: cutoverLine(mainTitle()) };
+    },
     exists: (id: string): boolean => deps.getDesktopChat(deps.dbFile, id) !== undefined,
     /** The chat mount is gone: its thread is free to delete or reopen. */
     release: (key: string): void => {

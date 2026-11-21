@@ -82,7 +82,7 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
     : opensChat(j)
       ? `title="Open chat" aria-label="${esc(`${j.name} — ${j.line}. Open chat`)}"`
       : j.kind === "home"
-        ? `title="Open Home" aria-label="${esc(`${j.line}. Open Home`)}"`
+        ? `title="${esc(`Open your chat with ${j.name}`)}" aria-label="${esc(`${j.line}. Open your chat with ${j.name}`)}"`
       : `aria-expanded="${open}"`;
   const html = `
     <button type="button" class="bean-bubble bean-bubble--${j.state}${tail ? " bean-bubble--tail" : ""}${fresh ? " bean-bubble--new" : ""}" data-id="${esc(j.id)}" ${action}>
