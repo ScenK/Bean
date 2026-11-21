@@ -111,6 +111,8 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     // A Home post: sprout output, never the user's words — a fenced user-role turn the model reads as
     // data, not typed (no memory evidence), and left out of the close-time memory transcript.
     if (it.kind === "post") return opts.memory ? [] : [{ role: "user", content: postTurn(it), source: "loopback" }];
+    // A pulled owner-DM row (#1000) is already in the main log, and was never typed here.
+    if (it.kind === "dm") return [];
     if (it.kind !== "reply") {
       const record = opts.memory ? undefined : cardItemRecord(it);
       return record ? [{ role: "assistant", content: record }] : [];
@@ -156,7 +158,7 @@ export { postTurn };
  * state is one more line, as chatops records outcomes. Posts drain host-side; summaries never ride. */
 export function keyedTurns(items: ChatItem[]): KeyedTurn[] {
   return items.flatMap((it) => {
-    if (it.kind === "post" || it.kind === "summary") return [];
+    if (it.kind === "post" || it.kind === "summary" || it.kind === "dm") return [];
     return chatTurns([it]).flatMap((t): KeyedTurn[] => (t.role === "user" || t.role === "assistant"
       ? [{ key: it.kind === "user" || it.kind === "reply" ? it.id : `${it.id}:${t.content}`, role: t.role, content: t.content }]
       : []));

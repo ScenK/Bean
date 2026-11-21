@@ -211,6 +211,8 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       try { deps.threads.setIncognito(k, on === true); } catch (err) { console.error("chat history delete failed:", err); }
     },
     threadSave: (client: ClientId, mountId: unknown, req: unknown, opts?: { keepNote?: boolean }) => deps.threads.save(key(client, mountId), req, opts),
+    /** Home's owner-DM rows past its cursor (#1000); refused for any chat but Home on the main log. */
+    mainSince: (client: ClientId, mountId: unknown, cursor: unknown) => deps.threads.mainSince(key(client, mountId), cursor),
     // A restored thread carries its sprout runs' outcomes: its running cards settle (and loop the
     // result back) from them, however long the chat was closed.
     threadGet: (client: ClientId, mountId: unknown, id: unknown) => {

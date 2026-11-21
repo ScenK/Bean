@@ -227,13 +227,16 @@ describe("LiveSessionRegistry", () => {
       const f = fakeStart();
       const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp(), ...(proseOnly ? { proseOnly } : {}) });
       const s = fakeSink();
-      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink });
+      const said: string[] = [];
+      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink, onAgentText: (t) => said.push(t) });
       f.cbs().onOutput("Checking. · ▸ Bash");
       f.cbs().onText?.("Checking.");
       f.cbs().onOutput("▸ Read");
       f.cbs().onTurnComplete({ result: "done", durationMs: 1000 });
       await flushTicks(reg, 1001);
       expect(s.posts).toEqual([proseOnly ? "Checking.\n— turn done (1.0s)" : "Checking. · ▸ Bash\n▸ Read\n— turn done (1.0s)"]);
+      // onAgentText (#1002) sees exactly what the stream shows, unthrottled.
+      expect(said).toEqual(proseOnly ? ["Checking."] : ["Checking. · ▸ Bash", "▸ Read"]);
     }
   });
 

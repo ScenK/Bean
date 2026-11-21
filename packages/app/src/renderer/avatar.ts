@@ -601,6 +601,12 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     downX = lastX = e.screenX;
     downY = lastY = e.screenY;
   });
+  // Double-click opens the main conversation (#1001); its two clicks just toggled the menu open and shut.
+  el.addEventListener("dblclick", (e) => {
+    if (e.button !== 0) return;
+    setMenuOpen(false);
+    window.bean.openChatHome();
+  });
   window.addEventListener("mousemove", (e) => {
     if (!dragging) return;
     if (!moved && (Math.abs(e.screenX - downX) > CLICK_THRESHOLD || Math.abs(e.screenY - downY) > CLICK_THRESHOLD)) {

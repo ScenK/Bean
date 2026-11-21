@@ -10,6 +10,7 @@ import { isValidSessionId } from "../delegate-runs.js";
 /** Why a bot refused a desk turn. A fixed set: the app maps each to its own UI line. */
 export const DESK_REFUSALS = [
   "too-long", "not-eligible", "queue-full", "channel-busy", "cli-missing", "no-record", "post-failed", "bot-busy",
+  "main-conversation",
 ] as const;
 export type DeskRefusal = (typeof DESK_REFUSALS)[number];
 /** Desk-continue's own refusals: no owner configured, the thread couldn't be opened, or this bot

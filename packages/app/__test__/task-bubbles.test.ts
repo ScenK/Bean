@@ -120,7 +120,7 @@ describe("liveBadgeAgent", () => {
 });
 
 describe("Home bubble (#961)", () => {
-  const home = (count: number): TaskJob => homeJob(count, 0);
+  const home = (count: number): TaskJob => homeJob(count, "Bean", 0);
   const setup = (jobs: TaskJob[]) => {
     const box = document.createElement("div");
     document.body.append(box);
