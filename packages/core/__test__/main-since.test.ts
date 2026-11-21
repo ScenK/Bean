@@ -49,6 +49,19 @@ describe("mainSince", () => {
     expect(mainSince(file, 0).cutoverAt).toBe("2026-11-20T00:00:00.000Z");
   });
 
+  test("desktop turns that moved the cursor first don't cost the line: the first DM still brings it, once", () => {
+    const { file, add } = setup();
+    openDb(file).prepare("INSERT INTO memory_meta (key, value) VALUES (?, ?)").run(MAIN_CUTOVER_KEY, "2026-11-20T00:00:00.000Z");
+    add("user", "typed at the desk", "desktop"); // 1
+    add("assistant", "reply", "desktop"); // 2
+    expect(mainSince(file, 0)).toMatchObject({ cursor: 2 });
+    expect(mainSince(file, 0).cutoverAt).toBeUndefined();
+    add("user", "[Scen]: first DM", "discord"); // 3
+    expect(mainSince(file, 2).cutoverAt).toBe("2026-11-20T00:00:00.000Z");
+    add("user", "[Scen]: second DM", "discord"); // 4
+    expect(mainSince(file, 3).cutoverAt).toBeUndefined();
+  });
+
   test("a cursor overtaken by compaction reports trimmed; one behind it does not", () => {
     const { file, store, add } = setup();
     for (let i = 1; i <= 6; i++) add("user", `[Scen]: m${i}`, "discord");

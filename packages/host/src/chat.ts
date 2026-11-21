@@ -326,8 +326,8 @@ export interface ChatThreadHandlerDeps {
   dbFile: string;
 }
 
-/** Home's owner-DM pull (#1000): the core read, plus — on the first pull (cursor 0) — the cutover's
- * status line, rendered once. */
+/** Home's owner-DM pull (#1000): the core read, plus — on the first pull with history to mention (core
+ * `cutoverAt`) — the cutover's status line; the shell shows it once (by its text). */
 export interface MainPull extends Omit<MainSince, "cutoverAt"> { cutover?: string }
 
 export const cutoverLine = (name: string): string =>
@@ -519,7 +519,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (threads.get(key) !== HOME_THREAD_ID || !deps.mainLog?.()) throw new Error("not the main conversation");
       const from = typeof cursor === "number" && Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0;
       const { cutoverAt, ...pull } = mainSince(deps.dbFile, from);
-      if (from > 0 || cutoverAt === undefined) return pull;
+      if (cutoverAt === undefined) return pull;
       const name = (await deps.personaName?.().catch(() => undefined)) || "Bean";
       return { ...pull, cutover: cutoverLine(name) };
     },

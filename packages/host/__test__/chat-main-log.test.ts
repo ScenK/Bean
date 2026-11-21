@@ -165,7 +165,7 @@ describe("Home on the main log", () => {
     const first = await threads.mainSince("a", 0);
     expect(first).toMatchObject({ cursor: 2, trimmed: false, rows: [{ seq: 2, via: "teams", row: { role: "user", text: "on the bus" } }] });
     expect(first.cutover).toBe("Your Discord and Teams DMs are now part of this conversation — Pip remembers them.");
-    expect((await threads.mainSince("a", 2)).cutover).toBeUndefined(); // the line is for the first pull only
+    expect((await threads.mainSince("a", 2)).cutover).toBeUndefined(); // a DM already at or before the cursor: no line again
     threads.save("a", { id: HOME_THREAD_ID, title: "Home", items: [], mainCursor: 2 });
     expect(threads.get("a", HOME_TARGET)).toMatchObject({ home: { cursor: 2 } });
     // Another chat (not holding Home) is refused.

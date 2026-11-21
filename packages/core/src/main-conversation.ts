@@ -55,7 +55,7 @@ export interface MainDmRow { seq: number; via: "discord" | "teams"; row: SyncedC
 /** What a shell pulls for the main conversation past its cursor. `cursor` = the log's newest seq
  * (store it, pass it back). `trimmed` = compaction took entries past the old cursor, or more than
  * the pull's cap arrived — the shell shows its trim notice. `cutoverAt` = when the merge went live,
- * set only when a DM or a summary is past the cursor. */
+ * set on the first pull with a DM or a summary past the cursor (no DM at or before it). */
 export interface MainSince { rows: MainDmRow[]; cursor: number; trimmed: boolean; cutoverAt?: string }
 
 // One pull's display cap; compaction already bounds the log itself.
@@ -65,26 +65,34 @@ const SUMMARY_PREFIX = formatSummaryBlock("");
 /** The owner's DM exchanges in the main log after `cursor`: only `discord`/`teams` entries — never a
  * desktop turn (the shell has those), a post, or a summary (no surface). Seqs only grow (MAX + 1;
  * compaction reuses the lowest freed one for its summary), so a seq missing past the cursor means
- * compaction took it. One read transaction, so the count and the rows agree. */
+ * compaction took it. Counts in SQL, only the capped rows' bodies read; one read transaction, so the
+ * counts and the rows agree. */
 export function mainSince(file: string, cursor: number): MainSince {
   const db = openDb(file);
   const from = Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0;
+  const DM = "surface IN ('discord', 'teams')";
   db.exec("BEGIN");
   try {
-    const all = db.prepare(
-      "SELECT seq, role, content, surface FROM chatops_turns WHERE conversation_id = ? AND seq > ? ORDER BY seq",
-    ).all(MAIN_CONVERSATION_ID, from) as unknown as Array<{ seq: number; role: string; content: string; surface: string | null }>;
+    const stats = db.prepare(
+      `SELECT MAX(seq) AS newest, COUNT(*) AS n, COALESCE(SUM(${DM}), 0) AS dms, ` +
+        "COALESCE(SUM(surface IS NULL AND substr(content, 1, ?) = ?), 0) AS summaries " +
+        "FROM chatops_turns WHERE conversation_id = ? AND seq > ?",
+    ).get(SUMMARY_PREFIX.length, SUMMARY_PREFIX, MAIN_CONVERSATION_ID, from) as { newest: number | null; n: number; dms: number; summaries: number };
+    const recent = db.prepare(
+      `SELECT seq, role, content, surface FROM chatops_turns WHERE conversation_id = ? AND seq > ? AND ${DM} ORDER BY seq DESC LIMIT ?`,
+    ).all(MAIN_CONVERSATION_ID, from, MAX_PULL) as unknown as Array<{ seq: number; role: string; content: string; surface: "discord" | "teams" }>;
+    const earlierDm = db.prepare(`SELECT 1 FROM chatops_turns WHERE conversation_id = ? AND seq <= ? AND ${DM} LIMIT 1`).get(MAIN_CONVERSATION_ID, from);
     const meta = db.prepare("SELECT value FROM memory_meta WHERE key = ?").get(MAIN_CUTOVER_KEY) as { value: string } | undefined;
-    const newest = all.at(-1)?.seq ?? from;
-    const dm = all.filter((r): r is typeof r & { surface: "discord" | "teams" } => r.surface === "discord" || r.surface === "teams");
-    const rows = dm.slice(-MAX_PULL).flatMap((r) => mapSyncedTurn({ role: r.role as ChatTurn["role"], content: r.content }, { kind: "dm" }, "")
+    const newest = stats.newest ?? from;
+    const rows = recent.reverse().flatMap((r) => mapSyncedTurn({ role: r.role as ChatTurn["role"], content: r.content }, { kind: "dm" }, "")
       .map((row): MainDmRow => ({ seq: r.seq, via: r.surface, row })));
-    // Something for the cutover line to be about: a DM, or a summary (the fold, or what compaction
-    // made of it) — a fresh install with no history gets no line.
-    const history = dm.length > 0 || all.some((r) => r.surface === null && r.content.startsWith(SUMMARY_PREFIX));
+    // The cutover line goes with the first pull that has something for it to be about — the first DM
+    // after the merge, or the folded summary — whatever desktop turns moved the cursor first. A fresh
+    // install with no history gets none until its first DM.
+    const line = !earlierDm && (stats.dms > 0 || stats.summaries > 0);
     return {
-      rows, cursor: newest, trimmed: newest - from > all.length || dm.length > MAX_PULL,
-      ...(meta && history ? { cutoverAt: meta.value } : {}),
+      rows, cursor: newest, trimmed: newest - from > stats.n || stats.dms > MAX_PULL,
+      ...(meta && line ? { cutoverAt: meta.value } : {}),
     };
   } finally {
     db.exec("COMMIT");

@@ -74,6 +74,9 @@ export function ChatWindow() {
   const [closing, setClosing] = useState<{ title: string; stop: string } | null>(null);
   const [find, setFind] = useState(0); // Cmd/Ctrl+F presses while the find bar is open; 0 = closed
   const coreStatus = useCoreStatus();
+  // A remote core (re)attached (#1000): a `main` ping acked before the drop may never replay, so Home pulls.
+  const attached = coreStatus.kind === "remote" && coreStatus.state === "attached";
+  useEffect(() => { if (attached) for (const s of sessions.values()) s.mainChanged(); }, [attached]);
   const [droppedUrl, setDroppedUrl] = useState<ChatDrop | undefined>(undefined);
   // A per-turn memory receipt is tagged with the mount that asked. One for a chat switched away
   // mid-capture follows its thread: shown at once if that thread is back on screen, otherwise held
