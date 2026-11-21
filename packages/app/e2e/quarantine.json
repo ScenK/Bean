@@ -6,12 +6,6 @@
     "since": "2026-11-21"
   },
   {
-    "title": "remote core: chat over ssh, reconnect bar, takeover banner",
-    "file": "remote-core.e2e.ts",
-    "issue": 1023,
-    "since": "2026-11-21"
-  },
-  {
     "title": "remote core: update the core from About",
     "file": "remote-core.e2e.ts",
     "issue": 1024,
