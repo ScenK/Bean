@@ -430,6 +430,10 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
   window.bean.onAvatarDragLayout((p) => {
     placeBubbles(p.x, p.y, p.bubblesBelow, p.stackMax);
     if (mode === "normal") { positionBox(p.x, p.y, p.tilesAbove); return; } // re-pin the collapsed box after a resize
+    // A reply to the open that arrives mid-collapse (double-click: open then close within the
+    // reply's round trip) must not re-open the menu/bloom — the timer then leaves it stuck open.
+    // A re-grab cancels the collapse before re-expanding, so it never lands here.
+    if (collapseTimer !== undefined) { positionBox(p.x, p.y, p.tilesAbove); return; }
     if (mode === "hover") {
       positionBox(p.x, p.y, p.tilesAbove);
       expandBox("drop anything here");

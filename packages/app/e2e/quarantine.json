@@ -6,12 +6,6 @@
     "since": "2026-11-21"
   },
   {
-    "title": "main conversation: named after the persona, the avatar's default; a drop opens a task chat",
-    "file": "home-arrival.e2e.ts",
-    "issue": 1022,
-    "since": "2026-11-21"
-  },
-  {
     "title": "remote core: chat over ssh, reconnect bar, takeover banner",
     "file": "remote-core.e2e.ts",
     "issue": 1023,
