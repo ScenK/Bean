@@ -28,6 +28,7 @@ export const REFUSAL_TEXT: Record<DeskRefusal, string> = {
   "no-record": "The bot has no record of this chat — nothing was sent.",
   "post-failed": "Couldn't post the message there — nothing was sent.",
   "bot-busy": "The bot is busy with other desk messages — try again in a moment.",
+  "main-conversation": "This DM is part of your main conversation now — message it there. Nothing was sent.",
 };
 
 /** A Continue live refusal reads differently from a turn's for the codes that mean something else here. */

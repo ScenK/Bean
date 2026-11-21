@@ -1,4 +1,4 @@
-# project — Home's model history on the main log (#997)
+# project — Home's and the owner DMs' model history on the main log (#997, #998)
 
 Part of the one-conversation epic (#995). **Dark until the cutover marker** (`memory_meta` key
 `mainConversationCutoverAt`, `mainCutover()`; written by #999 with the fold of the old histories).
@@ -34,3 +34,21 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
 - **Known gap (deferred P2):** a card left pending is expired by the restore, but restored keys count
   as acked, so the log keeps its `pending` line.
 - Wire: `CONTRACT_VERSION` 4 (`delta` in both chat guards, `turns` in the save guard).
+
+## Owner DMs (#998)
+
+- **Gate:** `historyId()` in `chatops/bot.ts` — marker present (`deps.mainLog.cutover()`, wired in
+  `sharedBotDeps`) **and** the conversation's catalog row is a `dm` whose owner `roleOf` still calls the
+  owner (Teams `29:`/AAD aliases through roleOf). In `onMessage` the speaker must also be the owner in a
+  `direct` message, checked before the history read. Fail closed: no catalog/row/marker, a member's DM, a
+  channel, a changed owner → the real id. Only history maps; cards, runs, reminders, live bindings and
+  catalog rows keep the real DM id. Appends carry `surface` (discord/teams).
+- **Bounded before each turn** with the desktop budget (core `boundMainLog`, shared with the host) —
+  never `maybeCompact`, which clips the log's summary row like a turn.
+- **No implicit delegate resume:** owner-DM delegates neither read nor write `thread_sessions`; the
+  finished card's Continue live (`delegate_runs`) is the only resume.
+- `/new` in the owner DM answers a fixed line naming the persona, no reset. Desk sends to a `dm` row
+  are refused `main-conversation`.
+- **Outbox:** `appendDelivery` (core) maps a delivery only when it provably went to the owner's 1:1
+  (Discord: no `userId` or the owner's; Teams: `ownerDmRefs` on the ref), under the existing
+  `context` rule, keyed `delivery:<outbox id>` so a Teams fan-out to several owner DMs appends once.

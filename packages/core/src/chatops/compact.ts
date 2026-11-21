@@ -1,5 +1,6 @@
 import type { ChatTurn, ConverseDeps } from "../converse.js";
-import type { ConversationStore } from "./conversation.js";
+import type { ConversationStore, TurnSurface } from "./conversation.js";
+import { MAIN_CONVERSATION_ID, deliveryTurnKey } from "../main-conversation.js";
 
 // Above this many raw turns, summarize the oldest chunk instead of letting the conversation
 // grow unbounded — the SQLite-backed store no longer has the old in-memory MAX_TURNS=40 hard
@@ -134,4 +135,41 @@ export async function compactHistory(
   } catch {
     return { history: [...head(prev), ...turns.slice(keep)] };
   }
+}
+
+// What formatSummaryBlock puts before a summary's text: how the main log's summary row is told apart.
+const SUMMARY_PREFIX = formatSummaryBlock("");
+
+/** The main conversation's model history (#997, #998), bounded with the desktop budget before a
+ * turn on any surface: past 60 turns or 200 KB the oldest fold into one summary that replaces them
+ * in the log (compare-and-swap: a turn another writer added meanwhile is never lost — the swap is
+ * just skipped and this request still bounded). The log's own summary row leads it: it rides as
+ * the previous summary (folded whole, never clipped like a turn) and goes with the turns it is
+ * replaced along with. Not maybeCompact: that one clips the summary row to a turn's share. */
+export async function boundMainLog(log: ConversationStore, deps: ConverseDeps, signal?: AbortSignal): Promise<ChatTurn[]> {
+  const rows = log.oldest(MAIN_CONVERSATION_ID, log.turnCount(MAIN_CONVERSATION_ID));
+  const head = rows[0]?.role === "user" && rows[0].content.startsWith(SUMMARY_PREFIX) ? rows[0] : undefined;
+  const turns = (head ? rows.slice(1) : rows).map(({ role, content }) => ({ role, content }));
+  const bounded = await compactHistory(turns, head?.content.slice(SUMMARY_PREFIX.length), deps, signal);
+  if (bounded.summary) {
+    log.replaceOldest(MAIN_CONVERSATION_ID, rows.slice(0, bounded.summary.covers + (head ? 1 : 0)), { role: "user", content: formatSummaryBlock(bounded.summary.text) });
+  }
+  return bounded.history;
+}
+
+/** A delivered outbox message's history append, for both bot servers (#998). `ownerDm` set = the
+ * delivery provably went to the owner's own 1:1 DM: once the cutover holds, it joins the main log
+ * instead, keyed by the delivery id so a fan-out to several of the owner's DMs (Teams) appends once.
+ * Anything else goes to the conversation's own history, bounded by maybeCompact. */
+export function appendDelivery(
+  conversations: ConversationStore, conversationId: string, body: string, deps: ConverseDeps,
+  ownerDm?: { mainLog: { surface: TurnSurface; cutover: () => boolean }; deliveryId: string },
+): void {
+  const turn: ChatTurn = { role: "assistant", content: body };
+  if (ownerDm?.mainLog.cutover()) {
+    conversations.append(MAIN_CONVERSATION_ID, turn, { surface: ownerDm.mainLog.surface, turnKey: deliveryTurnKey(ownerDm.deliveryId) });
+    return;
+  }
+  conversations.append(conversationId, turn);
+  void maybeCompact(conversationId, conversations, deps);
 }

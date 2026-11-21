@@ -40,5 +40,7 @@ export function checkKeyedTurns(v: unknown): KeyedTurn[] {
 
 /** A desktop turn's idempotency key in the log. */
 export const desktopTurnKey = (key: string): string => `desktop:${key}`;
+/** A delivered outbox message's idempotency key in the log (#998). */
+export const deliveryTurnKey = (deliveryId: string): string => `delivery:${deliveryId}`;
 /** A drained Home post's idempotency key in the log. */
 export const postTurnKey = (postId: string): string => `post:${postId}`;

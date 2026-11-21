@@ -2,7 +2,7 @@ import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir, skillsDir,
   projectsFile, dbFile, loadLayeredSkills, loadProjects, detectClis, type CliName, runDelegate, killAllDelegates, drainOutbox,
   recoverOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, buildTeamsBot, exitWhenOrphaned,
-  ConversationStore, type ConversationPlace, maybeCompact, ProposalStore, RunRegistry, parentActivitySink,
+  ConversationStore, type ConversationPlace, appendDelivery, ProposalStore, RunRegistry, parentActivitySink,
   parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, parseDeskContinue, type DeskAckResult,
   type BotEffects, loadCliModels, clisFile, LiveSessionProposalStore, type PendingLiveSession, isLiveCli,
   LiveSessionRegistry, findDelegateRun, recordDelegateSession, availableModels, MAX_INSTRUCTION_CHARS,
@@ -45,7 +45,7 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity:
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this channel has no idea what it's retrying.
-// Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
+// Hoisted out of the bot deps so the outbox loop's compaction can reuse the same client.
 const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
 // onChange tells the desktop app a history changed (a conversation id only, never text).
 const conversations = new ConversationStore(dbFile(dir), { onChange: parentSavedSink });
@@ -795,10 +795,11 @@ client.once("clientReady", async () => {
 // only other place maybeCompact runs. Without this, a channel that only ever *receives* messages
 // (an opted-in routine sink nobody replies in) grows unbounded and the first follow-up ships the
 // whole pile. Fire-and-forget, same as bot.ts's call.
-const appendDelivered = (conversationId: string, body: string): void => {
-  conversations.append(conversationId, { role: "assistant", content: body });
-  void maybeCompact(conversationId, conversations, { chat: converseChat, model: beanConfig.model });
-};
+// `ownerDm` = the delivery's id when it provably went to the owner's own 1:1 DM: once the cutover is
+// done it joins the main conversation instead (#998), so a member's digest never does.
+const appendDelivered = (conversationId: string, body: string, ownerDm?: string): void =>
+  appendDelivery(conversations, conversationId, body, { chat: converseChat, model: beanConfig.model },
+    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined);
 
 const OUTBOX_POLL_MS = 5_000;
 // One owner notice for a given-up message. A failed owner DM gets none — that's the channel the
@@ -831,7 +832,9 @@ setInterval(() => {
       if (dmChannelId) {
         destinations.seen({ id: dmChannelId, type: ChannelType.DM }, client.users.cache.get(msg.userId ?? discordConfig.ownerId)?.displayName);
       }
-      if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body);
+      // No userId, or the owner's own = the owner's DM; any other user's DM never maps.
+      const toOwner = !!discordConfig.ownerId && (!msg.userId || msg.userId === discordConfig.ownerId);
+      if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body, toOwner ? msg.id : undefined);
       return;
     }
     const channel = await client.channels.fetch(msg.channel);

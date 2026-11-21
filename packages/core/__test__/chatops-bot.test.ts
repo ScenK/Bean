@@ -7,6 +7,9 @@ import { buildTeamsBot, parseResumeArg, type BotEffects, type TeamsBotDeps } fro
 import { CHATOPS_COMMANDS } from "../src/chatops/commands.js";
 import { findDelegateRun, recordDelegateSession, type ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
+import { appendDelivery } from "../src/chatops/compact.js";
+import { MAIN_CONVERSATION_ID, MAIN_CUTOVER_KEY, mainCutover } from "../src/main-conversation.js";
+import type { ChatTurn } from "../src/converse.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
 import { openDb } from "../src/db.js";
 import { MAX_DESK_TEXT } from "../src/chatops/desk.js";
@@ -4865,5 +4868,144 @@ describe("todo card: Run now and Queue (#923)", () => {
     await t.bot.onCardAction(tap("queue-todo", card(effects).proposalId, dm), effects);
     expect(t.dispatched).toHaveLength(0);
     expect(t.queuedTodos).toEqual([{ routine: "nightly", text: "fix it", createdBy: "mia" }]);
+  });
+});
+
+describe("owner DMs share the main conversation's history (#998)", () => {
+  function mainBots(opts: { ownerId?: string; teamsOwnerId?: string; memberIds?: string[]; cutover?: boolean; converseResult?: ConverseResult } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "bean-bot-main-"));
+    const file = dbFile(dir);
+    const db = openDb(file);
+    if (opts.cutover !== false) db.prepare("INSERT INTO memory_meta (key, value) VALUES (?, ?)").run(MAIN_CUTOVER_KEY, "now");
+    const histories: ChatTurn[][] = [];
+    const make = (surface: "discord" | "teams", ownerId: string) => {
+      const made = makeDeps({
+        ...(opts.converseResult ? { converseResult: opts.converseResult } : {}),
+        conversations: new ConversationStore(file),
+        catalog: new ConversationCatalog(file, surface),
+        roles: makeRoles({ dbPath: file, surface, ownerId, memberIds: opts.memberIds, ownerName: "Scen" }),
+        mainLog: { surface, cutover: () => mainCutover(file) },
+        loadPersona: async () => ({ name: "Pip", tags: [] }),
+        liveSessionsEnabled: () => true,
+      });
+      if (!opts.converseResult) {
+        made.deps.chat = async (req) => {
+          histories.push(req.messages.filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role, content: String(m.content) }) as ChatTurn));
+          return { content: "ok", toolCalls: [] };
+        };
+      }
+      return { ...made, bot: buildTeamsBot(made.deps) };
+    };
+    const discord = make("discord", opts.ownerId ?? "u1");
+    const teams = make("teams", opts.teamsOwnerId ?? "aad-1");
+    const rows = (id: string) => db.prepare("SELECT role, content, surface FROM chatops_turns WHERE conversation_id = ? ORDER BY seq").all(id).map((r) => ({ ...r }));
+    return { file, discord, teams, rows, histories };
+  }
+  const ownerDm = { conversationId: "d1", text: "remember the second option", fromId: "u1", fromName: "Scen", direct: true };
+  const teamsOwnerDm = { conversationId: "a:dm", text: "which option was it?", fromId: "29:abc", fromAltId: "aad-1", fromName: "Scen", direct: true };
+
+  test("without the marker, an owner DM keeps its own history", async () => {
+    const m = mainBots({ cutover: false });
+    await m.discord.bot.onMessage(ownerDm, fx());
+    expect(m.rows("d1")).toHaveLength(2);
+    expect(m.rows(MAIN_CONVERSATION_ID)).toEqual([]);
+  });
+
+  test("an owner DM turn on Discord, then on Teams (AAD alias), reads and writes one history, tagged by surface", async () => {
+    const m = mainBots();
+    await m.discord.bot.onMessage(ownerDm, fx());
+    await m.teams.bot.onMessage(teamsOwnerDm, fx());
+    expect(m.rows(MAIN_CONVERSATION_ID)).toEqual([
+      { role: "user", content: speakerLine("Scen", "remember the second option"), surface: "discord" },
+      { role: "assistant", content: "ok", surface: "discord" },
+      { role: "user", content: speakerLine("Scen", "which option was it?"), surface: "teams" },
+      { role: "assistant", content: "ok", surface: "teams" },
+    ]);
+    // The Teams turn saw the Discord exchange.
+    expect(JSON.stringify(m.histories[1])).toContain("remember the second option");
+    expect(m.rows("d1")).toEqual([]);
+    expect(m.rows("a:dm")).toEqual([]);
+  });
+
+  test("a member's DM and an owner channel never touch the main history", async () => {
+    const m = mainBots({ memberIds: ["m1"] });
+    await m.discord.bot.onMessage({ conversationId: "d2", text: "hi", fromId: "m1", fromName: "Sam", direct: true }, fx());
+    await m.discord.bot.onMessage({ ...ownerDm, conversationId: "ch1", direct: false }, fx());
+    expect(m.rows(MAIN_CONVERSATION_ID)).toEqual([]);
+    expect(m.rows("d2")).toHaveLength(2);
+    expect(m.rows("ch1")).toHaveLength(2);
+  });
+
+  test("a changed owner fails closed: the old owner's DM row no longer maps", async () => {
+    // u1's DM row is in the catalog, but the owner is now u2 (u1 stays a member, so the DM still answers).
+    const m = mainBots({ ownerId: "u2", memberIds: ["u1"] });
+    new ConversationCatalog(m.file, "discord").upsert({ conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+    await m.discord.bot.onMessage(ownerDm, fx());
+    expect(m.rows(MAIN_CONVERSATION_ID)).toEqual([]);
+    expect(m.rows("d1")).toHaveLength(2);
+  });
+
+  test("/new in the owner DM doesn't reset; it names the persona", async () => {
+    const m = mainBots();
+    await m.discord.bot.onMessage(ownerDm, fx());
+    const effects = fx();
+    await m.discord.bot.onMessage({ ...ownerDm, text: "/new" }, effects);
+    expect(effects.posted).toEqual([expect.stringContaining("part of your ongoing chat with Pip — it doesn't reset")]);
+    expect(m.rows(MAIN_CONVERSATION_ID)).toHaveLength(2);
+  });
+
+  test("a desk send to an owner DM row is refused once the marker exists", async () => {
+    const m = mainBots();
+    await m.discord.bot.onMessage(ownerDm, fx());
+    const acks: object[] = [];
+    await m.discord.bot.onDeskTurn({ type: "desk-turn", requestId: "r", conversationId: "d1", text: "hi" }, async () => ({ fx: fx() }), (r) => acks.push(r));
+    expect(acks).toEqual([{ refused: "main-conversation" }]);
+  });
+
+  test("an owner-DM delegate never auto-resumes or stores a session; its finished card offers Continue live", async () => {
+    const m = mainBots({ converseResult: delegateResult });
+    const { deps, delegateCalls, bot } = m.discord;
+    deps.conversations.setThreadSession("d1", "claude", "old-sess");
+    deps.conversations.setThreadSession(MAIN_CONVERSATION_ID, "claude", "main-sess");
+    const effects = fx();
+    await bot.onMessage(ownerDm, effects);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
+    await bot.onCardAction({ conversationId: "d1", fromId: "u1", fromName: "Scen", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    expect(delegateCalls[0]?.req.resume).toBeUndefined();
+    delegateCalls[0]?.cb.onSessionStart?.(1, "sess-9");
+    delegateCalls[0]?.cb.onDone("all fixed", "sess-9");
+    await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({ outcome: "done", resumeLiveId: "sess-9" }));
+    expect(deps.conversations.threadSession("d1", "claude")).toBe("old-sess");
+    expect(deps.conversations.threadSession(MAIN_CONVERSATION_ID, "claude")).toBe("main-sess");
+    expect(m.rows(MAIN_CONVERSATION_ID).at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed", surface: "discord" });
+    expect(m.rows("d1")).toEqual([]);
+  });
+});
+
+describe("appendDelivery (#998)", () => {
+  const setup = (cutover: boolean) => {
+    const file = dbFile(mkdtempSync(join(tmpdir(), "bean-delivery-")));
+    if (cutover) openDb(file).prepare("INSERT INTO memory_meta (key, value) VALUES (?, ?)").run(MAIN_CUTOVER_KEY, "now");
+    const conversations = new ConversationStore(file);
+    const mainLog = { surface: "teams" as const, cutover: () => mainCutover(file) };
+    const deps = { chat: async () => ({ content: "", toolCalls: [] }), model: "m" };
+    return { conversations, mainLog, deps };
+  };
+
+  test("an owner-DM delivery joins the main log once, even fanned out; a member's never does", () => {
+    const { conversations, mainLog, deps } = setup(true);
+    appendDelivery(conversations, "a:dm1", "digest", deps, { mainLog, deliveryId: "o1" });
+    appendDelivery(conversations, "a:dm2", "digest", deps, { mainLog, deliveryId: "o1" });
+    appendDelivery(conversations, "a:member", "your reminder", deps);
+    expect(conversations.history(MAIN_CONVERSATION_ID)).toEqual([{ role: "assistant", content: "digest" }]);
+    expect(conversations.history("a:dm1")).toEqual([]);
+    expect(conversations.history("a:member")).toEqual([{ role: "assistant", content: "your reminder" }]);
+  });
+
+  test("before the cutover an owner-DM delivery stays on the DM", () => {
+    const { conversations, mainLog, deps } = setup(false);
+    appendDelivery(conversations, "a:dm1", "digest", deps, { mainLog, deliveryId: "o1" });
+    expect(conversations.history("a:dm1")).toEqual([{ role: "assistant", content: "digest" }]);
+    expect(conversations.history(MAIN_CONVERSATION_ID)).toEqual([]);
   });
 });

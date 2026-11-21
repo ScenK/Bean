@@ -7,6 +7,7 @@ import { setBeanGitIdentity } from "../agent-rules.js";
 import { conversationDispatches } from "../dispatch-store.js";
 import { listDestinations } from "../destinations.js";
 import { appendMemories, deleteMemories, loadMemories, shareMemory } from "../memory/store.js";
+import { mainCutover } from "../main-conversation.js";
 import { loadModelMemory, saveModelMemory } from "../model-memory.js";
 import { saveNoteImage } from "../note-images.js";
 import { archiveNote, restoreNoteOutcome, saveNote, searchNotes } from "../note-store.js";
@@ -43,7 +44,7 @@ export type SharedBotDeps = Pick<TeamsBotDeps,
   | "skillProposals" | "saveSkill"
   | "appendMemories" | "deleteMemories" | "shareMemory" | "autoMemoryEnabled"
   | "systemControlsEnabled" | "webSearchEnabled" | "imageGen"
-  | "catalog" | "chatter" | "away" | "reminders" | "send"
+  | "catalog" | "mainLog" | "chatter" | "away" | "reminders" | "send"
 > & {
   routines: Omit<NonNullable<TeamsBotDeps["routines"]>, "recipients" | "sprouts">;
 };
@@ -105,6 +106,8 @@ export function sharedBotDeps(opts: {
     webSearchEnabled: () => config.webSearch,
     imageGen: { generate: makeOpenAIImageGen(config.openaiApiKey), model: config.imageModel, imagesDir: imagesDir(dir) },
     catalog: new ConversationCatalog(db, transport),
+    // Read per use: the cutover (#999) switches a running bot over with no restart.
+    mainLog: { surface: transport, cutover: () => mainCutover(db) },
     chatter: makeChatter({ dbPath: db, surface: transport }),
     away: makeAway({ dbPath: db, surface: transport }),
     // Fired by the desktop app's reminder loop into the outbox; each bot's drain delivers them.

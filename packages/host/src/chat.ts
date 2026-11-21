@@ -5,7 +5,7 @@ import {
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
   DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, HOME_THREAD_TITLE, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
-  CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, formatSummaryBlock, type ChatTurn, type ConversationStore, type KeyedTurn,
+  CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, boundMainLog, type ChatTurn, type ConversationStore, type KeyedTurn,
 } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -68,9 +68,6 @@ export interface ChatHandlerDeps {
    * undefined and the turn runs on the shell's history as before. */
   mainLog?: (mountId: string | undefined) => ConversationStore | undefined;
 }
-
-// What formatSummaryBlock puts before a summary's text: how the log's summary row is told apart.
-const SUMMARY_PREFIX = formatSummaryBlock("");
 
 /** Appends a shell's keyed turns to the main log; a key already there appends nothing. */
 function appendDelta(log: ConversationStore, turns: readonly KeyedTurn[]): void {
@@ -141,19 +138,8 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       const last = log.lastTurnAt(MAIN_CONVERSATION_ID);
       if (last !== undefined && arrived.getTime() - Date.parse(last) >= CHAT_GAP_MS) gapMarker = gapMarkerLine(arrived);
       appendDelta(log, delta);
-      // The desktop budget (#975) on the log, before the model sees it: past 60 turns or 200 KB the
-      // oldest fold into one summary that replaces them in the log (compare-and-swap: a turn another
-      // writer added meanwhile is never lost — the swap is just skipped and this request still bounded).
-      // The log's own summary row leads it: it rides as the previous summary (folded whole, never
-      // clipped like a turn) and goes with the turns it is replaced along with.
-      const rows = log.oldest(MAIN_CONVERSATION_ID, log.turnCount(MAIN_CONVERSATION_ID));
-      const head = rows[0]?.role === "user" && rows[0].content.startsWith(SUMMARY_PREFIX) ? rows[0] : undefined;
-      const turns = (head ? rows.slice(1) : rows).map(({ role, content }) => ({ role, content }));
-      const bounded = await compactHistory(turns, head?.content.slice(SUMMARY_PREFIX.length), { chat: deps.converse, model: deps.getModel() }, signal);
-      if (bounded.summary) {
-        log.replaceOldest(MAIN_CONVERSATION_ID, rows.slice(0, bounded.summary.covers + (head ? 1 : 0)), { role: "user", content: formatSummaryBlock(bounded.summary.text) });
-      }
-      history = bounded.history;
+      // The desktop budget (#975) on the log, before the model sees it (core boundMainLog).
+      history = await boundMainLog(log, { chat: deps.converse, model: deps.getModel() }, signal);
     } else {
       // Bounded here, on the core (a remote shell never holds the API key): the summary rides back
       // with the reply and the shell keeps it as a hidden item (#975).
