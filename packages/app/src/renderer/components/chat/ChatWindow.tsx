@@ -218,6 +218,7 @@ export function ChatWindow() {
     window.bean.onMemoryUpdated((saved, from) => onMemoryUpdated(saved, from));
     // Progress for a chat that's gone is dropped, never shown in another one.
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
+    window.bean.onChatMainChanged((from) => sessions.get(from)?.mainChanged());
     window.bean.homePending().then((n) => setHomePending(n > 0), () => {});
     window.bean.onTaskStatus((jobs) => setHomePending(jobs.some((j) => j.kind === "home")));
     // The Home bubble, the avatar with posts pending, or a sprout banner: show Home.

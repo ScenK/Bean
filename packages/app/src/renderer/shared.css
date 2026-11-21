@@ -852,6 +852,10 @@ button, input, textarea, select, a {
 .bean-status--details summary::-webkit-details-marker { display: none; }
 /* A sprout's Home post (#960): a Bean bubble under a sprout header; several drained together fold
    into one "While you were away · N" block. */
+/* An owner-DM row in the main conversation (#1000): the user bubble with its surface below, on the page. */
+.bean-dm { align-self: flex-end; max-width: 80%; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.bean-dm > .bean-bubble { max-width: 100%; }
+.bean-dm-via { font-size: 11px; line-height: 12px; color: var(--bean-text-dim); padding-right: 4px; }
 .bean-post-head { margin-bottom: 4px; font-size: 11.5px; font-weight: 600; color: var(--bean-text-dim); }
 .bean-post-batch { display: flex; flex-direction: column; gap: 8px; }
 .bean-post-batch > summary {

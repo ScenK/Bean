@@ -49,7 +49,7 @@ const liveStart = shape({
   history: opt(arr(shape({ role: oneOf("user", "reply"), text: str, agent: opt(str) }))),
 });
 const launch = shape({ mode: str, projectPath: str, prompt: opt(str), model: opt(str) });
-const threadSave = shape({ id: str, title: str, items: list, noteSlug: opt(str), turns: opt(arr(keyedTurn)) });
+const threadSave = shape({ id: str, title: str, items: list, noteSlug: opt(str), turns: opt(arr(keyedTurn)), mainCursor: opt(num) });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
 const deskContinue = shape({ channelId: str, title: str, sessionId: opt(str) });
 const watch = either(
@@ -180,6 +180,8 @@ export const CHANNEL_CONTRACT = {
   chatIncognito: core(bool, str),
   chatThreadSave: core(threadSave, str),
   chatThreadGet: core(str, str),
+  chatMainSince: core(num, str),
+  chatMainChanged: core(str),
   chatThreadList: core(),
   chatThreadDelete: core(str),
   chatThreadStar: core(str, bool),

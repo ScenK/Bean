@@ -823,6 +823,30 @@ export function ChatPanel({
               </details>
             );
           }
+          if (it.kind === "dm") {
+            // The owner's DM exchange (#1000): inert, labelled with its surface.
+            const via = `via ${it.via === "discord" ? "Discord" : "Teams"}`;
+            if (it.role === "status") return <div key={it.id} class="bean-status bean-status--info">{it.text} · {via}</div>;
+            if (it.role === "user") {
+              return (
+                <div key={it.id} class="bean-dm">
+                  <div class="bean-bubble bean-bubble--user"><span class="bean-sr-only">You ({via}): </span>{it.text}</div>
+                  <div class="bean-dm-via" aria-hidden="true">{via}</div>
+                </div>
+              );
+            }
+            const agent = it.role === "agent" ? it.agent ?? "bean" : "bean";
+            return (
+              <div key={it.id} class="bean-chat-row">
+                <span class="bean-chat-row-avatar"><AgentAvatar agent={agent} /></span>
+                <div class="bean-bubble bean-bubble--bean">
+                  <span class="bean-sr-only">{AGENT_NAMES[agent]}: </span>
+                  <div class="bean-post-head">{via}</div>
+                  <Markdown text={it.text} />
+                </div>
+              </div>
+            );
+          }
           if (it.kind === "continued") {
             return (
               <div key={it.id} class="bean-status bean-status--done">

@@ -53,6 +53,7 @@ describe("ChatWindow Home", () => {
       setChatIncognito: vi.fn(),
       rememberOnClose: vi.fn(),
       homePending: vi.fn(async () => 0),
+      chatMainSince: vi.fn(async () => ({ rows: [], cursor: 0, trimmed: false })),
     };
     (window as unknown as { bean: unknown }).bean = new Proxy(bean, {
       get: (t, k: string) => t[k] ?? (k.startsWith("on") ? (cb: (...a: unknown[]) => void) => { listeners[k] = cb; } : async () => undefined),
@@ -116,6 +117,47 @@ describe("ChatWindow Home", () => {
     const second = bean.chat!.mock.calls[1]![0] as { delta?: unknown[] };
     expect(second.delta).toEqual([]); // the first turn and its reply were acked by the host
     expect(shownChat().textContent).not.toContain("Already continued");
+  });
+
+  it("#1000: shows the owner's DM exchanges labelled, once each, never in the delta or close-time memory", async () => {
+    const dm = (seq: number, role: string, text: string, via = "discord") => ({ seq, via, row: { role, text } });
+    const cutover = "Your Discord and Teams DMs are now part of this conversation — Bean remembers them.";
+    bean.chatThreadGet!.mockResolvedValue({ ...homeThread([]), home: { posts: [], log: true, cursor: 0 } });
+    bean.chatMainSince!
+      .mockResolvedValueOnce({ rows: [dm(2, "user", "from my phone"), dm(3, "bean", "got it")], cursor: 3, trimmed: false, cutover })
+      .mockResolvedValue({ rows: [dm(3, "bean", "got it"), dm(5, "status", "Card: note — saved", "teams")], cursor: 6, trimmed: false });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    const chat = shownChat();
+    expect(bean.chatMainSince).toHaveBeenCalledWith(0, expect.any(String));
+    expect(chat.querySelector(".bean-dm .bean-bubble--user")?.textContent).toContain("from my phone");
+    expect(chat.querySelector(".bean-dm-via")?.textContent).toBe("via Discord");
+    expect(chat.textContent).toContain("got it");
+    expect(chat.textContent).toContain(cutover);
+    await vi.waitFor(() => expect(bean.chatThreadSave!.mock.calls.at(-1)?.[0]).toMatchObject({ mainCursor: 3 }));
+
+    // A bot's ping pulls again: the seen row isn't doubled, the new one shows labelled.
+    await act(async () => { listeners.onChatMainChanged!(bean.chatAttach!.mock.calls.at(-1)![0]); });
+    await flush();
+    expect(bean.chatMainSince).toHaveBeenLastCalledWith(3, expect.any(String));
+    expect(chat.textContent?.match(/got it/g)).toHaveLength(1);
+    expect(chat.textContent).toContain("Card: note — saved · via Teams");
+    expect(chat.textContent?.split(cutover)).toHaveLength(2); // once
+
+    // A desktop turn: the pulled rows never ride in the delta, and the turn's end pulls.
+    const calls = bean.chatMainSince!.mock.calls.length;
+    await send("thanks");
+    const req = bean.chat!.mock.calls[0]![0] as { delta?: Array<{ content: string }> };
+    expect(req.delta?.map((t) => t.content).join("\n") ?? "").not.toMatch(/from my phone|got it|Card: note/);
+    expect(bean.chatMainSince!.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it("#1000: a chat not on the main log never pulls DM rows", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    expect(bean.chatMainSince).not.toHaveBeenCalled();
   });
 
   it("a failed save keeps the posts undrained for the next save", async () => {

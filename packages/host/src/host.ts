@@ -16,7 +16,7 @@ import {
   deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
-  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID,
+  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID, MAIN_CONVERSATION_ID,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -519,6 +519,7 @@ export async function createHost(deps: HostDeps) {
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (file) => listPendingHomePosts(file), saveDesktopChatDraining,
     mainLog,
     onDrained: () => homeBubble?.refresh(),
+    personaName: async () => (await loadPersona(personaFile(dir), personaFile(projectDir))).name,
   });
   homeHolder = () => threads.holderOf(HOME_THREAD_ID);
   homeBubble = createHomeBubble({
@@ -688,7 +689,15 @@ export async function createHost(deps: HostDeps) {
 
   // Last: a replayed autostart may answer a sprout tap at once, so the scheduler must exist.
   const bots = await startBots({
-    ...deps.bots, dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
+    ...deps.bots,
+    // A bot wrote the main log (#998): a text-free ping to the chat holding Home on it, which pulls
+    // the owner's DM rows (#1000) — over SSH too. Not a sidebar row, so never a synced-chat event.
+    onSynced: (e) => {
+      if (e.conversationId !== MAIN_CONVERSATION_ID) { deps.bots.onSynced(e); return; }
+      const home = threads.holderOf(HOME_THREAD_ID);
+      if (home !== undefined && threads.isMain(home)) push(home, "main", home);
+    },
+    dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
     onRoutineRunning: liveSprouts,
   });
   // The owner's daily memory digest (#859): under the scheduler lease, to every bot running now.

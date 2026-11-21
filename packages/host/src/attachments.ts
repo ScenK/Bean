@@ -163,10 +163,11 @@ export function createAttachments(deps: AttachmentsDeps) {
       buffers.set(mountId, b);
       const e = { type: "push" as const, mountId, seq: ++b.seq, kind, payload };
       b.events.push(e);
-      // Bounded: drop the oldest output lines; everything else waits for an ack.
+      // Bounded: drop the oldest output lines and main-log pings (#1000: a pull reads the log, so
+      // any later ping or a reattach's pull covers a dropped one); everything else waits for an ack.
       for (let i = 0; b.events.length > REPLAY_LIMIT && i < b.events.length;) {
         const old = b.events[i]!;
-        if (!isOutputLine(old.payload)) i++;
+        if (!isOutputLine(old.payload) && old.kind !== "main") i++;
         else b.events.splice(i, 1);
       }
       if (shell.conn?.resumed) shell.conn.send(e);

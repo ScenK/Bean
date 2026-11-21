@@ -96,7 +96,7 @@ const chatRequest = shape({
   delta: opt(arr(keyedTurn)),
 });
 // Home over SSH (#997): its open and its saves, so a remote shell reaches the main conversation too.
-const threadSave = shape({ id: str, title: str, items: arr(() => true), noteSlug: opt(str), turns: opt(arr(keyedTurn)) });
+const threadSave = shape({ id: str, title: str, items: arr(() => true), noteSlug: opt(str), turns: opt(arr(keyedTurn)), mainCursor: opt(num) });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
 const delegateStart = shape({ projectPath: str, prompt: str, instruction: str, model: opt(str), cli: opt(str), skillName: opt(str) });
 const liveStart = shape({
@@ -156,6 +156,8 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
   // keepNote: a remote shell has no notes to link (no listNotes here), so its save never unlinks one.
   chatThreadSave: op((h, c, req, mountId) => h.chat.threadSave(c, mountId, req, { keepNote: true }), threadSave, str),
   chatThreadGet: op((h, c, id, mountId) => h.chat.threadGet(c, mountId, id), str, str),
+  // Home's owner-DM rows (#1000): mount-checked, and refused unless that chat holds Home on the log.
+  chatMainSince: op((h, c, cursor, mountId) => h.chat.mainSince(c, mountId, cursor), num, str),
   rememberOnClose: op((h, c, transcript, opts) => h.chat.rememberOnClose(c, transcript, opts), arr(turn), closeOpts),
   delegateStart: op((h, c, req, mountId) => h.chat.delegateStart(c, mountId, req), delegateStart, str),
   chatSproutRun: op((h, c, name, thread, mountId) => h.chat.sproutRun(c, mountId, name, thread), str, str, str),
