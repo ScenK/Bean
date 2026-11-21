@@ -33,6 +33,18 @@ describe("Home bubble", () => {
     bubble.stop();
   });
 
+  it("is named after the persona, re-read on every recount (#1001)", () => {
+    const status = createTaskStatus(() => {});
+    let name = "Pip";
+    const bubble = createHomeBubble({ count: () => 1, nextExpiry: () => undefined, name: () => name, status });
+    bubble.refresh();
+    expect(status.list().find((j) => j.id === HOME_JOB_ID)).toMatchObject({ name: "Pip", line: "Pip has 1 post for you" });
+    name = "Mr. Bean";
+    bubble.refresh();
+    expect(status.list().find((j) => j.id === HOME_JOB_ID)).toMatchObject({ name: "Mr. Bean", line: "Mr. Bean has 1 post for you" });
+    bubble.stop();
+  });
+
   it("the last pending post expiring removes the bubble with no other event", () => {
     const { db, bubble, home } = setup();
     db.count = 1;

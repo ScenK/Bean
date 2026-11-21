@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONTRACT_VERSION } from "@bean/host";
 import { launchBean } from "./fixtures/launch-app.js";
+import { startTaskChat } from "./fixtures/task-chat.js";
 
 type Bean = { bean: { openComponent: (k: string) => Promise<void> } };
 
@@ -21,6 +22,9 @@ const core = () => { try { return JSON.parse(readFileSync(coreFile, "utf8")); } 
 if (core().down) process.exit(1);
 const send = (m, then) => { const b = Buffer.from(JSON.stringify(m)); const h = Buffer.alloc(4); h.writeUInt32BE(b.length); process.stdout.write(Buffer.concat([h, b]), then); };
 let buf = Buffer.alloc(0);
+let pulls = 0, pushSeq = 0;
+// #1000: Home on the core's main log; the owner's DMs arrive by pull, a bot's write by a text-free ping.
+const dm = (seq, via, role, text) => ({ seq, via, row: { role, text } });
 process.stdin.on("data", (d) => {
   buf = Buffer.concat([buf, d]);
   while (buf.length >= 4 && buf.length >= 4 + buf.readUInt32BE(0)) {
@@ -48,6 +52,20 @@ process.stdin.on("data", (d) => {
       send({ type: "result", id: m.id, ok: true, value: { reply: "remote echo: " + text } });
       continue;
     }
+    if (m.op === "chatThreadGet" && m.args[0] === "home") {
+      send({ type: "result", id: m.id, ok: true, value: { id: "4f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b", title: "Home", items: [], noteSlug: null, home: { posts: [], log: true, cursor: 0 } } });
+      continue;
+    }
+    if (m.op === "chatMainSince") {
+      pulls += 1;
+      const value = pulls === 1
+        ? { rows: [dm(2, "discord", "user", "written on the bus"), dm(3, "discord", "bean", "noted from the bus")], cursor: 3, trimmed: false,
+          cutover: "Your Discord and Teams DMs are now part of this conversation — Bean remembers them." }
+        : { rows: [dm(3, "discord", "bean", "noted from the bus"), dm(4, "teams", "user", "and one from Teams")], cursor: 4, trimmed: false };
+      send({ type: "result", id: m.id, ok: true, value });
+      if (pulls === 1) setTimeout(() => send({ type: "push", mountId: m.args[1], seq: ++pushSeq, kind: "main", payload: m.args[1] }), 300);
+      continue;
+    }
     const config = {
       openaiApiKey: "", apiKeySet: true, model: "gpt-remote", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false,
       reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "",
@@ -58,6 +76,7 @@ process.stdin.on("data", (d) => {
       : m.op === "routinesList" ? [{ name: "old-ask", description: "ping me when it lands", enabled: false, until: "2020-01-02", cron: "0 9 * * *", sinks: {}, steps: [{ kind: "chat", instruction: "x" }] }]
       : m.op === "routinesState" ? { "old-ask": { history: [], running: false, runningCount: 0, ended: { archived: true, text: "Nothing by Jan 2" } } }
       : m.op === "routinesBuilds" ? []
+      : m.op === "getPersona" ? { name: "Pip", tags: ["Warm"] }
       : ["listProjects", "availableClis", "availableModels", "detectedClis"].includes(m.op) ? [] : undefined;
     send({ type: "result", id: m.id, ok: true, value });
   }
@@ -89,6 +108,7 @@ test("remote core: chat over ssh, reconnect bar, takeover banner", async () => {
     ]);
     await chat.waitForLoadState("domcontentloaded");
     await expect(chat.locator(".bean-chat-host")).toHaveText("me@box");
+    await startTaskChat(chat);
     const composer = chat.locator(".bean-input--composer");
 
     await composer.fill("hi");
@@ -186,6 +206,45 @@ test("remote core: capability-gated chat and key-preserving Settings", async () 
     expect(saves).toHaveLength(1);
     expect(saves[0]!.args[0]).toMatchObject({ model: "gpt-remote" });
     for (const k of ["openaiApiKey", "terminalApp", "editorApp", "systemControls"]) expect(saves[0]!.args[0]).not.toHaveProperty(k);
+  } finally {
+    await app.close().catch(() => {});
+    await Promise.allSettled([homeDir, userDataDir, bin].map((d) => rm(d, { recursive: true, force: true })));
+  }
+});
+
+// #1000: the core ran headless with no shell while the owner DMed it; a shell attaches, opens Home and
+// sees those exchanges labelled with their surface, then a bot's ping brings the next one — once each.
+test("remote core: Home shows the owner's DM exchanges", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "bean-e2e-home-"));
+  const userDataDir = await mkdtemp(join(tmpdir(), "bean-e2e-userdata-"));
+  const bin = await mkdtemp(join(tmpdir(), "bean-e2e-bin-"));
+  const log = join(bin, "ssh.log");
+  await writeFile(join(bin, "ssh"), fakeSsh(log));
+  await chmod(join(bin, "ssh"), 0o755);
+  await writeFile(join(userDataDir, "cores.json"), JSON.stringify({ selected: "r1", cores: [{ id: "r1", host: "me@box" }] }));
+  const app = await launchBean({ HOME: homeDir, PATH: `${bin}:${process.env.PATH ?? ""}` }, userDataDir);
+  try {
+    const avatar = await app.firstWindow();
+    await expect(avatar.locator("#bean")).toHaveAttribute("title", "Bean on me@box");
+    const [chat] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("chat")),
+    ]);
+    await chat.waitForLoadState("domcontentloaded");
+    await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
+    // Named after the core's persona, read over the wire (#1001).
+    await expect(chat.locator(".bean-chat-sidebar-home-title")).toHaveText("🏠 Pip");
+    const shown = chat.locator(".bean-chat:not([hidden])");
+    await expect(shown.locator(".bean-dm .bean-bubble--user").first()).toContainText("written on the bus");
+    await expect(shown.locator(".bean-dm-via").first()).toHaveText("via Discord");
+    await expect(shown).toContainText("noted from the bus");
+    await expect(shown).toContainText("now part of this conversation — Bean remembers them");
+    // The ping: the next exchange, labelled; nothing already shown repeats.
+    await expect(shown.locator(".bean-dm-via", { hasText: "via Teams" })).toBeVisible();
+    await expect(shown.locator(".bean-dm .bean-bubble--user").last()).toContainText("and one from Teams");
+    await expect(shown.getByText("noted from the bus")).toHaveCount(1);
+    const calls = (await readFile(`${log}.calls`, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { op: string; args: unknown[] });
+    expect(calls.filter((c) => c.op === "chatMainSince").map((c) => c.args[0]).slice(0, 2)).toEqual([0, 3]);
   } finally {
     await app.close().catch(() => {});
     await Promise.allSettled([homeDir, userDataDir, bin].map((d) => rm(d, { recursive: true, force: true })));

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ProposedRoutine } from "../converse.js";
 import { parseCron } from "../cron.js";
+import { DEFAULT_PERSONA } from "../persona.js";
 import { isArchived, memberTodoEligible, routesToDone, stopsLabel, watchEveryMinutes, type Routine, type RoutineStep } from "../routine-store.js";
 import type { Project } from "../types.js";
 import { sproutProblems, sproutProjects, type SproutProblem } from "../usage-sections.js";
@@ -123,7 +124,7 @@ export function describeStep(s: RoutineStep, i: number): string {
 /** Destinations by name: a user sink resolves through `people`; the drafting channel reads as
  * "This channel"/"This chat"; another channel is a Discord mention, or the plain id on Teams. */
 export function describeSinks(
-  r: Routine, people: { id: string; name: string }[], ownerName: string, channelId?: string,
+  r: Routine, people: { id: string; name: string }[], ownerName: string, channelId?: string, beanName = DEFAULT_PERSONA.name,
 ): string[] {
   const out = (r.sinks.chatops ?? []).map((s) =>
     s.alias !== undefined ? s.alias
@@ -131,7 +132,7 @@ export function describeSinks(
       : s.channel === undefined ? `DM ${ownerName}`
         : s.channel === channelId ? (s.transport === "teams" ? "This chat" : "This channel")
           : s.transport === "teams" ? s.channel : `<#${s.channel}>`);
-  if (r.sinks.home) out.unshift("Home");
+  if (r.sinks.home) out.unshift(`Your chat with ${beanName}`);
   if (r.sinks.note) out.push("Saved as a note");
   if (r.sinks.notify) out.push("Desktop notification");
   return out.length > 0 ? out : ["Nowhere — results are only kept in the run history"];
@@ -208,7 +209,7 @@ export function draftReplaces(name: string, routines: Routine[], now: Date): Dra
 }
 
 export function routineDraftCard(
-  id: string, proposal: ProposedRoutine, replaces: DraftReplaces | undefined,
+  id: string, proposal: ProposedRoutine, replaces: DraftReplaces | undefined, beanName?: string,
 ): RoutineDraftCard {
   const { routine: r, problem } = proposal;
   const base = { id, name: String(r.name), ...(replaces ? { replaces } : {}) };
@@ -220,7 +221,7 @@ export function routineDraftCard(
     ...(r.description ? { ask: clip(r.description, 300) } : {}),
     commitment: routesToDone(r),
     how: [describeSchedule(r), ...r.steps.map(describeStep), ...(r.webSearch ? ["Searches the public web"] : [])],
-    tellYou: describeSinks(r, [], "you"),
+    tellYou: describeSinks(r, [], "you", undefined, beanName),
     ...(stops ? { stops } : {}),
   };
 }

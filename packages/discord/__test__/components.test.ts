@@ -368,3 +368,39 @@ test("send card (#689): 24 options + the hoisted pick, ids as values, Send/Cance
   expect(done.components).toEqual([]);
   expect(JSON.stringify(done)).toContain("Queued → ops");
 });
+
+test("finished/ended cards say what Continue live resumes, or why it's missing, within Discord's limits (#1002)", () => {
+  const base = {
+    projectName: "bean", instruction: "x".repeat(5000), startedBy: "scen", outcome: "done" as const, agent: "claude",
+    lastLine: "…" + "y".repeat(199), resume: "claude --resume sess-1",
+  };
+  type Embed = { title: string; description?: string; fields?: { name: string; value: string }[]; footer?: { text: string } };
+  const embedOf = (card: object): Embed => (card as { embeds: Embed[] }).embeds[0]!;
+  const size = (e: Embed): number =>
+    e.title.length + (e.description?.length ?? 0) + (e.footer?.text.length ?? 0) + (e.fields ?? []).reduce((n, f) => n + f.name.length + f.value.length, 0);
+
+  const offered = embedOf(discordCards.finishedCard({ ...base, resumeLiveId: "sess-1" }));
+  expect(offered.fields?.map((f) => f.name)).toEqual(["Agent", "Last", "Resume (bean)"]);
+  expect(offered.footer?.text).toBe("Continue live reopens this claude session with everything it did so far. Messages here go to it until you end it.");
+  expect(size(offered)).toBeLessThanOrEqual(6000);
+  expect(offered.description!.length).toBeLessThanOrEqual(4096);
+
+  expect(embedOf(discordCards.finishedCard({ ...base, noContinue: "disabled" })).footer?.text).toContain("live sessions are off");
+  expect(embedOf(discordCards.finishedCard({ ...base, noContinue: "cli-missing" })).footer?.text).toContain("claude isn't installed here any more");
+  // An id too long for the 100-char custom_id: no button, and the footer says why.
+  const tooLong = discordCards.finishedCard({ ...base, resumeLiveId: "a".repeat(90) }) as { components: unknown[] };
+  expect(tooLong.components).toEqual([]);
+  expect(embedOf(tooLong).footer?.text).toContain("can't be offered on this surface");
+
+  const ended = discordCards.liveSessionResultCard({
+    projectName: "bean", startedBy: "scen", outcome: "ended", prompt: "p".repeat(5000), agent: "codex", turns: 3,
+    lastLine: "z".repeat(200), resumeLiveId: "sess-2",
+  });
+  const e = embedOf(ended);
+  expect(e.fields?.map((f) => `${f.name}=${f.value.length > 10 ? "…" : f.value}`)).toEqual(["Agent=codex", "Turns=3", "Last=…"]);
+  expect(e.footer?.text).toContain("this codex session");
+  expect(size(e)).toBeLessThanOrEqual(6000);
+  expect(JSON.stringify(ended)).toContain("bean:resume-live:sess-2");
+  // started/cancelled cards stay bare.
+  expect(embedOf(discordCards.liveSessionResultCard({ projectName: "bean", startedBy: "scen", outcome: "started", agent: "codex" })).fields).toBeUndefined();
+});

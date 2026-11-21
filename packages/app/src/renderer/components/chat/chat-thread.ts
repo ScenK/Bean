@@ -1,3 +1,4 @@
+import type { LiveCli } from "@bean/core";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
 
 // A desktop chat thread's saved form — pure and node-free, so it tests without a DOM. Every save and
@@ -100,12 +101,22 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
         : undefined;
     case "summary":
       return typeof it.text === "string" && it.text ? { kind: "summary", id: it.id, text: cap(it.text) } : undefined;
+    case "dm": // known fields only, like `post`: pulled DM text never brings extra keys back
+      return Number.isSafeInteger(it.seq) && (it.via === "discord" || it.via === "teams") && typeof it.text === "string"
+        && (it.role === "user" || it.role === "bean" || it.role === "agent" || it.role === "status")
+        ? {
+          kind: "dm", id: it.id, seq: it.seq, via: it.via, role: it.role, text: cap(it.text),
+          ...(it.agent === "claude" || it.agent === "codex" || it.agent === "opencode" ? { agent: it.agent } : {}),
+        }
+        : undefined;
   }
 }
 
 /** The one fixed line atop a transcript the trim has dropped older items from (#976). A status row:
- * shown, saved, never model history. */
-export const TRIM_NOTICE = "Older messages aren't kept here — Bean remembers what mattered.";
+ * shown, saved, never model history. Shown as `trimNoticeText(<persona name>)` (#1001); the stored
+ * text stays fixed, since it's how a notice is found again. */
+export const trimNoticeText = (name: string): string => `Older messages aren't kept here — ${name} remembers what mattered.`;
+export const TRIM_NOTICE = trimNoticeText("Bean");
 const isTrimNotice = (it: ChatItem): boolean => it.kind === "status" && it.text === TRIM_NOTICE;
 
 /** Drops the oldest items to at most `max` (and `maxBytes` as JSON) — never one `keep` holds, nor the
@@ -157,7 +168,7 @@ export function boundLive(items: ChatItem[], pending: ReadonlySet<string>): Chat
     : trimOldest(items, THREAD_ITEMS_MAX, (it) => unsettled(it) || (it.kind === "post" && pending.has(it.postId)));
 }
 
-const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "routine", "status", "memory", "forgot", "continued", "post", "summary"]);
+const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "routine", "status", "memory", "forgot", "continued", "post", "summary", "dm"]);
 
 /** A saved transcript back into the window: well-formed items only, normalized again, fresh ids (a
  * restored `item-3` would collide with this load's counter), and user turns stripped of `source` —
@@ -300,4 +311,29 @@ export function newPostItems(items: readonly ChatItem[], posts: ReadonlyArray<{ 
   const fresh = posts.filter((p) => !held.has(p.id));
   const batch = fresh.length > 1 ? `batch-${fresh[0]!.id}` : undefined;
   return fresh.map((p) => postItem(p, batch));
+}
+
+/** A pull of the owner's DM exchanges (#1000), as the core hands it to Home (host `MainPull`). */
+export interface MainPullView {
+  rows: ReadonlyArray<{ seq: number; via: "discord" | "teams"; row: { role: "user" | "bean" | "agent" | "status"; text: string; agent?: LiveCli } }>;
+  trimmed: boolean;
+  cutover?: string;
+}
+
+/** Home's items with a pull applied: the cutover line once (by its text), each DM row once (by its log
+ * seq) at the end in log order, and the trim notice on top when compaction overtook the cursor. The
+ * same array when nothing changes. */
+export function applyMainPull(items: ChatItem[], pull: MainPullView): ChatItem[] {
+  const held = new Set(items.flatMap((it) => (it.kind === "dm" ? [it.seq] : [])));
+  const add: ChatItem[] = [];
+  if (pull.cutover && !items.some((it) => it.kind === "status" && it.text === pull.cutover)) {
+    add.push({ kind: "status", id: newId(), tone: "info", text: pull.cutover });
+  }
+  for (const { seq, via, row } of pull.rows) {
+    if (held.has(seq)) continue;
+    add.push({ kind: "dm", id: newId(), seq, via, role: row.role, text: cap(row.text), ...(row.agent ? { agent: row.agent } : {}) });
+  }
+  const notice = pull.trimmed && !items.some(isTrimNotice);
+  if (add.length === 0 && !notice) return items;
+  return [...(notice ? [{ kind: "status", id: "trim-notice", tone: "info", text: TRIM_NOTICE } satisfies ChatItem] : []), ...items, ...add];
 }

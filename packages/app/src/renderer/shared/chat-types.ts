@@ -120,6 +120,10 @@ export type ChatItem =
   // sprout output: rendered as inert markdown, in history only as a fenced, non-typed user turn.
   // `batch` = drained together (2+ fold into one "While you were away · N" block); `at` = its ISO time.
   | { kind: "post"; id: string; postId: string; sprout: string; at: string; text: string; batch?: string }
+  // One of the owner's DM exchanges in the main conversation (#1000), pulled from the core's log by
+  // `seq` (its identity there — a re-pull dedupes by it). Display only: inert, never model history or
+  // close-time memory (the log already holds it), labelled with the surface that wrote it.
+  | { kind: "dm"; id: string; seq: number; via: "discord" | "teams"; role: "user" | "bean" | "agent" | "status"; text: string; agent?: LiveCli }
   // A rolling summary (#975), never rendered: it stands for every item before it in Bean's model
   // history (the core made it, see core compactHistory). Only the latest one counts — history is it
   // plus the items after it, by position (ids are remapped on restore).

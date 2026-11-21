@@ -19,6 +19,7 @@ function setup() {
   const threads = buildChatThreadHandlers({
     dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats,
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (f) => listPendingHomePosts(f), saveDesktopChatDraining, mainLog,
+    personaName: () => "Pip",
   });
   const seen: ChatMessage[][] = [];
   const chat = buildChatHandler({
@@ -148,5 +149,27 @@ describe("Home on the main log", () => {
     saveDesktopChatDraining(dbFile, { id: HOME_THREAD_ID, title: "Home", itemsJson: "[]", noteSlug: null }, [p1], new Date(), { mainLog: true });
     threads.save("a", { id: HOME_THREAD_ID, title: "Home", items: [...items, { kind: "status", id: "s" }], turns });
     expect(log()).toHaveLength(2);
+  });
+
+  it("#1000: Home pulls the owner's DM rows past its cursor; the cursor is kept beside the thread", async () => {
+    const { dbFile, flags, threads } = setup();
+    await expect(threads.mainSince("a", 0)).rejects.toThrow(/main conversation/); // nothing open
+    threads.get("a", HOME_TARGET);
+    await expect(threads.mainSince("a", 0)).rejects.toThrow(/main conversation/); // dark before the cutover
+    flags.cutover = true;
+    new DatabaseSync(dbFile).prepare("INSERT INTO memory_meta (key, value) VALUES ('mainConversationCutoverAt', ?)").run(new Date().toISOString());
+    const store = new ConversationStore(dbFile);
+    store.append(MAIN_CONVERSATION_ID, { role: "user", content: "at the desk" }, { surface: "desktop" });
+    store.append(MAIN_CONVERSATION_ID, { role: "user", content: "[Scen]: on the bus" }, { surface: "teams" });
+    expect(threads.get("a", HOME_TARGET)).toMatchObject({ home: { log: true, cursor: 0 } });
+    const first = await threads.mainSince("a", 0);
+    expect(first).toMatchObject({ cursor: 2, trimmed: false, rows: [{ seq: 2, via: "teams", row: { role: "user", text: "on the bus" } }] });
+    expect(first.cutover).toBe("Your Discord and Teams DMs are now part of this conversation — Pip remembers them.");
+    expect((await threads.mainSince("a", 2)).cutover).toBeUndefined(); // a DM already at or before the cursor: no line again
+    threads.save("a", { id: HOME_THREAD_ID, title: "Home", items: [], mainCursor: 2 });
+    expect(threads.get("a", HOME_TARGET)).toMatchObject({ home: { cursor: 2 } });
+    // Another chat (not holding Home) is refused.
+    threads.get("b", "6c1b2a9e-0f0e-4d6a-9b7c-1d2e3f4a5b6c");
+    await expect(threads.mainSince("b", 0)).rejects.toThrow(/main conversation/);
   });
 });

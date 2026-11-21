@@ -75,3 +75,27 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
 - **Status entry:** the marker's value is the cutover time; #1000 renders it once.
 - **Sidebar:** after the marker `listChatopsConversations` leaves out live owner-`dm` rows; their
   pre-cutover history lists as an archive (pruned like `/new` archives, 90 days).
+
+## Desktop shows the owner's DM exchanges (#1000)
+
+- **Read:** core `mainSince(file, cursor)` — `discord`/`teams` entries past the cursor only (never
+  `desktop`, posts or summaries: no surface), mapped by the shared `mapSyncedTurn` (moved from the app to
+  core `chatops/transcript.ts`). Seqs only grow, so `newest - cursor > rows past it` = compaction took
+  some → `trimmed` → the shell's existing trim notice. Capped at 200 rows per pull.
+- **Host:** `threads.mainSince` serves only the chat holding Home on the log; `chatMainSince` is a
+  `REMOTE_OPS` entry (generation-checked like every op). The cutover line (persona's name) rides the
+  first pull with a DM or summary past the cursor and no DM at or before it — desktop turns moving the
+  cursor first don't cost it; a fresh install gets none until its first DM. The shell dedupes it by text.
+  Rows are counted in SQL and only the newest 200 DM bodies read. Wire: `CONTRACT_VERSION` 5 (a v4 core
+  refuses the pull, so the shell must see a mismatch rather than connect and silently show nothing).
+- **Cursor:** kept host-side in `memory_meta` (`mainConversationHomeCursor`), written by a Home save
+  carrying `mainCursor` *after* the items land; `chatThreadGet("home")` returns it as `home.cursor`.
+  A lost write only re-pulls; the renderer dedupes `dm` items by `seq`.
+- **Ping:** a bot's `saved` for `MAIN_CONVERSATION_ID` is swallowed by the host (not a sidebar row) and
+  becomes a text-free mount push `main` (payload = the mount id) to Home's holder — over SSH too. Replay
+  evicts old `main` pings like output lines (any later pull covers them); the shell also pulls on every
+  remote (re)attach — first re-opening Home (`chatThreadGet("home")`), since a restarted core lost the
+  chat's thread pin and refuses the pull without it — since a ping acked just before a drop never replays.
+- **Renderer:** `dm` items (`applyMainPull`): pulled on show, focus, the ping and each Bean turn's end
+  (deferred while one runs). Inert, labelled "via Discord/Teams", never in `chatTurns`/`keyedTurns`
+  (so not in the delta or close-time memory), no unread mark.

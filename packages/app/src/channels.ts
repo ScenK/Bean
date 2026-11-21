@@ -171,6 +171,10 @@ export const IPC = {
   // a chat picked in the sidebar restores.
   chatThreadSave: "bean:chat-thread-save",
   chatThreadGet: "bean:chat-thread-get",
+  // Home on the main log (#1000): the owner's DM rows past a cursor; main pushes `chatMainChanged`
+  // (the mount id, never text) when a bot wrote the log.
+  chatMainSince: "bean:chat-main-since",
+  chatMainChanged: "bean:chat-main-changed",
   // chat window's history sidebar → main: list/delete/star/rename/group saved threads.
   chatThreadList: "bean:chat-thread-list",
   chatThreadDelete: "bean:chat-thread-delete",

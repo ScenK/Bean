@@ -1,4 +1,6 @@
-import { formatSummaryBlock, isCardRecord, CARD_RECORD_PREFIX, MAX_DESK_TEXT, type ChatTurn, type ChatopsConversation, type ChatopsSurface, type ConversationKind, type DeskAckResult, type LiveCli } from "@bean/core";
+import { mapSyncedTranscript, MAX_DESK_TEXT, type ChatTurn, type ChatopsConversation, type ChatopsSurface, type ConversationKind, type DeskAckResult, type LiveCli, type SyncedChatRow } from "@bean/core";
+
+export { mapSyncedTranscript, type SyncedChatRow } from "@bean/core";
 
 // Synced chats: the owner's Discord/Teams conversations (core chatops/catalog.ts) shown in the
 // desktop chat sidebar — a read view over `chatops_turns`, plus desk turns sent through the bot
@@ -22,47 +24,12 @@ export interface SyncedChatListing {
   archivedFrom?: string;
 }
 
-/** One transcript line, already mapped for display: the owner's lines lose their `[Name]:`
- * prefix, others keep the name; `[live session]` finals are the agent's; a compaction summary is a
- * status row. Context blocks the bot stored for the model (ambient chatter, replied-to) are left out. */
-export type SyncedChatRow =
-  | { role: "user"; text: string; name?: string }
-  | { role: "bean"; text: string }
-  | { role: "agent"; text: string; agent?: LiveCli }
-  | { role: "status"; text: string };
-
 /** What a desk turn came back with: the bot's ack, or why it never got one. */
 export type SyncedSendResult = DeskAckResult | { failed: string };
 
 /** Push to the chat window: re-read this conversation (or, without an id, the whole surface).
  * `saved` = its history changed (an unread dot when it isn't shown). Ids only, never text. */
 export type { SyncedChatEvent } from "@bean/host";
-
-const SUMMARY_PREFIX = formatSummaryBlock("");
-const LIVE_PREFIX = "[live session] ";
-const SPEAKER = /^\[([^\]\n]*)\]: ([\s\S]*)$/;
-
-export function mapSyncedTranscript(
-  turns: ChatTurn[], row: { kind: ConversationKind; liveCli?: LiveCli }, ownerName: string,
-): SyncedChatRow[] {
-  return turns.flatMap((t): SyncedChatRow[] => {
-    if (t.role === "assistant") {
-      if (t.content.startsWith(LIVE_PREFIX)) {
-        return [{ role: "agent", text: t.content.slice(LIVE_PREFIX.length), ...(row.liveCli ? { agent: row.liveCli } : {}) }];
-      }
-      // A confirm card's record line (#941) is Bean's bookkeeping, not something it said.
-      if (isCardRecord(t.content)) return [{ role: "status", text: `Card: ${t.content.slice(CARD_RECORD_PREFIX.length).replace(/\]$/, "")}` }];
-      return [{ role: "bean", text: t.content }];
-    }
-    if (t.role !== "user") return [];
-    if (t.content.startsWith(SUMMARY_PREFIX)) return [{ role: "status", text: "Earlier messages were summarized." }];
-    const m = SPEAKER.exec(t.content);
-    if (!m) return [];
-    const [, name = "", text = ""] = m;
-    // A DM is the owner's own; elsewhere the owner's desk and platform turns carry the configured name.
-    return [row.kind === "dm" || name === ownerName ? { role: "user", text } : { role: "user", text, name }];
-  });
-}
 
 export interface SyncedChatHandlerDeps {
   dbFile: string;

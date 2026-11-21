@@ -154,9 +154,9 @@ describe("desktop drafts (#982)", () => {
   };
 
   test("the card says what it watches for, how, where it tells you and when it stops", () => {
-    const card = routineDraftCard("d1", { routine: draft, updating: false }, undefined);
+    const card = routineDraftCard("d1", { routine: draft, updating: false }, undefined, "Pip");
     expect(card).toMatchObject({
-      id: "d1", name: "album", ask: "tell me when it's out", commitment: true, tellYou: ["Home"],
+      id: "d1", name: "album", ask: "tell me when it's out", commitment: true, tellYou: ["Your chat with Pip"],
       stops: "Dec 20, 2026, or sooner if found",
     });
     expect(card.how[0]).toMatch(/^Every day at 9:00 AM/);

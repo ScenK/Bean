@@ -57,6 +57,7 @@ export * from "./chatops/sprout-bridge.js";
 export * from "./chatops/cards-api.js";
 export * from "./chatops/conversation.js";
 export * from "./chatops/catalog.js";
+export * from "./chatops/transcript.js";
 export * from "./chatops/compact.js";
 export * from "./chatops/thread-title.js";
 export * from "./chatops/proposals.js";
