@@ -86,7 +86,7 @@ test("main conversation: named after the persona, the avatar's default; a drop o
     const main = chat.locator(".bean-chat-sidebar-home");
     const shown = chat.locator(".bean-chat:not([hidden])");
     await expect(main).toHaveClass(/bean-chat-sidebar-home--active/);
-    await expect(main.locator(".bean-chat-sidebar-home-title")).toHaveText("🏠 Pip");
+    await expect(main.locator(".bean-chat-sidebar-home-title")).toHaveText("Pip");
     await expect(shown.locator(".bean-panel-empty")).toContainText("Sprouts set to post to your chat with Pip land here.");
     await expect(chat.locator(".bean-chat-sidebar-new")).toHaveText("+ New task chat");
 
@@ -96,7 +96,7 @@ test("main conversation: named after the persona, the avatar's default; a drop o
 
     await avatar.evaluate(() => (window as unknown as Bean).bean.savePersona({ name: "Mr. Bean", tags: ["Warm"] }));
     await chat.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(main.locator(".bean-chat-sidebar-home-title")).toHaveText("🏠 Mr. Bean");
+    await expect(main.locator(".bean-chat-sidebar-home-title")).toHaveText("Mr. Bean");
 
     // The dropped URL is still an unsent draft in a chat with no thread: the avatar won't lose it.
     await dblclick();

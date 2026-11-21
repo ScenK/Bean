@@ -323,7 +323,7 @@ describe("ChatWindow Home", () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
     await click(homeRow());
-    expect(root.querySelector(".bean-chat-sidebar-home-title")?.textContent).toBe("🏠 Pip");
+    expect(root.querySelector(".bean-chat-sidebar-home-title")?.textContent).toBe("Pip");
     await vi.waitFor(() => expect(shownChat().textContent).toContain("Sprouts set to post to your chat with Pip land here."));
     const mainMount = bean.chatAttach!.mock.calls.at(-1)![0];
     await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "pick up the note", label: "Continue: n", here: true }); listeners.onChatPrompt!(undefined); });
