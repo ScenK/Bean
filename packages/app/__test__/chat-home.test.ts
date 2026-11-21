@@ -339,6 +339,15 @@ describe("ChatWindow Home", () => {
     expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
     expect((shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement).value).toContain("https://example.com/a");
 
+    // An unused task chat holding an unsent draft refuses the drop, visibly, and keeps the draft.
+    const composer = (): HTMLTextAreaElement => shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    composer().value = "half a thought";
+    await act(async () => { listeners.onComponentDroppedUrl!("https://example.com/c"); });
+    await flush();
+    expect(composer().value).toBe("half a thought");
+    expect(shownChat().textContent).toContain("Send or clear your draft first");
+    composer().value = "";
+
     // A used task chat doesn't take the next drop either: it starts another one.
     await send("work on a");
     const used = bean.chat!.mock.calls.at(-1)![1];

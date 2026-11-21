@@ -87,7 +87,8 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   bean, `avatar.ts` `dblclick`), so it's never where a pushed prompt (even Add to current chat / the
   blank-chat fast path) lands when shown: that opens a task chat (`ChatWindow` `runPushedPrompt`); on
   a task chat, Add to current chat still adds to it. A drop on the avatar (`takeDrop`) always starts
-  a task chat unless the shown one is an unused task chat. The persona is read over the wire
+  a task chat unless the shown one is an unused task chat with an empty composer; an unsent draft
+  there refuses the drop with an error row (leaving the chat would lose the draft). The persona is read over the wire
   (`getPersona` is a remote op); it's never written remotely. An e2e spec about a task chat opens
   one with `e2e/fixtures/task-chat.ts`'s `startTaskChat`; in e2e the empty bubble stack covers
   `#bean`, so avatar gestures are dispatched, not mouse-driven.
