@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS chatops_turns (
   role            TEXT NOT NULL,
   content         TEXT NOT NULL,
   created_at      TEXT NOT NULL,
+  surface         TEXT,
+  turn_key        TEXT,
   PRIMARY KEY (conversation_id, seq)
 );
 CREATE INDEX IF NOT EXISTS chatops_turns_conv ON chatops_turns(conversation_id);
@@ -466,6 +468,10 @@ export function openDb(file: string): DatabaseSync {
     ["desktop_chats", "starred", "INTEGER NOT NULL DEFAULT 0"],
     // Named groups of starred desktop chats (#763): NULL = ungrouped.
     ["desktop_chats", "group_name", "TEXT"],
+    // One conversation, several writers (#996): which surface wrote a turn (NULL = unknown/legacy)
+    // and its idempotency key (NULL = none; unique per conversation via chatops_turns_key below).
+    ["chatops_turns", "surface", "TEXT"],
+    ["chatops_turns", "turn_key", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");
@@ -477,6 +483,8 @@ export function openDb(file: string): DatabaseSync {
       throw err;
     }
   }
+  // After the ALTERs: on an older bean.db turn_key only exists from here. NULLs never collide.
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS chatops_turns_key ON chatops_turns(conversation_id, turn_key)");
   cache.set(file, db);
   if (isNew) migrateFromFiles(db, dirname(file));
   migrateNoteSearch(db);

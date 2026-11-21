@@ -3,21 +3,32 @@ import type { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import type { ChatTurn } from "../converse.js";
 
-interface TurnRow { seq: number; role: string; content: string }
+interface TurnRow { seq: number; role: string; content: string; created_at: string }
 
 function toChatTurn(row: TurnRow): ChatTurn {
   return { role: row.role as ChatTurn["role"], content: row.content };
 }
 
+/** A stored turn with its row identity — the snapshot compaction hands back to replaceOldest. */
+export interface StoredTurn extends ChatTurn { seq: number; createdAt: string }
+
+/** Which surface wrote a turn into a conversation several of them share. */
+export type TurnSurface = "desktop" | "discord" | "teams";
+
+export interface AppendOpts {
+  surface?: TurnSurface;
+  /** Idempotency key, unique per conversation: a second append with the same key stores nothing. */
+  turnKey?: string;
+}
+
 /** Per-thread chat history backed by the shared bean.db (chatops_turns table) — persists across
  * bot restarts, unlike the old in-memory Map. turnCount/oldest/replaceOldest back
  * chatops/compact.ts's silent summarization pass, which keeps long conversations bounded the
- * way the old MAX_TURNS slice did, just smarter. */
+ * way the old MAX_TURNS slice did, just smarter. Safe for several processes writing one
+ * conversation (host + bot servers): every write runs under BEGIN IMMEDIATE. */
 export class ConversationStore {
   private db: DatabaseSync;
   private onChange?: (conversationId: string) => void;
-  // ponytail: in-process, like compact.ts's inFlight map — one bot process owns a conversation.
-  private clears = new Map<string, number>();
 
   /** `onChange` fires after every history write (append, replaceOldest, clear) — the one place
    * every writer (bot turns, delegate results, compaction, outbox notices) goes through. */
@@ -42,18 +53,40 @@ export class ConversationStore {
     return rows.map(toChatTurn);
   }
 
-  append(conversationId: string, turn: ChatTurn): void {
-    const row = this.db.prepare(
-      "SELECT MAX(seq) as maxSeq FROM chatops_turns WHERE conversation_id = ?",
-    ).get(conversationId) as { maxSeq: number | null };
-    const seq = (row.maxSeq ?? 0) + 1;
-    this.db.prepare(
-      "INSERT INTO chatops_turns (conversation_id, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-    ).run(conversationId, seq, turn.role, turn.content, new Date().toISOString());
-    // Keeps the desktop's conversation list (chatops/catalog.ts) in recency order.
-    this.db.prepare("UPDATE chatops_conversations SET updated_at = ? WHERE conversation_id = ?")
-      .run(new Date().toISOString(), conversationId);
-    this.changed(conversationId);
+  /** Runs `fn` under BEGIN IMMEDIATE: the write lock is taken up front (waiting out busy_timeout),
+   * so a read-then-write inside can't race another process's write. */
+  private tx<T>(fn: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const out = fn();
+      this.db.exec("COMMIT");
+      return out;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  /** Appends `turn` at the next seq. Returns false — storing nothing — when `opts.turnKey` is
+   * already in this conversation. */
+  append(conversationId: string, turn: ChatTurn, opts: AppendOpts = {}): boolean {
+    const db = this.db;
+    const stored = this.tx(() => {
+      if (opts.turnKey !== undefined &&
+        db.prepare("SELECT 1 FROM chatops_turns WHERE conversation_id = ? AND turn_key = ?").get(conversationId, opts.turnKey)) {
+        return false;
+      }
+      const now = new Date().toISOString();
+      db.prepare(
+        "INSERT INTO chatops_turns (conversation_id, seq, role, content, created_at, surface, turn_key) " +
+          "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ? FROM chatops_turns WHERE conversation_id = ?",
+      ).run(conversationId, turn.role, turn.content, now, opts.surface ?? null, opts.turnKey ?? null, conversationId);
+      // Keeps the desktop's conversation list (chatops/catalog.ts) in recency order.
+      db.prepare("UPDATE chatops_conversations SET updated_at = ? WHERE conversation_id = ?").run(now, conversationId);
+      return true;
+    });
+    if (stored) this.changed(conversationId);
+    return stored;
   }
 
   /** Empties a conversation's history — backs the "/new" fresh-start command. A catalogued
@@ -89,15 +122,8 @@ export class ConversationStore {
       db.exec("ROLLBACK");
       throw err;
     }
-    this.clears.set(conversationId, this.clearCount(conversationId) + 1);
     this.changed(conversationId);
     return archiveId;
-  }
-
-  /** Bumped by every clear() — lets a writer that awaited (compaction) tell the history it read
-   * from apart from a fresh one with reused seqs. */
-  clearCount(conversationId: string): number {
-    return this.clears.get(conversationId) ?? 0;
   }
 
   /** The CLI's own session id from this thread's last delegate run with that CLI, if any. */
@@ -139,34 +165,41 @@ export class ConversationStore {
     return row.c;
   }
 
-  /** Oldest `n` turns, for summarizing before they're replaced. */
-  oldest(conversationId: string, n: number): ChatTurn[] {
-    const rows = this.db.prepare(
-      "SELECT seq, role, content FROM chatops_turns WHERE conversation_id = ? ORDER BY seq LIMIT ?",
-    ).all(conversationId, n) as unknown as TurnRow[];
-    return rows.map(toChatTurn);
+  /** Oldest `n` turns, for summarizing before they're replaced — pass them back to replaceOldest. */
+  oldest(conversationId: string, n: number): StoredTurn[] {
+    return this.oldestRows(conversationId, n).map((r) => ({ ...toChatTurn(r), seq: r.seq, createdAt: r.created_at }));
   }
 
-  /** Deletes the oldest `n` turns and inserts `summary` in their place (at the lowest freed
-   * seq, so it still sorts before what's kept). */
-  replaceOldest(conversationId: string, n: number, summary: ChatTurn): void {
-    const rows = this.db.prepare(
-      "SELECT seq FROM chatops_turns WHERE conversation_id = ? ORDER BY seq LIMIT ?",
-    ).all(conversationId, n) as unknown as { seq: number }[];
-    if (rows.length === 0) return;
-    const minSeq = rows[0]!.seq;
-    this.db.exec("BEGIN");
-    try {
-      const del = this.db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ? AND seq = ?");
-      for (const { seq } of rows) del.run(conversationId, seq);
-      this.db.prepare(
+  private oldestRows(conversationId: string, n: number): TurnRow[] {
+    return this.db.prepare(
+      "SELECT seq, role, content, created_at FROM chatops_turns WHERE conversation_id = ? ORDER BY seq LIMIT ?",
+    ).all(conversationId, n) as unknown as TurnRow[];
+  }
+
+  /** Compare-and-swap: replaces the `snapshot` turns (from oldest()) with `summary`, at the lowest
+   * freed seq so it still sorts first — only if they are still exactly this conversation's oldest
+   * rows. Another pass compacted them, or a /new reset the conversation, since the snapshot →
+   * returns false and changes nothing. created_at in the match is what tells a reset's fresh turns
+   * (seqs restart at 1) apart from the ones summarized. */
+  replaceOldest(conversationId: string, snapshot: readonly StoredTurn[], summary: ChatTurn): boolean {
+    const first = snapshot[0];
+    if (!first) return false;
+    const db = this.db;
+    const replaced = this.tx(() => {
+      const rows = this.oldestRows(conversationId, snapshot.length);
+      const same = rows.length === snapshot.length && rows.every((r, i) => {
+        const t = snapshot[i]!;
+        return r.seq === t.seq && r.role === t.role && r.content === t.content && r.created_at === t.createdAt;
+      });
+      if (!same) return false;
+      const del = db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ? AND seq = ?");
+      for (const { seq } of snapshot) del.run(conversationId, seq);
+      db.prepare(
         "INSERT INTO chatops_turns (conversation_id, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-      ).run(conversationId, minSeq, summary.role, summary.content, new Date().toISOString());
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
-    this.changed(conversationId);
+      ).run(conversationId, first.seq, summary.role, summary.content, new Date().toISOString());
+      return true;
+    });
+    if (replaced) this.changed(conversationId);
+    return replaced;
   }
 }

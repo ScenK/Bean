@@ -55,8 +55,9 @@ Group channels (Discord/Teams) balance "natural" against "predictable" with one 
 - **`/new`** (like the `cancel` text command) clears the conversation via
   `ConversationStore.clear()` and fences ambient with `setAmbientCutoff(now)`, so pre-reset
   chatter can't leak back in. Any writer that awaits between reading and rewriting history
-  (compaction's summary) must fence on `ConversationStore.clearCount()` — seqs restart at 1
-  after a clear, so they can't detect the reset.
+  (compaction's summary) must compare-and-swap like `replaceOldest` (snapshot from `oldest()`,
+  matched on seq + role + content + `created_at`) — seqs restart at 1 after a clear, so seqs
+  alone can't detect the reset, and the clear may come from another process.
   It works during a live session too (the session keeps running;
   a later session id isn't re-bound — the `resets` counter), so the live branch routes typed
   `new` to `onCommand` like `stop`/`drivers` — never steer it to the agent (#603).

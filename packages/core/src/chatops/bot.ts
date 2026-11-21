@@ -581,8 +581,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // The model's record of a confirm card (#941): one code-built assistant line after each card
   // post and at each authorized outcome — kind, state and a catalog name only (card-record.ts).
   // Appended before the card edit is awaited, so a quick follow-up already sees it.
-  const recordCard = (conversationId: string, kind: CardRecordKind, state: CardRecordState, name?: string): void =>
+  const recordCard = (conversationId: string, kind: CardRecordKind, state: CardRecordState, name?: string): void => {
     deps.conversations.append(conversationId, { role: "assistant", content: cardRecord(kind, state, name) });
+  };
   // A tap whose claim came back empty: `expired` only when the proposal was still held for this
   // conversation (peeked raw before the claim). A consumed, forged or other-conversation id
   // leaves no record.

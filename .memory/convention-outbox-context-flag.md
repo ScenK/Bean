@@ -36,7 +36,8 @@ receives digests would grow unbounded. `maybeCompact` is serialized per conversa
 (`chatops/compact.ts`) because it now has several fire-and-forget callers: two overlapping
 passes both snapshot the same oldest 40 turns and the second `replaceOldest` deletes the
 first's summary plus every newer turn — 22 turns collapsed to 1 in the regression test.
-Serialization is in-process only; see the `ponytail:` note there.
+Across processes (#996) `replaceOldest` is a compare-and-swap on the snapshot, so the stale pass
+skips instead; the in-process queue only saves the wasted summary call.
 
 Default is off on purpose: every digest kept as context costs tokens on every later turn in
 that conversation, including the ones nobody asks about.

@@ -62,18 +62,15 @@ async function compactOnce(
   deps: ConverseDeps,
 ): Promise<void> {
   if (conversations.turnCount(conversationId) <= COMPACT_THRESHOLD) return;
-  const clears = conversations.clearCount(conversationId);
   const oldest = conversations.oldest(conversationId, SUMMARIZE_COUNT);
   const summary = await summarizeTurns(oldest, deps);
-  // A "/new" landed while the summary was pending: the old summary must not overwrite the
-  // fresh conversation's first turns (seqs restart at 1, so they can't tell us).
-  if (conversations.clearCount(conversationId) !== clears) return;
-  conversations.replaceOldest(conversationId, SUMMARIZE_COUNT, { role: "user", content: formatSummaryBlock(summary) });
+  // Compare-and-swap: when another pass (any process) compacted these turns, or a "/new" reset the
+  // conversation while the summary was pending, the stale summary is dropped — nothing is lost.
+  conversations.replaceOldest(conversationId, oldest, { role: "user", content: formatSummaryBlock(summary) });
 }
 
-// ponytail: in-process serialization only. A conversation belongs to exactly one bot process
-// in practice, so that's enough; if two processes ever drive the same conversation id, this
-// needs a real lock on the SQLite row instead.
+// In-process queue, so one process doesn't pay for two summary calls on the same turns; across
+// processes replaceOldest's compare-and-swap keeps an overlapping pass from deleting newer turns.
 const inFlight = new Map<string, Promise<void>>();
 
 /** Silent and automatic — unlike memory consolidation this is pure efficiency, not a
@@ -82,9 +79,9 @@ const inFlight = new Map<string, Promise<void>>();
  * drop). Call fire-and-forget right after appending a turn; never blocks the reply.
  *
  * Serialized per conversation because callers fire-and-forget it from several places (an
- * inbound turn in bot.ts, each delivered outbox message in the bot servers). Two overlapping
- * passes would otherwise both snapshot the same oldest turns, and the second replaceOldest
- * would delete the first's summary along with newer turns and write a stale summary over them. */
+ * inbound turn in bot.ts, each delivered outbox message in the bot servers): two overlapping
+ * passes would both snapshot the same oldest turns, and the second's summary call is wasted
+ * (its replaceOldest then skips). */
 export async function maybeCompact(
   conversationId: string,
   conversations: ConversationStore,
