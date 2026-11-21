@@ -233,7 +233,7 @@ test("remote core: Home shows the owner's DM exchanges", async () => {
     await chat.waitForLoadState("domcontentloaded");
     await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
     // Named after the core's persona, read over the wire (#1001).
-    await expect(chat.locator(".bean-chat-sidebar-home-title")).toHaveText("🏠 Pip");
+    await expect(chat.locator(".bean-chat-sidebar-home-title")).toHaveText("Pip");
     const shown = chat.locator(".bean-chat:not([hidden])");
     await expect(shown.locator(".bean-dm .bean-bubble--user").first()).toContainText("written on the bus");
     await expect(shown.locator(".bean-dm-via").first()).toHaveText("via Discord");

@@ -358,7 +358,11 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
           onClick={() => { if (!homeActive) onOpen("home"); }}
         >
           <span class="bean-chat-sidebar-line">
-            <span class="bean-chat-sidebar-home-title">🏠 {beanName}</span>
+            <span class="bean-dash-orb bean-chat-sidebar-home-orb" aria-hidden="true" />
+            <span class="bean-chat-sidebar-home-text">
+              <span class="bean-chat-sidebar-home-title">{beanName}</span>
+              <span class="bean-chat-sidebar-home-sub">Superagent</span>
+            </span>
             {homeId !== undefined && working.has(homeId) ? marker(homeId) : null}
             {/* Pending posts show even beside a running Home turn's spinner (#961). */}
             {homePending || (homeId !== undefined && !working.has(homeId) && unread.has(homeId))

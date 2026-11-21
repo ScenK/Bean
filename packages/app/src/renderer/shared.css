@@ -266,19 +266,62 @@ button, input, textarea, select, a {
   background: color-mix(in oklch, var(--bean-group-color) 22%, transparent);
 }
 /* Home (#960): pinned above the list, never folds; no star, rename, group or delete. */
+/* A hero card wearing the Dashboard's orb (.bean-dash-orb): a warm wash lit from the orb's corner. */
 .bean-chat-sidebar-home {
   flex: none;
   display: flex;
-  margin: 0 0 4px;
-  border-radius: 8px;
+  margin: 2px 0 10px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in oklch, var(--bean-orb-2) 18%, transparent);
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in oklch, var(--bean-orb-1) 16%, transparent), transparent 60%),
+    color-mix(in oklch, var(--bean-orb-2) 4%, var(--bean-surface));
+  /* The wash costs the dim ink its 4.5:1, so here it sits a step nearer the text ink (as in .bean-chat-sidebar-set). */
+  --bean-text-dim: color-mix(in oklch, var(--bean-text) 80%, var(--bean-surface));
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.bean-chat-sidebar-home:hover { background: var(--bean-surface-2); }
+.bean-chat-sidebar-home:hover { border-color: color-mix(in oklch, var(--bean-orb-2) 34%, transparent); }
 .bean-chat-sidebar-home--active,
 .bean-chat-sidebar-home--active:hover {
-  background: color-mix(in oklch, var(--bean-accent) 10%, var(--bean-surface));
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--bean-accent) 32%, transparent);
+  border-color: color-mix(in oklch, var(--bean-orb-2) 48%, transparent);
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in oklch, var(--bean-orb-1) 26%, transparent), transparent 62%),
+    color-mix(in oklch, var(--bean-orb-2) 8%, var(--bean-surface));
+  box-shadow: 0 10px 24px -16px var(--bean-orb-glow);
 }
+.bean-chat-sidebar-home .bean-chat-sidebar-open { padding: 10px 12px; }
+.bean-chat-sidebar-home .bean-chat-sidebar-line { gap: 11px; }
 .bean-chat-sidebar-home--active .bean-chat-sidebar-open { cursor: default; }
+.bean-chat-sidebar-home-orb { position: relative; transition: transform 0.2s; }
+.bean-chat-sidebar-home:hover .bean-chat-sidebar-home-orb { transform: scale(1.06); }
+/* The selected orb breathes: a fixed glow layer whose opacity animates (compositor-only, so an idle
+   Home doesn't repaint every frame the way an animated box-shadow does). */
+.bean-chat-sidebar-home--active .bean-chat-sidebar-home-orb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 18px 2px var(--bean-orb-glow);
+  opacity: 0;
+  will-change: opacity;
+  animation: bean-home-orb-breathe 3.2s ease-in-out infinite;
+}
+@keyframes bean-home-orb-breathe {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bean-chat-sidebar-home--active .bean-chat-sidebar-home-orb::after { animation: none; opacity: 0.5; }
+  .bean-chat-sidebar-home:hover .bean-chat-sidebar-home-orb { transform: none; }
+}
+.bean-chat-sidebar-home-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.bean-chat-sidebar-home-sub {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bean-text-dim);
+}
 .bean-chat-sidebar-row {
   display: flex;
   align-items: center;
@@ -353,6 +396,7 @@ button, input, textarea, select, a {
   text-overflow: ellipsis;
 }
 .bean-chat-sidebar-row--active .bean-chat-sidebar-title { font-weight: 700; }
+.bean-chat-sidebar-home-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
 .bean-chat-sidebar-line .bean-agent-avatar { flex: none; }
 .bean-chat-sidebar-spinner,
 .bean-chat-sidebar-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
