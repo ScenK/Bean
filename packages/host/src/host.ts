@@ -387,11 +387,16 @@ export async function createHost(deps: HostDeps) {
   // current holder is still running them.
   // The lease holder also runs the one-conversation cutover (#999): it holds the API key in remote
   // setups. A failure (or a source written mid-fold) leaves everything dark; the next boot retries.
+  // Home's restore waits on it (`cutoverRunning`), so no Home opens on the shell's history mid-fold.
+  let cutoverRun: Promise<void> | undefined;
   const cutover = (): void => {
-    void loadChatopsOwners(dir)
+    if (mainCutover(db)) return;
+    const run = loadChatopsOwners(dir)
       .then((owners) => runMainCutover(db, owners, { chat: runtime.converse, model: runtime.getModel() }))
       .then((r) => { if (r === "changed") console.warn("bean: main conversation cutover deferred: a history changed mid-fold"); })
-      .catch((err: unknown) => console.error("bean: main conversation cutover failed", err));
+      .catch((err: unknown) => console.error("bean: main conversation cutover failed", err))
+      .finally(() => { if (cutoverRun === run) cutoverRun = undefined; });
+    cutoverRun = run;
   };
   startScheduler = () => { void routines.start(); cutover(); };
   stopScheduler = () => routineScheduler.stop();
@@ -526,6 +531,7 @@ export async function createHost(deps: HostDeps) {
     isChatClient, chat, memory, threads, delegateTasks, liveTasks, push,
     onRelease: deps.onChatRelease,
     refuseStart,
+    cutoverRunning: () => cutoverRun,
     track,
     // Lease holder only, like a bot's tap: the holder's start closes any other host's open dispatch.
     sproutRun: (name, origin) => (schedulerLease.held()

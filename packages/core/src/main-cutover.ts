@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { openDb } from "./db.js";
 import { HOME_THREAD_ID } from "./desktop-chats.js";
 import { postTurn } from "./prompt.js";
+import { cardRecord, runEndState, type CardRecordKind, type CardRecordState } from "./card-record.js";
 import type { ChatTurn, ConverseDeps } from "./converse.js";
 import type { ChatopsSurface } from "./chatops/catalog.js";
 import { archiveTurns, insertTurn } from "./chatops/conversation.js";
@@ -34,8 +35,32 @@ const timeOf = (at: unknown): number | undefined => {
   return Number.isNaN(t) ? undefined : t;
 };
 
-/** Home's items (renderer-owned, read loosely) after its latest summary: typed turns, replies and
- * posts — cards and status rows carry nothing a summary needs. */
+// A Home card item's record kind and catalog name (the renderer's cardItemRecord, read loosely).
+const CARDS: Record<string, { kind: CardRecordKind; name?: (it: Record<string, unknown>) => unknown }> = {
+  proposal: { kind: "run", name: (it) => (it.run as Record<string, unknown> | undefined)?.skillName },
+  delegate: { kind: "delegate", name: (it) => (it.proposal as Record<string, unknown> | undefined)?.skillName },
+  note: { kind: "note" },
+  skill: { kind: "skill", name: (it) => (it.skill as Record<string, unknown> | undefined)?.name },
+  offer: { kind: "live session" },
+  send: { kind: "send" },
+  routine: { kind: "sprout draft", name: (it) => (it.card as Record<string, unknown> | undefined)?.name },
+  todo: { kind: "todo", name: (it) => (it.todo as Record<string, unknown> | undefined)?.routine },
+  sprout: { kind: "sprout", name: (it) => (it.plan as Record<string, unknown> | undefined)?.routine },
+};
+
+/** A saved card's history line, as the model saw it before the cutover (#941). */
+function cardLine(it: Record<string, unknown>): string | undefined {
+  const card = CARDS[typeof it.kind === "string" ? it.kind : ""];
+  if (!card || typeof it.state !== "string") return undefined;
+  const state = it.state === "confirmed" ? "started"
+    : it.state !== "done" ? it.state
+    : it.kind === "delegate" || typeof it.result !== "string" ? "finished" : runEndState(it.result);
+  const name = card.name?.(it);
+  return cardRecord(card.kind, state as CardRecordState, typeof name === "string" ? name : undefined);
+}
+
+/** Home's items (renderer-owned, read loosely) after its latest summary: typed turns, replies,
+ * posts and card records. */
 function homeTurns(itemsJson: string): { summary?: string; turns: Array<{ at?: number; turn: ChatTurn }> } {
   let items: unknown;
   try { items = JSON.parse(itemsJson); } catch { return { turns: [] }; }
@@ -44,9 +69,12 @@ function homeTurns(itemsJson: string): { summary?: string; turns: Array<{ at?: n
   const last = list.findLastIndex((it) => it?.kind === "summary" && typeof it.text === "string");
   const summary = last >= 0 ? (list[last]!.text as string) : undefined;
   const turns = list.slice(last + 1).flatMap((it): Array<{ at?: number; turn: ChatTurn }> => {
-    if (!it || typeof it.text !== "string" || !it.text.trim()) return [];
+    if (!it) return [];
     const at = timeOf(it.at);
     const dated = at === undefined ? {} : { at };
+    const card = cardLine(it);
+    if (card) return [{ ...dated, turn: { role: "assistant", content: card } }];
+    if (typeof it.text !== "string" || !it.text.trim()) return [];
     if (it.kind === "user") return [{ ...dated, turn: { role: "user", content: it.text } }];
     if (it.kind === "reply") {
       const agent = typeof it.agent === "string" && it.agent !== "bean" ? `[${it.agent}] ` : "";
@@ -115,9 +143,15 @@ export async function runMainCutover(
     if (marked()) result = "already";
     else if (JSON.stringify(readSources(db, owners)) !== seen) result = "changed";
     else {
-      for (const dm of sources.dms) archiveTurns(db, dm.id);
+      // Dated now, not the DM's last activity: an archive gets the full retention window from the cutover.
+      const at = now().toISOString();
+      const dated = db.prepare("UPDATE chatops_conversations SET updated_at = ? WHERE conversation_id = ?");
+      for (const dm of sources.dms) {
+        const archive = archiveTurns(db, dm.id);
+        if (archive) dated.run(at, archive);
+      }
       if (summary) insertTurn(db, MAIN_CONVERSATION_ID, { role: "user", content: formatSummaryBlock(summary) });
-      db.prepare("INSERT INTO memory_meta (key, value) VALUES (?, ?)").run(MAIN_CUTOVER_KEY, now().toISOString());
+      db.prepare("INSERT INTO memory_meta (key, value) VALUES (?, ?)").run(MAIN_CUTOVER_KEY, at);
     }
     db.exec(result === "done" ? "COMMIT" : "ROLLBACK");
     return result;

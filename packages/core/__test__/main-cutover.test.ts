@@ -40,13 +40,16 @@ describe("main conversation cutover (#999)", () => {
         { kind: "summary", id: "s", text: "home so far" },
         { kind: "user", id: "b", text: "undated desk" },
         { kind: "reply", id: "c", text: "desk reply", at: "2026-11-01T10:00:00Z" },
-        { kind: "proposal", id: "d", text: "card" },
+        { kind: "proposal", id: "d", state: "expired", run: { skillName: "ship" } },
+        { kind: "send", id: "e", state: "sent", at: "2026-11-01T10:30:00Z" },
       ]),
     });
     t.dm("discord", "discord:dm1", "u1", [["user", "discord fact", "2026-11-01T09:00:00Z"]]);
     t.dm("teams", "teams:dm1", "29:x", [["user", "teams fact", "2026-11-01T11:00:00Z"]]);
     (new ConversationCatalog(t.file, "teams")).upsert({ conversationId: "teams:dm1", place: { kind: "dm", title: "DM" }, ownerId: "29:x", ownerAltId: "aad-1" });
     t.dm("discord", "discord:mia", "mia", [["user", "member secret", "2026-11-01T09:30:00Z"]]);
+    // A DM quiet for longer than the archive retention: its archive must not be pruned on the first listing.
+    openDb(t.file).prepare("UPDATE chatops_conversations SET updated_at = ? WHERE conversation_id = ?").run("2025-01-01T00:00:00Z", "discord:dm1");
 
     expect(await runMainCutover(t.file, t.owners, t.deps)).toBe("done");
     expect(t.calls).toHaveLength(1);
@@ -54,7 +57,7 @@ describe("main conversation cutover (#999)", () => {
     expect(prompt).toContain("Summary so far:\nhome so far");
     expect(prompt).not.toContain("old, covered");
     expect(prompt).not.toContain("member secret");
-    const order = ["undated desk", "discord fact", "desk reply", "teams fact"].map((s) => prompt.indexOf(s));
+    const order = ["undated desk", '[card: run "ship" — expired]', "discord fact", "desk reply", "[card: send — sent]", "teams fact"].map((s) => prompt.indexOf(s));
     expect(order.every((n, i) => n >= 0 && (i === 0 || n > order[i - 1]!))).toBe(true);
 
     expect(mainCutover(t.file)).toBe(true);
