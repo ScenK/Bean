@@ -6,8 +6,10 @@
  * v2 (#975): `chat` history is the turns after the shell's rolling `summary`, and the reply may carry
  * a new one — a v1 core would drop the summary's context, a v1 shell would re-summarize every turn.
  * v3 (#976): Home is one fixed thread; `chatThreadGet("home")` no longer carries `home.until` — a v2
- * shell would end Home's "day" the moment it opened. */
-export const CONTRACT_VERSION = 3;
+ * shell would end Home's "day" the moment it opened.
+ * v4 (#997): Home's model history can be the core's main log — `chat` takes a keyed `delta` instead of
+ * history, and `chatThreadGet("home")` says so (`home.log`); a v3 shell would keep sending history. */
+export const CONTRACT_VERSION = 4;
 
 /** What the host machine offers beyond core: Mac system controls, a Terminal.app handoff, chat pty
  * terminals, and opening/picking paths on its desktop. Host-bound channels each need one. */

@@ -5,7 +5,9 @@ import {
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
   DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, HOME_THREAD_TITLE, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
+  CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, maybeCompact, type ChatTurn, type ConversationStore, type KeyedTurn,
 } from "@bean/core";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { ClientId } from "./shell-ops.js";
 
@@ -62,6 +64,16 @@ export interface ChatHandlerDeps {
     generate: ImageGenDeps["generate"]; getModel: () => string; imagesDir: string; onStart?: (mountId?: string) => void;
     saveNoteImage?: ImageGenDeps["saveNoteImage"];
   };
+  /** The main conversation's log (#997) when this chat (mount) is Home and the cutover is done; else
+   * undefined and the turn runs on the shell's history as before. */
+  mainLog?: (mountId: string | undefined) => ConversationStore | undefined;
+}
+
+/** Appends a shell's keyed turns to the main log; a key already there appends nothing. */
+function appendDelta(log: ConversationStore, turns: readonly KeyedTurn[]): void {
+  for (const t of turns) {
+    log.append(MAIN_CONVERSATION_ID, { role: t.role, content: t.content }, { surface: "desktop", turnKey: desktopTurnKey(t.key) });
+  }
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
@@ -115,14 +127,30 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
         })
       : undefined;
     const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? []), ...(workTool ? [workTool] : [])];
-    // Bounded here, on the core (a remote shell never holds the API key): the summary rides back
-    // with the reply and the shell keeps it as a hidden item (#975).
-    const compacted = await compactHistory(req.history, req.summary, { chat: deps.converse, model: deps.getModel() }, signal);
-    // The shell says a long gap came before this message (#977); the time is the core's, which a
-    // remote shell can't know. It rides back so the shell keeps it on the turn, frozen.
-    const gapMarker = req.gap === true ? gapMarkerLine(arrived) : undefined;
+    const log = deps.mainLog?.(mountId);
+    let history: ChatTurn[];
+    let gapMarker: string | undefined;
+    let newSummary: { text: string; covers: number } | undefined;
+    if (log) {
+      // The main conversation (#997): the history is the log — its summary and turns — never the
+      // shell's items. The gap is judged from the log's own times, before this turn's delta lands.
+      const delta = checkKeyedTurns(req.delta);
+      const last = log.lastTurnAt(MAIN_CONVERSATION_ID);
+      if (last !== undefined && arrived.getTime() - Date.parse(last) >= CHAT_GAP_MS) gapMarker = gapMarkerLine(arrived);
+      appendDelta(log, delta);
+      history = log.history(MAIN_CONVERSATION_ID);
+    } else {
+      // Bounded here, on the core (a remote shell never holds the API key): the summary rides back
+      // with the reply and the shell keeps it as a hidden item (#975).
+      const compacted = await compactHistory(req.history, req.summary, { chat: deps.converse, model: deps.getModel() }, signal);
+      history = compacted.history;
+      newSummary = compacted.summary;
+      // The shell says a long gap came before this message (#977); the time is the core's, which a
+      // remote shell can't know. It rides back so the shell keeps it on the turn, frozen.
+      if (req.gap === true) gapMarker = gapMarkerLine(arrived);
+    }
     const result = await converse({
-      history: compacted.history,
+      history,
       latestUserText: req.message,
       gapMarker,
       latestUserImages: req.images,
@@ -150,7 +178,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       ...(drafts ? { routineAuthoring: drafts.authoring(allRoutines) } : {}),
       signal,
     });
-    if (compacted.summary) result.summary = compacted.summary;
+    if (newSummary) result.summary = newSummary;
     if (gapMarker) result.gapMarker = gapMarker;
     if (result.proposedSend && deps.proposeSend) {
       result.sendCard = deps.proposeSend(result.proposedSend.destination, result.proposedSend.text);
@@ -172,6 +200,22 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     }
     if (memoryTools && memoryTools.remembered.length > 0) result.remembered = memoryTools.remembered;
     if (memoryTools && memoryTools.forgotten.length > 0) result.forgotten = memoryTools.forgotten;
+    if (log) {
+      // This turn and its reply join the log, keyed by the shell's turn id: the shell's own copy of
+      // the user turn (a later delta, a save) then appends nothing. Compaction runs on the log.
+      const key = req.turnId ?? randomUUID();
+      const said = [
+        gapMarker ? `${gapMarker}\n${req.message}` : req.message,
+        ...(req.images?.length ? ["[image attached]"] : []),
+        ...(documents ?? []).map((d) => `[PDF attached: ${d.filename}]`),
+      ].join("\n");
+      log.append(MAIN_CONVERSATION_ID, { role: "user", content: said }, { surface: "desktop", turnKey: desktopTurnKey(key) });
+      if (result.reply.trim()) {
+        log.append(MAIN_CONVERSATION_ID, { role: "assistant", content: result.reply }, { surface: "desktop", turnKey: desktopTurnKey(`${key}:reply`) });
+      }
+      void maybeCompact(MAIN_CONVERSATION_ID, log, { chat: deps.converse, model: deps.getModel() })
+        .catch((err) => console.warn("bean: main conversation compaction failed:", err instanceof Error ? err.message : err));
+    }
     return result;
   };
 }
@@ -230,14 +274,20 @@ export function buildModelMemoryHandlers(deps: ModelMemoryHandlerDeps) {
 }
 
 /** A chat window's transcript save. `items` are the renderer's normalized ChatItems — opaque here. */
-export interface ChatThreadSaveRequest { id: string; title: string; items: unknown[]; noteSlug?: string }
+export interface ChatThreadSaveRequest {
+  id: string; title: string; items: unknown[]; noteSlug?: string;
+  /** Home on the main log (#997): the turns new since the shell's last ack — card outcomes and live
+   * finals flush with the save, not only with the next model turn. */
+  turns?: KeyedTurn[];
+}
 export interface ChatThreadAck { id: string; title: string; updatedAt: string; home?: true }
 /** What a chat restores: a saved thread, or `missing` when the picked one is gone (deleted or
  * pruned) — the chat opens empty with a status row. */
 export type PendingChatThread = {
   id: string; title: string; items: unknown[]; noteSlug: string | null; sprouts?: SproutOutcome[];
-  /** Home (#960): its pending posts, handed to this chat to append and drain with its next save. */
-  home?: { posts: HomePost[] };
+  /** Home (#960): its pending posts, handed to this chat to append and drain with its next save.
+   * `log` (#997): Home's model history is the main log — the shell sends deltas, not history. */
+  home?: { posts: HomePost[]; log?: true };
 } | { missing: true };
 
 /** A sprout run a desktop chat started (#921), as its card learns it: `status` absent = still
@@ -262,7 +312,9 @@ export interface ChatThreadHandlerDeps {
   listDesktopChats: (file: string) => DesktopChatListing[];
   /** Home posts (#960); absent = Home opens with no posts and a save drains nothing. */
   listPendingHomePosts?: (file: string) => HomePost[];
-  saveDesktopChatDraining?: (file: string, chat: DesktopChatInput, drained: readonly string[], now?: Date) => string;
+  saveDesktopChatDraining?: (file: string, chat: DesktopChatInput, drained: readonly string[], now?: Date, opts?: { mainLog?: boolean }) => string;
+  /** The main conversation's log once the cutover is done (#997); undefined before it. */
+  mainLog?: () => ConversationStore | undefined;
   /** A save drained Home posts (#961): the host recounts its bubble. */
   onDrained?: () => void;
   now?: () => Date;
@@ -349,7 +401,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     if (!home || unsavable.has(key)) return thread;
     const posts = deps.listPendingHomePosts?.(deps.dbFile) ?? [];
     handed.set(key, { thread: id, ids: new Set([...(handed.get(key)?.thread === id ? handed.get(key)!.ids : []), ...posts.map((p) => p.id)]) });
-    return { ...thread, home: { posts } };
+    return { ...thread, home: { posts, ...(deps.mainLog?.() ? { log: true as const } : {}) } };
   };
   /** Home is pinned in the sidebar: never deleted, starred, renamed or grouped. */
   const notHome = (id: string, what: string): void => {
@@ -407,8 +459,12 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (other !== undefined && other !== key) throw new Error("another open chat saves this thread");
       const itemsJson = JSON.stringify(o.items);
       if (Buffer.byteLength(itemsJson, "utf8") > DESKTOP_CHAT_MAX_BYTES) throw new Error("desktop chat is too large to save");
+      const log = isHome(o.id) ? deps.mainLog?.() : undefined;
+      // Checked before anything is written; appended before the save, so a failed save re-sends them.
+      const turns = log ? checkKeyedTurns(o.turns) : [];
       const at = now();
       const chat = { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null };
+      if (log) appendDelta(log, turns);
       // Home posts (#960) drain with the save that holds them: the `post` items in this transcript
       // whose ids were handed to this chat with this thread — never another chat's, never a guess.
       const mine = handed.get(key);
@@ -418,7 +474,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       }))];
       // The stored title, not the renderer's: a rename since the first save wins over the open chat's copy.
       const title = drained.length > 0 && deps.saveDesktopChatDraining
-        ? deps.saveDesktopChatDraining(deps.dbFile, chat, drained, at)
+        ? deps.saveDesktopChatDraining(deps.dbFile, chat, drained, at, { mainLog: log !== undefined })
         : deps.saveDesktopChat(deps.dbFile, chat, at);
       for (const x of drained) mine?.ids.delete(x);
       threads.set(key, o.id);
@@ -439,6 +495,8 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     holderOf: holder,
     /** The thread this chat writes, once pinned. */
     pinnedOf: (key: string): string | undefined => threads.get(key),
+    /** Whether this chat (mount key) is Home on the main log (#997). */
+    isMain: (key: string): boolean => threads.get(key) === HOME_THREAD_ID && deps.mainLog?.() !== undefined,
     exists: (id: string): boolean => deps.getDesktopChat(deps.dbFile, id) !== undefined,
     /** The chat mount is gone: its thread is free to delete or reopen. */
     release: (key: string): void => {

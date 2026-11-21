@@ -203,6 +203,11 @@ describe("remote attach over the unix socket", () => {
     shell.send({ type: "resume", acks: {} });
     const result = await shell.call("chat", { history: [], message: "hi", source: "typed" }, "m1");
     expect(result).toMatchObject({ ok: true, value: { reply: "echo: hi" } });
+    // v4 (#997): a keyed delta passes the wire guard; a malformed one is refused before the handler.
+    const delta = [{ key: "u1", role: "user", content: "earlier" }];
+    expect(await shell.call("chat", { history: [], message: "hi", delta }, "m1")).toMatchObject({ ok: true });
+    expect(await shell.call("chat", { history: [], message: "hi", delta: [{ key: 1, role: "user", content: "x" }] }, "m1"))
+      .toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
     const event = await shell.next((m) => m.type === "push");
     expect(event).toMatchObject({ mountId: "m1", seq: 1, kind: "delegate", payload: { taskId: "t1", type: "started" } });
     expect(await shell.call("getModel")).toMatchObject({ ok: true, value: "gpt-test" });
@@ -270,6 +275,12 @@ describe("remote attach over the unix socket", () => {
     b.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION + 1 });
     expect(await b.next((m) => m.type === "error")).toMatchObject({ handshake: { contract: CONTRACT_VERSION } });
     await b.closed;
+    // A v3 shell (pre-#997: it would keep sending Home's history) is refused too.
+    expect(CONTRACT_VERSION).toBe(4);
+    const c = shellOverBridge(path);
+    c.send({ type: "attach", shellId: SHELL, contract: 3 });
+    expect(await c.next((m) => m.type === "error")).toMatchObject({ message: expect.stringMatching(/mismatch/) });
+    await c.closed;
   });
 
   it("a frame that throws closes only its own connection, never the core", async () => {

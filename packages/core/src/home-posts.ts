@@ -5,6 +5,9 @@
 import { randomUUID } from "node:crypto";
 import { openDb } from "./db.js";
 import { saveDesktopChat, type DesktopChatInput } from "./desktop-chats.js";
+import { insertTurn } from "./chatops/conversation.js";
+import { MAIN_CONVERSATION_ID, postTurnKey } from "./main-conversation.js";
+import { postTurn } from "./prompt.js";
 
 export interface HomePost {
   id: string;
@@ -95,13 +98,23 @@ export const HOME_THREAD_TITLE = "Home";
 
 /** Saves a Home transcript and marks the posts it now holds drained, in one transaction: a failed
  * save leaves them pending, and a crash can't drain a post the transcript doesn't hold. Returns the
- * stored title. */
-export function saveDesktopChatDraining(file: string, chat: DesktopChatInput, drained: readonly string[], now: Date = new Date()): string {
+ * stored title. `mainLog` (after the cutover, #997): each drained post is also appended to the main
+ * conversation's log, keyed by its id — a re-run drain appends it once. */
+export function saveDesktopChatDraining(
+  file: string, chat: DesktopChatInput, drained: readonly string[], now: Date = new Date(), opts: { mainLog?: boolean } = {},
+): string {
   const db = openDb(file);
   db.exec("BEGIN IMMEDIATE");
   try {
     const title = saveDesktopChat(file, chat, now);
     markHomePostsDrained(file, drained, () => now);
+    if (opts.mainLog) {
+      const get = db.prepare("SELECT sprout, body FROM home_posts WHERE id = ?");
+      for (const id of drained) {
+        const p = get.get(id) as { sprout: string; body: string } | undefined;
+        if (p) insertTurn(db, MAIN_CONVERSATION_ID, { role: "user", content: postTurn({ sprout: p.sprout, text: p.body }) }, { surface: "desktop", turnKey: postTurnKey(id) });
+      }
+    }
     db.exec("COMMIT");
     return title;
   } catch (err) {

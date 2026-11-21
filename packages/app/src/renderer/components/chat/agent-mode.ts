@@ -1,10 +1,10 @@
-import type { AvailableModel, CliName, LiveCli } from "@bean/core";
+import type { AvailableModel, CliName, KeyedTurn, LiveCli } from "@bean/core";
 import type { HandoffItem, LiveEvent } from "@bean/host";
 import type { CloseTurn } from "@bean/host";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { cardRecord, runEndState, type CardRecordState } from "@bean/core/card-record";
-import { quoteFence } from "@bean/core/prompt";
+import { postTurn } from "@bean/core/prompt";
 import { pdfPlaceholder, SPROUT_UNKNOWN } from "./chat-thread.js";
 
 // Agent mode's pure pieces — slash parsing, the shared history mapper and the live-event reducer —
@@ -149,9 +149,19 @@ export function placeSummary(items: ChatItem[], owners: readonly string[], summa
   return [...items.slice(0, at + 1), { kind: "summary", id: newId(), text: summary.text }, ...items.slice(at + 1)];
 }
 
-/** A Home post's history turn: code-built header, the sprout's text fenced as data. */
-export const postTurn = (p: { sprout: string; text: string }): string =>
-  `[sprout "${quoteFence(p.sprout).replace(/["\n]/g, " ")}" posted]: <<<\n${quoteFence(p.text)}\n>>>`;
+export { postTurn };
+
+/** Home's turns for the main log (#997), each keyed for the host's dedupe: a user turn or a reply by
+ * its item id (the host appends Bean's own turn under the same id), a card by its id + record — each
+ * state is one more line, as chatops records outcomes. Posts drain host-side; summaries never ride. */
+export function keyedTurns(items: ChatItem[]): KeyedTurn[] {
+  return items.flatMap((it) => {
+    if (it.kind === "post" || it.kind === "summary") return [];
+    return chatTurns([it]).flatMap((t): KeyedTurn[] => (t.role === "user" || t.role === "assistant"
+      ? [{ key: it.kind === "user" || it.kind === "reply" ? it.id : `${it.id}:${t.content}`, role: t.role, content: t.content }]
+      : []));
+  });
+}
 
 /** A sprout/todo card's `done`, split by how it ended (its settled outcome line). */
 function doneState(result: string | undefined, started: boolean): CardRecordState {

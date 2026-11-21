@@ -92,6 +92,7 @@ const turn = shape({ role: oneOf("user", "assistant", "system"), content: str, i
 const chatRequest = shape({
   history: arr(turn), summary: opt(str), message: str, gap: opt(bool), source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
   linkedNote: opt(obj), images: opt(arr(shape({ data: str, mimeType: str }))), documents: opt(arr(() => true)), turnId: opt(str),
+  delta: opt(arr(shape({ key: str, role: oneOf("user", "assistant"), content: str }))),
 });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
 const delegateStart = shape({ projectPath: str, prompt: str, instruction: str, model: opt(str), cli: opt(str), skillName: opt(str) });

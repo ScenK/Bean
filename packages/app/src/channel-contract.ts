@@ -23,10 +23,12 @@ const list = arr(() => true);
 
 // Request payloads: required fields and their types (handlers still check ids, paths, sizes, enums).
 const turn = shape({ role: oneOf("user", "assistant", "system"), content: str, id: opt(str) });
+// A main-log turn (#997): the shell's stable key for it.
+const keyedTurn = shape({ key: str, role: oneOf("user", "assistant"), content: str });
 const image = shape({ data: str, mimeType: str });
 const chatRequest = shape({
   history: arr(turn), summary: opt(str), message: str, gap: opt(bool), source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
-  linkedNote: opt(obj), images: opt(arr(image)), documents: opt(list), turnId: opt(str),
+  linkedNote: opt(obj), images: opt(arr(image)), documents: opt(list), turnId: opt(str), delta: opt(arr(keyedTurn)),
 });
 const project = shape({ name: str, path: str, skills: opt(arr(str)) });
 const persona = shape({ name: str, tags: arr(str) });
@@ -47,7 +49,7 @@ const liveStart = shape({
   history: opt(arr(shape({ role: oneOf("user", "reply"), text: str, agent: opt(str) }))),
 });
 const launch = shape({ mode: str, projectPath: str, prompt: opt(str), model: opt(str) });
-const threadSave = shape({ id: str, title: str, items: list, noteSlug: opt(str) });
+const threadSave = shape({ id: str, title: str, items: list, noteSlug: opt(str), turns: opt(arr(keyedTurn)) });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
 const deskContinue = shape({ channelId: str, title: str, sessionId: opt(str) });
 const watch = either(

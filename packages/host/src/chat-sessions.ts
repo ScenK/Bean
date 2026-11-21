@@ -105,6 +105,8 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     /** Where a mount-tagged push goes: the client holding the mount, or the one that last held it. */
     clientOf: mounts.clientOf,
     isIncognito: (k: string): boolean => deps.memory.isIncognito(k),
+    /** Whether this chat (mount key) is Home on the main conversation's log (#997). */
+    isMain: (k: string): boolean => deps.threads.isMain(k),
     /** The chat threads a chat (mount key) dispatches sprouts from: its pinned thread and any it
      * started a sprout under (#924, background_work). */
     threadsOf: (k: string): string[] => {

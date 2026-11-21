@@ -3,7 +3,7 @@ import { ChatPanel, type StopTarget } from "./ChatPanel.js";
 import { MAX_IMAGES_PER_MESSAGE, PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
-  HANDOFF_ITEMS, chatTurns, modelHistory, placeSummary, sinceSummary, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
+  HANDOFF_ITEMS, chatTurns, keyedTurns, modelHistory, placeSummary, sinceSummary, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
   LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
   LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths, type LabeledImage,
 } from "./agent-mode.js";
@@ -17,7 +17,7 @@ import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { CARD_LEAD } from "@bean/core/card-record";
 import { dataUrlToAttachment, labelNoteImages } from "../../shared/note-images.js";
 import type {
-  AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
+  AvailableModel, CliName, DesktopChatListing, ImageAttachment, KeyedTurn, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
 import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult, SproutEvent, SproutPush } from "@bean/host";
@@ -322,6 +322,15 @@ export function ChatSession({
   const [home, setHome] = useState(false);
   const waitingPostsRef = useRef<Array<{ id: string; sprout: string; body: string; createdAt: string }>>([]);
   const undrainedRef = useRef(new Set<string>());
+  // Home on the main log (#997): the host holds the model history; this chat sends only the keyed
+  // turns it hasn't had acked (a chat turn or a save acks them — a lost ack just re-sends, and the
+  // host appends a key once). Restored items count as acked: the save that kept them flushed them.
+  const logRef = useRef(false);
+  const ackedRef = useRef(new Set<string>());
+  const pendingTurns = (): KeyedTurn[] => keyedTurns(itemsRef.current)
+    // Bean's turn in flight joins the log with its reply (host-side), marker included.
+    .filter((t) => !ackedRef.current.has(t.key) && t.key !== beanTurnRef.current?.id);
+  const ackKeys = (keys: Iterable<string>): void => { for (const k of keys) ackedRef.current.add(k); };
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushRef = useRef(false);
   // Each write resolves to whether it landed (it never rejects) — a switch waits on that.
@@ -470,10 +479,12 @@ export function ChatSession({
     // Home posts this save holds are drained by it (main reads them from `items`, one transaction), so
     // a failed save leaves them pending.
     const drained = [...undrainedRef.current].filter((id) => items.some((it) => it.kind === "post" && it.postId === id));
+    const turns = logRef.current ? pendingTurns() : undefined;
     savingRef.current = savingRef.current
-      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}) }, mountId))
+      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}), ...(turns ? { turns } : {}) }, mountId))
       .then((ack) => {
         for (const id of drained) undrainedRef.current.delete(id);
+        if (ack && turns) ackKeys(turns.map((x) => x.key));
         if (ack) setThreads((prev) => withSaveAck(prev, ack, items));
         return true;
       }, (err: unknown) => {
@@ -561,8 +572,13 @@ export function ChatSession({
         waitingPostsRef.current = t.home.posts;
         for (const p of t.home.posts) undrainedRef.current.add(p.id);
       }
+      const saved = restoreItems(t.items);
+      if (t.home?.log) {
+        logRef.current = true;
+        ackKeys(keyedTurns(saved).map((x) => x.key));
+      }
       // Running sprout cards settle from main's record of their runs (their results loop back below).
-      const sprouts = settleRestoredSprouts(restoreItems(t.items), t.sprouts);
+      const sprouts = settleRestoredSprouts(saved, t.sprouts);
       const restored = sprouts.items;
       // PDF bytes are never saved: ask for the file again. Part of the baseline, so viewing still
       // never writes; restoredPdf skips the ask once a later save has kept it.
@@ -677,11 +693,16 @@ export function ChatSession({
     // Image bytes ride only on the current turn; older turns keep a text placeholder
     // (mirrors chatops — see core's latestUserImages doc comment). The latest rolling summary
     // stands for everything before it; the core folds more in once past its budget (#975).
-    const { summary, turns: history, owners } = modelHistory(itemsRef.current);
+    // On the main log (#997) the host builds the history: this chat sends its unacked turns instead.
+    const delta = logRef.current ? pendingTurns() : undefined;
+    const { summary, turns: history, owners } = delta ? { summary: undefined, turns: [], owners: [] } : modelHistory(itemsRef.current);
+    const replyId = newId();
 
     try {
       const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
-      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
+      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), ...(delta ? { delta } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
+      // The host appended the delta, this turn and its reply.
+      if (delta) ackKeys([...delta.map((x) => x.key), turnId, replyId]);
       if (res.model) setModel(res.model);
       // Stopped while attaching: the file may be what hung, so it's unpinned like a failure. A PDF an
       // earlier turn already read stays pinned.
@@ -701,7 +722,7 @@ export function ChatSession({
           (g): g is { path: string; dataUrl: string } => typeof g.dataUrl === "string",
         );
         if (res.reply.trim() || generated?.length) {
-          next.push({ kind: "reply", id: newId(), text: res.reply, images: generated?.length ? generated : undefined, at: new Date().toISOString() });
+          next.push({ kind: "reply", id: replyId, text: res.reply, images: generated?.length ? generated : undefined, at: new Date().toISOString() });
         }
         if (res.proposedRun) {
           next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });

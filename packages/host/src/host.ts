@@ -16,7 +16,7 @@ import {
   deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
-  saveModelMemory, resolveDelegateSelection, liveRuns,
+  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -457,8 +457,16 @@ export async function createHost(deps: HostDeps) {
     projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), projectsFile: projectsFile(dir),
     personaFile: personaFile(dir), projectPersonaFile: personaFile(projectDir), dbFile: db,
   };
+  // The main conversation's log (#997): read per request, so the cutover (#999) switches it on live.
+  let mainStore: ConversationStore | undefined;
+  const mainLog = (): ConversationStore | undefined => {
+    if (!mainCutover(db)) return undefined;
+    return (mainStore ??= new ConversationStore(db));
+  };
   const chat = buildChatHandler({
     ...paths,
+    // `threads` is built just below; a turn only runs after both exist.
+    mainLog: (mountId) => (mountId !== undefined && threads.isMain(mountId) ? mainLog() : undefined),
     loadMemories, appendMemories, deleteMemories,
     ownerSubjectIds: () => ownerSubjectIds(db, dir),
     converse: runtime.converse,
@@ -496,6 +504,7 @@ export async function createHost(deps: HostDeps) {
   const threads = buildChatThreadHandlers({
     dbFile: db, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats,
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (file) => listPendingHomePosts(file), saveDesktopChatDraining,
+    mainLog,
     onDrained: () => homeBubble?.refresh(),
   });
   homeBubble = createHomeBubble({
