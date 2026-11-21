@@ -113,8 +113,10 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
 }
 
 /** The one fixed line atop a transcript the trim has dropped older items from (#976). A status row:
- * shown, saved, never model history. */
-export const TRIM_NOTICE = "Older messages aren't kept here — Bean remembers what mattered.";
+ * shown, saved, never model history. Shown as `trimNoticeText(<persona name>)` (#1001); the stored
+ * text stays fixed, since it's how a notice is found again. */
+export const trimNoticeText = (name: string): string => `Older messages aren't kept here — ${name} remembers what mattered.`;
+export const TRIM_NOTICE = trimNoticeText("Bean");
 const isTrimNotice = (it: ChatItem): boolean => it.kind === "status" && it.text === TRIM_NOTICE;
 
 /** Drops the oldest items to at most `max` (and `maxBytes` as JSON) — never one `keep` holds, nor the

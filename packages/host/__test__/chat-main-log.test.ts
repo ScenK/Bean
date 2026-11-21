@@ -19,7 +19,7 @@ function setup() {
   const threads = buildChatThreadHandlers({
     dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats,
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (f) => listPendingHomePosts(f), saveDesktopChatDraining, mainLog,
-    personaName: async () => "Pip",
+    personaName: () => "Pip",
   });
   const seen: ChatMessage[][] = [];
   const chat = buildChatHandler({

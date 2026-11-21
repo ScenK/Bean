@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONTRACT_VERSION } from "@bean/host";
 import { launchBean } from "./fixtures/launch-app.js";
+import { startTaskChat } from "./fixtures/task-chat.js";
 
 type Bean = { bean: { openComponent: (k: string) => Promise<void> } };
 
@@ -106,6 +107,7 @@ test("remote core: chat over ssh, reconnect bar, takeover banner", async () => {
     ]);
     await chat.waitForLoadState("domcontentloaded");
     await expect(chat.locator(".bean-chat-host")).toHaveText("me@box");
+    await startTaskChat(chat);
     const composer = chat.locator(".bean-input--composer");
 
     await composer.fill("hi");

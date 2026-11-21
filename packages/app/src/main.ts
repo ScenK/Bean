@@ -5,7 +5,7 @@ import { release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { buildSyncedChatHandlers } from "./synced-chats.js";
-import { buildHandshake, createHost, HOME_JOB_ID, homeJob, shellClientId, type ChatopsBot, type ChatopsState, type Host, type TaskJob } from "@bean/host";
+import { buildHandshake, createHost, homeJob, shellClientId, type ChatopsBot, type ChatopsState, type Host, type TaskJob } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
 import { BOT_ORDER, awaySurfaces, botLabel, chatopsMenuRows, setTrayAway, trayAwayOn } from "./chatops-tray-menu.js";
 import { installAvatarControls } from "./avatar-window.js";
@@ -176,8 +176,8 @@ app.whenReady().then(async () => {
   // Remote core: chat mount id → the window (webContents id) holding it (remote-core.ts).
   const remoteMounts = new Map<string, number>();
   let remoteIpc: ReturnType<typeof registerRemoteIpc> | undefined;
-  // Pending Home posts (#961): the local host's Home bubble, or a remote core's polled count — a remote
-  // shell's whole job list is that bubble (the core sends it no job feed).
+  // A remote core's polled pending Home count (#961) — a remote shell's whole job list is that bubble
+  // (the core sends it no job feed).
   let homeCount = 0;
   let remoteJobs: TaskJob[] = [];
   const broadcastJobs = (jobs: TaskJob[] = host?.taskStatus.list() ?? remoteJobs): void => push.broadcast(IPC.taskStatus, jobs);
@@ -627,7 +627,6 @@ app.whenReady().then(async () => {
         builtinDir: projectDir,
         push: hostPush(push),
         onJobs: (jobs) => {
-          homeCount = jobs.find((j) => j.id === HOME_JOB_ID)?.count ?? 0;
           keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
           // Mid-reload the old document is gone; the finished reload replays the current list.
           if (!avatarControls.reloading()) broadcastJobs(jobs);
@@ -743,8 +742,15 @@ app.whenReady().then(async () => {
         call: (op, args) => r.call(op, args),
         onCount: (n) => {
           homeCount = n;
-          remoteJobs = n > 0 ? [homeJob(n, remoteJobs[0]?.startedAt)] : [];
-          if (!avatarControls.reloading()) broadcastJobs(remoteJobs);
+          // The bubble is named after the core's persona (#1001), re-read with each count.
+          const named = n > 0
+            ? r.call("getPersona", []).then((p) => (p as { name?: unknown } | null)?.name, () => undefined)
+            : Promise.resolve(undefined);
+          void named.then((name) => {
+            if (homeCount !== n) return; // a newer count landed meanwhile
+            remoteJobs = n > 0 ? [homeJob(n, typeof name === "string" && name ? name : "Bean", remoteJobs[0]?.startedAt)] : [];
+            if (!avatarControls.reloading()) broadcastJobs(remoteJobs);
+          });
         },
       });
       remoteIpc = registerRemoteIpc(ipcMain, {
@@ -797,16 +803,8 @@ app.whenReady().then(async () => {
       cleanupExtractedBundle: (extractedAppPath: string) => cleanupExtractedBundle(extractedAppPath),
       openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },
       getCurrentTheme, setCurrentTheme, proposeRun,
-      // Opening chat (the avatar) lands on Home while posts are pending (#961); a drop still opens its chat.
-      // The count is read now, not the last published one: a post may still be on its way to the bubble.
-      openComponent: (kind, payload) => {
-        if (kind !== "chat" || payload !== undefined) return openComponent(kind, payload);
-        // Inside the chain: a throwing local read falls back to the last count, and chat still opens.
-        void Promise.resolve()
-          .then((): unknown => (host ? host.handlers.homePending() : remote ? remote.call("homePending", []) : 0))
-          .catch(() => homeCount)
-          .then((n) => (typeof n === "number" && n > 0 ? openChatHome() : openComponent("chat")));
-      },
+      // Opening chat from the avatar always lands on the main conversation (#1001); a drop still opens its chat.
+      openComponent: (kind, payload) => (kind === "chat" && payload === undefined ? openChatHome() : openComponent(kind, payload)),
       openChatHome,
       getPendingChatHome: () => { const h = pendingHome; pendingHome = false; return h; },
       getPendingPlan: planStore.get,

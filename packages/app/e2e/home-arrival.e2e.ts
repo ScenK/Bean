@@ -64,3 +64,38 @@ test("home: boot bubble, the pill on a shown Home, and the dot while another cha
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
+
+// #1001: the main conversation is named after the persona (a rename shows at the window's next focus),
+// the avatar always opens it, and a URL dropped while it's shown opens a separate task chat.
+test("main conversation: named after the persona, the avatar's default; a drop opens a task chat", async () => {
+  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["claude", "codex", "opencode"] });
+  await writeFile(join(home.homeDir, ".bean", "persona.json"), JSON.stringify({ name: "Pip", tags: ["Warm"] }), "utf8");
+  const app = await launchBean({ HOME: home.homeDir });
+  type Bean = { bean: { openComponent: (k: string, p?: string) => void; savePersona: (p: unknown) => Promise<void> } };
+  try {
+    const avatar = await app.firstWindow();
+    const [chat] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("chat")),
+    ]);
+    const main = chat.locator(".bean-chat-sidebar-home");
+    const shown = chat.locator(".bean-chat:not([hidden])");
+    await expect(main).toHaveClass(/bean-chat-sidebar-home--active/);
+    await expect(main.locator(".bean-chat-sidebar-home-title")).toHaveText("🏠 Pip");
+    await expect(shown.locator(".bean-panel-empty")).toContainText("Sprouts set to post to your chat with Pip land here.");
+    await expect(chat.locator(".bean-chat-sidebar-new")).toHaveText("+ New task chat");
+
+    await avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("chat", "https://example.com/a"));
+    await expect(main).not.toHaveClass(/bean-chat-sidebar-home--active/);
+    await expect(shown.locator(".bean-input--composer")).toHaveValue(/https:\/\/example\.com\/a/);
+
+    await avatar.evaluate(() => (window as unknown as Bean).bean.savePersona({ name: "Mr. Bean", tags: ["Warm"] }));
+    await chat.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(main.locator(".bean-chat-sidebar-home-title")).toHaveText("🏠 Mr. Bean");
+
+    await avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("chat"));
+    await expect(main).toHaveClass(/bean-chat-sidebar-home--active/);
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});

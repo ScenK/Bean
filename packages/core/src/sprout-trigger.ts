@@ -37,7 +37,7 @@ function resultsTo(r: Routine, action: "run" | "check"): string {
   const out: string[] = [...new Set((r.sinks.chatops ?? []).map((s) => (s.transport === "teams" ? "Teams" : "Discord")))];
   if (r.sinks.note) out.push("a note");
   if (r.sinks.notify) out.push("a desktop notification");
-  if (r.sinks.home) out.push("the Home chat");
+  if (r.sinks.home) out.push("your main chat");
   // A run's end comes back to the chat that started it (#921); a check's doesn't.
   if (action === "run") return out.length > 0 ? `this chat, ${out.join(", ")}` : "this chat";
   return out.length > 0 ? out.join(", ") : "the run history only";

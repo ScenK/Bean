@@ -23,8 +23,14 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
 
 - Home is **one continuous thread**: `HOME_THREAD_ID` (core `desktop-chats.ts`) is a fixed UUID-shaped
   sha256 of a constant — no date, no stored state, every shell agrees. The shell asks for it as
-  `chatThreadGet("home", mount)` and gets an empty thread (titled `HOME_THREAD_TITLE`) before the first
-  save, plus `home: { posts }`. The listing flags it `home: true`; the sidebar pins it.
+  `chatThreadGet("home", mount)` and gets an empty thread before the first save, plus `home: { posts }`.
+  The listing flags it `home: true`; the sidebar pins it.
+- **Named after the persona (#1001):** get and list title it with the persona's name (host
+  `personaName`, a sync read), whatever title it was stored under; ids (`home`, `sinks.home`) stay.
+  The renderer's labels (sidebar, empty state, sprout editor, trim notice) re-read `getPersona` on
+  mount and window focus (`usePersonaName`), so a rename shows at the next focus, remote too; the
+  avatar bubble is named after it on each recount (and on a persona save). User-facing copy says
+  "your chat with <name>", never "Home".
 - It never rolls over: no midnight timer, status row or listing re-check (they were the daily Home's,
   #960 had no product reason for the roll). Its model history is bounded by the rolling summary
   (#975, `project-desktop-chat-compaction.md`), its transcript by the save trim.
@@ -73,14 +79,18 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
 - Remote shell: no job feed, so `createRemoteHomePoll` (remote-core.ts) reads `homePending` on
   attach, every `HOME_POLL_MS` and after a `chatThreadSave`; only the latest read's reply counts.
   Main broadcasts `[homeJob(n)]` as the whole job list.
-- "Open on Home": main's `openChatHome` (bubble, a sprout banner with `meta.open: "home"`, and the
-  avatar's plain open-chat when a fresh `homePending` read is positive) pushes `chatShowHome` to an
+- "Open on Home": main's `openChatHome` (bubble, a sprout banner with `meta.open: "home"`, and —
+  since #1001 — **every** plain open-chat from the avatar) pushes `chatShowHome` to an
   open window and leaves `getPendingChatHome` for one still loading. Main also replays the job list
   once the avatar has loaded — boot jobs were otherwise pushed to nobody.
+- Since #1001 the main conversation is the avatar's default, so it's never where a pushed prompt
+  (even Add to current chat / the blank-chat fast path) or a dropped URL lands: shown, they open a
+  task chat (`ChatWindow` `runPushedPrompt` / `takeDrop`). An e2e spec about a task chat opens one
+  with `e2e/fixtures/task-chat.ts`'s `startTaskChat`.
 
 ## Sprout editor (#962)
 
-- "Post to Home chat" under DIGEST SINKS writes `sinks.home: {}`; the nested minutes field sets
+- "Post to your chat with <name>" under DIGEST SINKS writes `sinks.home: {}`; the nested minutes field sets
   `ttlMinutes` (blank = keep). An invalid number stays in the draft so core's
   `describeRoutineError` refuses the save with its message — no renderer-side copy of the rule.
   Malformed text ("-") reads as `""` with `validity.badInput`: it's stored as NaN, never as blank.

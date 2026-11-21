@@ -35,7 +35,7 @@ test("sprout draft card: a commitment shows when it stops; Save writes it on wit
     await expect(card).toContainText("Watch for");
     await expect(card).toContainText("tell me when the album is out");
     await expect(card).toContainText("Every day at 9:00 AM");
-    await expect(card).toContainText("Home");
+    await expect(card).toContainText("Your chat with Bean");
     await expect(card).toContainText(/Stops.*or sooner if found/);
 
     await card.getByRole("button", { name: "Save" }).click();

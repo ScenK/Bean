@@ -1271,8 +1271,8 @@ describe("propose_routine", () => {
       const problem = async (draft: object) =>
         (await conv({ latestUserText: "x", deps: call(JSON.stringify(draft)), routineAuthoring: desktop })).proposedRoutine?.problem;
       expect(await problem({ ...watch, sinks: { home: {}, chatops: [{ transport: "teams" }, { transport: "discord" }] } })).toBeUndefined();
-      expect(await problem({ ...watch, sinks: { chatops: [{ transport: "discord", user: "mia" }] } })).toMatch(/post to Home or DM you/);
-      expect(await problem({ ...watch, sinks: { chatops: [{ transport: "teams", channel: "19:x" }] } })).toMatch(/post to Home or DM you/);
+      expect(await problem({ ...watch, sinks: { chatops: [{ transport: "discord", user: "mia" }] } })).toMatch(/post to your main chat or DM you/);
+      expect(await problem({ ...watch, sinks: { chatops: [{ transport: "teams", channel: "19:x" }] } })).toMatch(/post to your main chat or DM you/);
       expect(await problem({ ...watch, sinks: { chatops: [{ transport: "teams", alias: "nobody" }] } })).toMatch(/isn't known/);
       expect(await problem({ ...watch, watch: { kind: "command", command: "true" } })).toMatch(/command watches/);
     });

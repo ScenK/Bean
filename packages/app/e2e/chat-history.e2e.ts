@@ -1,5 +1,6 @@
 import { test, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { launchBean } from "./fixtures/launch-app.js";
+import { startTaskChat } from "./fixtures/task-chat.js";
 import { installFakeCli, makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, HOME_THREAD_ID, insertHomePost, listPendingHomePosts, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
@@ -17,6 +18,7 @@ async function openChat(app: ElectronApplication): Promise<Page> {
   // Shown on ready-to-show, which can land after the DOM renders — later checks assume it's up.
   await expect.poll(() => app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))?.isVisible())).toBe(true);
+  await startTaskChat(chat);
   return chat;
 }
 

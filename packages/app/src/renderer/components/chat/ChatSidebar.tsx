@@ -8,6 +8,7 @@ import { agoText } from "../routines/watch-status.js";
 import type { SyncedChatListing } from "../../../synced-chats.js";
 import { kindChip, SURFACE_NAMES, syncedKey } from "./SyncedChat.js";
 import { MOD_LABEL, modKey } from "../../shared/mod-key.js";
+import { usePersonaName } from "../../shared/persona-name.js";
 
 /** Below this window width the sidebar is an overlay (always opening collapsed). */
 export const SIDEBAR_INLINE_MIN = 640;
@@ -169,6 +170,7 @@ export function rowTime(iso: string, now: Date): string {
 
 export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, homeActive, homePending = false, onNew, onOpen, onDelete, onStar, onRename, onGroup, onRenameGroup }: Props) {
   const now = new Date();
+  const beanName = usePersonaName(); // the main conversation's name (#1001)
   // Home is the pinned row, never a dated one (the old daily Home threads, pre-#976, are plain history).
   // Filtered here, not into `threads`: effects key on that prop's identity.
   const homeId = threads.find((t) => t.home)?.id;
@@ -352,11 +354,11 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
           class="bean-chat-sidebar-open"
           disabled={busy}
           aria-current={homeActive ? "true" : undefined}
-          title="Sprouts set to Post to Home land here"
+          title={`Your chat with ${beanName} — sprouts set to post to it land here`}
           onClick={() => { if (!homeActive) onOpen("home"); }}
         >
           <span class="bean-chat-sidebar-line">
-            <span class="bean-chat-sidebar-home-title">🏠 Home</span>
+            <span class="bean-chat-sidebar-home-title">🏠 {beanName}</span>
             {homeId !== undefined && working.has(homeId) ? marker(homeId) : null}
             {/* Pending posts show even beside a running Home turn's spinner (#961). */}
             {homePending || (homeId !== undefined && !working.has(homeId) && unread.has(homeId))
@@ -567,7 +569,8 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
             <button type="submit" class="bean-btn" disabled={grouping || !cleanGroupName(newGroup)}>{groupNames.includes(cleanGroupName(newGroup)) ? "Add to group" : "Create group"}</button>
           </div>
         </form>
-      ) : <button ref={newRef} type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>}
+      ) : <button ref={newRef} type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}
+        title={`Separate from your chat with ${beanName}`}>+ New task chat</button>}
       <div class="bean-chat-sidebar-foot">Kept 90 days unless starred · incognito chats never kept · {MOD_LABEL}-click chats to group them</div>
     </nav>
   );

@@ -307,12 +307,36 @@ describe("ChatWindow Home", () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
     await click(homeRow());
-    expect(shownChat().textContent).toContain("Sprouts set to Post to Home land here.");
+    expect(shownChat().textContent).toContain("Sprouts set to post to your chat with Bean land here.");
     await click(shownChat().querySelector(".bean-chat-incognito"));
     expect(bean.setChatIncognito!.mock.calls).toEqual([[true, expect.any(String)]]);
     const homeMount = bean.chatThreadGet!.mock.calls[0]![1];
     expect(bean.setChatIncognito!.mock.calls[0]![1]).not.toBe(homeMount);
     expect(shownChat().querySelector(".bean-chat-incognito--on")).not.toBeNull();
     expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+  });
+
+  // #1001: the main conversation is the avatar's default, never where a pushed task or a drop lands.
+  it("on the main conversation, a pushed prompt (even Add to current chat) and a dropped URL open a task chat", async () => {
+    bean.chatThreadGet!.mockResolvedValue(homeThread([]));
+    bean.getPersona = vi.fn(async () => ({ name: "Pip", tags: ["Warm"] }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    expect(root.querySelector(".bean-chat-sidebar-home-title")?.textContent).toBe("🏠 Pip");
+    await vi.waitFor(() => expect(shownChat().textContent).toContain("Sprouts set to post to your chat with Pip land here."));
+    const mainMount = bean.chatAttach!.mock.calls.at(-1)![0];
+    await act(async () => { bean.getPendingChatPrompt = vi.fn().mockResolvedValueOnce({ prompt: "pick up the note", label: "Continue: n", here: true }); listeners.onChatPrompt!(undefined); });
+    await flush();
+    expect(bean.chat!.mock.calls.map((c) => c[1])).toHaveLength(1);
+    expect(bean.chat!.mock.calls[0]![1]).not.toBe(mainMount);
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+
+    await click(homeRow());
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).not.toBeNull();
+    await act(async () => { listeners.onComponentDroppedUrl!("https://example.com/a"); });
+    await flush();
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+    expect((shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement).value).toContain("https://example.com/a");
   });
 });

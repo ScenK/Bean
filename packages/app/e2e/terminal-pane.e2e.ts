@@ -4,6 +4,7 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { basename, join } from "node:path";
 import { launchBean } from "./fixtures/launch-app.js";
+import { startTaskChat } from "./fixtures/task-chat.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
@@ -65,6 +66,7 @@ async function openChat(app: ElectronApplication): Promise<Page> {
   await chat.waitForLoadState("domcontentloaded");
   await expect.poll(() => app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))?.isVisible())).toBe(true);
+  await startTaskChat(chat);
   return chat;
 }
 const closeChat = (app: ElectronApplication): Promise<void> => app.evaluate(({ BrowserWindow }) => {

@@ -7,6 +7,7 @@ import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { useCapabilities } from "../../shared/capabilities.js";
+import { usePersonaName } from "../../shared/persona-name.js";
 import type { RoutineStateView, RoutineBuildView, DestinationView } from "@bean/host";
 import { StepsEditor } from "./StepsEditor.js";
 import { chatTargets, cleanChatSinks, isDmSink } from "./chat-sinks.js";
@@ -210,6 +211,7 @@ function loadFoldedSections(): string[] {
 // 1a "Routine as a recipe": list rail on the left, a recipe-style editor on the right —
 // cadence reads as a sentence, the fan-out is a numbered timeline of delegate steps.
 export function RoutinesPanel() {
+  const beanName = usePersonaName(); // the main conversation's name (#1001)
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [listFolded, toggleListFold] = useListFold("bean.routines.listFolded");
   const [states, setStates] = useState<Record<string, RoutineStateView>>({});
@@ -615,7 +617,7 @@ export function RoutinesPanel() {
   // Home always gets the brief (chatopsVerbatim and only-on-problems are chatops-only), except a
   // stepless run, which has nothing to brief and posts the digest.
   const briefTargets = brief ? [...chatTargetList] : [];
-  if (draft.sinks.home) (stepless ? sinkTargets : briefTargets).push("your Home chat");
+  if (draft.sinks.home) (stepless ? sinkTargets : briefTargets).push(`your chat with ${beanName}`);
 
   const routineRow = (sectionKey: string, { routine: r, also, problems }: SproutRow) => sectionKey === ARCHIVED ? (
     <div
@@ -1343,7 +1345,7 @@ export function RoutinesPanel() {
                 setDraft({ ...draft, sinks: (e.target as HTMLInputElement).checked ? { ...rest, home: {} } : rest });
               }}
             />
-            Post to Home chat
+            <span class="bean-routines-sink-name">Post to your chat with {beanName}</span>
           </label>
           {draft.sinks.home ? (
             <label class="bean-routines-sink-row bean-routines-sink-suboption bean-routines-home-ttl">
@@ -1355,7 +1357,7 @@ export function RoutinesPanel() {
                 min={1}
                 step={1}
                 class="bean-routines-pill-input"
-                aria-label="Drop the Home post if unread after this many minutes"
+                aria-label={`Drop the post to your chat with ${beanName} if unread after this many minutes`}
                 // NaN = malformed text the user is still typing: leave the field's text alone.
                 value={Number.isNaN(draft.sinks.home.ttlMinutes) ? undefined : draft.sinks.home.ttlMinutes ?? ""}
                 onInput={(e) => {

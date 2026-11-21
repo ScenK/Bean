@@ -4,7 +4,7 @@ import {
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
-  DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, HOME_THREAD_TITLE, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
+  DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, DEFAULT_PERSONA, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
   CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, boundMainLog, type ChatTurn, type ConversationStore, type KeyedTurn,
   mainSince, homeMainCursor, setHomeMainCursor, type MainSince,
 } from "@bean/core";
@@ -320,8 +320,8 @@ export interface ChatThreadHandlerDeps {
   mainLog?: () => ConversationStore | undefined;
   /** A save drained Home posts (#961): the host recounts its bubble. */
   onDrained?: () => void;
-  /** The persona's name, for the cutover's one status line (#1000). */
-  personaName?: () => Promise<string>;
+  /** The persona's name: the main conversation's title (#1001) and the cutover's status line (#1000). */
+  personaName?: () => string;
   now?: () => Date;
   dbFile: string;
 }
@@ -392,6 +392,10 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
   const handed = new Map<string, { thread: string; ids: Set<string> }>();
   const now = (): Date => deps.now?.() ?? new Date();
   const isHome = (id: string): boolean => id === HOME_THREAD_ID;
+  // The main conversation is named after the persona (#1001), whatever title it was stored under.
+  const mainTitle = (): string => {
+    try { return deps.personaName?.() || DEFAULT_PERSONA.name; } catch { return DEFAULT_PERSONA.name; }
+  };
   const holder = (id: string): string | undefined => [...threads].find(([, t]) => t === id)?.[0];
   /** A saved thread for this chat to restore (pinned to it), or `missing` when it's gone. Home
    * (`HOME_TARGET` or its id) is never missing: an empty thread until its first save, with the
@@ -409,7 +413,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     let items: unknown = [];
     if (row) try { items = JSON.parse(row.itemsJson); } catch { items = []; }
     if (!unsavable.has(key)) threads.set(key, id);
-    const thread = { id, title: row?.title ?? HOME_THREAD_TITLE, items: Array.isArray(items) ? items : [], noteSlug: row?.noteSlug ?? null };
+    const thread = { id, title: home ? mainTitle() : row!.title, items: Array.isArray(items) ? items : [], noteSlug: row?.noteSlug ?? null };
     if (!home || unsavable.has(key)) return thread;
     const posts = deps.listPendingHomePosts?.(deps.dbFile) ?? [];
     handed.set(key, { thread: id, ids: new Set([...(handed.get(key)?.thread === id ? handed.get(key)!.ids : []), ...posts.map((p) => p.id)]) });
@@ -420,7 +424,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     if (isHome(id)) throw new Error(`Home can't be ${what}`);
   };
   return {
-    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile).map((t) => (isHome(t.id) ? { ...t, home: true } : t)),
+    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile).map((t) => (isHome(t.id) ? { ...t, title: mainTitle(), home: true } : t)),
     /** Sidebar delete: never a thread an open chat holds. */
     delete: (id: unknown): void => {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
@@ -520,8 +524,7 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       const from = typeof cursor === "number" && Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0;
       const { cutoverAt, ...pull } = mainSince(deps.dbFile, from);
       if (cutoverAt === undefined) return pull;
-      const name = (await deps.personaName?.().catch(() => undefined)) || "Bean";
-      return { ...pull, cutover: cutoverLine(name) };
+      return { ...pull, cutover: cutoverLine(mainTitle()) };
     },
     exists: (id: string): boolean => deps.getDesktopChat(deps.dbFile, id) !== undefined,
     /** The chat mount is gone: its thread is free to delete or reopen. */
