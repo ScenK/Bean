@@ -98,6 +98,12 @@ test("main conversation: named after the persona, the avatar's default; a drop o
     await chat.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect(main.locator(".bean-chat-sidebar-home-title")).toHaveText("🏠 Mr. Bean");
 
+    // The dropped URL is still an unsent draft in a chat with no thread: the avatar won't lose it.
+    await dblclick();
+    await expect(shown.locator(".bean-status", { hasText: "switching chats would lose it" })).toBeVisible();
+    await expect(main).not.toHaveClass(/bean-chat-sidebar-home--active/);
+    await expect(shown.locator(".bean-input--composer")).toHaveValue(/https:\/\/example\.com\/a/);
+    await shown.locator(".bean-input--composer").fill("");
     await dblclick();
     await expect(main).toHaveClass(/bean-chat-sidebar-home--active/);
     await expect(avatar.locator(".bean-menu--open")).toHaveCount(0);

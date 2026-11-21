@@ -1665,6 +1665,12 @@ export function ChatSession({
   // a pushed prompt can start here (a staged PDF would ride along with it).
   const untouched = (): boolean => !threadRef.current && itemsRef.current.length === 0 && !pdfRef.current && !restoringRef.current;
 
+  // Unsent work a leave would lose: staged images or PDF, or composer text with no saved thread to keep
+  // it (hasWork keeps a saved thread's typed draft mounted).
+  const draft = (): boolean => (pdfRef.current !== undefined && !pdfRef.current.sent)
+    || composerRef.current?.closest(".bean-chat")?.querySelector(".bean-chat-pending-image img") != null
+    || ((threadRef.current === undefined || unsavableRef.current) && (composerRef.current?.value.trim() ?? "") !== "");
+
   // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
     if (evictingRef.current || leavingRef.current) return;
@@ -1672,6 +1678,9 @@ export function ChatSession({
     // mount still restoring Home counts as Home: the restore brings the posts.
     if (target === "home" && (homeRef.current || (restoreId === "home" && restoringRef.current))) { pullPosts(); return; }
     if (target === "new" ? untouched() : target === threadRef.current?.id) return;
+    // Every switch (sidebar, the avatar's main conversation, a pushed prompt, a drop) stops here
+    // rather than silently dropping an unsent draft.
+    if (draft()) { addStatus("Send or clear your draft first — switching chats would lose it.", "error"); return; }
     // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
     // sidebar row to come back to — kept hidden, it would be unreachable).
     if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {
@@ -1741,9 +1750,7 @@ export function ChatSession({
     reattached: () => pullPosts(pullMain),
     runPrompt,
     blank: untouched,
-    draft: () => (pdfRef.current !== undefined && !pdfRef.current.sent)
-      || composerRef.current?.closest(".bean-chat")?.querySelector(".bean-chat-pending-image img") != null
-      || ((threadRef.current === undefined || unsavableRef.current) && (composerRef.current?.value.trim() ?? "") !== ""),
+    draft,
     writable: () => !continuedTo(itemsRef.current),
     // Rendered as a `reply` (not `status`) so it enters conversation history: a later "retry" needs
     // the full instruction (notice.text) in context, not just the short bubble text (notice.display).

@@ -174,6 +174,7 @@ export function ChatWindow() {
     if (api?.draft()) { api.error("Send or clear your draft first, then drop it again — a drop starts its own task chat."); return; }
     if (!api || (!api.home() && api.blank())) { setDroppedUrl(u); return; }
     if (api.switching()) { api.error("Bean is still switching chats — drop it again in a moment."); return; }
+    pendingPromptRef.current = undefined; // a pushed prompt whose switch was refused or cancelled
     pendingDropRef.current = u;
     api.open("new");
   };
@@ -189,6 +190,7 @@ export function ChatWindow() {
     // Mid-switch, `open` is a no-op and the switch would land with this prompt in place of the one
     // it's for: refused, not queued (same rule as Add to current chat while Bean is answering).
     if (api.switching()) { api.error(`Bean is still switching chats — send "${p.label}" again in a moment.`); return; }
+    pendingDropRef.current = undefined; // a drop whose switch was refused or cancelled (Keep working)
     pendingPromptRef.current = p;
     api.open("new");
   };

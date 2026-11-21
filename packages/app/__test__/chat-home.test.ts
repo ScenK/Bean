@@ -352,6 +352,12 @@ describe("ChatWindow Home", () => {
     await flush();
     expect(composer().value).toBe("half a thought");
     expect(bean.chatAttach!.mock.calls.length).toBe(mounts);
+    // Nor does the avatar's main conversation take the window off it: the draft would be lost.
+    await act(async () => { listeners.onChatShowHome!(); });
+    await flush();
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+    expect(composer().value).toBe("half a thought");
+    expect(shownChat().textContent).toContain("switching chats would lose it");
     composer().value = "";
 
     // A used task chat doesn't take the next drop either: it starts another one.
