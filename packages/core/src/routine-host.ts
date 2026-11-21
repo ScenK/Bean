@@ -19,7 +19,7 @@ import { listDestinations } from "./destinations.js";
 import { todoDispatchOrigins } from "./dispatch-store.js";
 import { insertHomePost } from "./home-posts.js";
 import type { RunOrigin } from "./routine-scheduler.js";
-import { stepGroups } from "./routine-graph.js";
+import { namedStepId, stepGroups } from "./routine-graph.js";
 import {
   runRoutine,
   type CommandStepRequest, type DelegateStepRequest, type DelegateStepResult, type RoutineRunnerDeps, type RoutineRunResult,
@@ -125,7 +125,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     const id = todo ? `routine:${routine.name}:${todo.id}` : `routine:${routine.name}`;
     const steps = routine.steps.map((st) => {
       const text = st.kind === "command" ? st.command : st.instruction;
-      return st.skill || (text.length > 60 ? `${text.slice(0, 59)}…` : text);
+      return namedStepId(st) ?? (st.skill || (text.length > 60 ? `${text.slice(0, 59)}…` : text));
     });
     deps.onStatus?.({ type: "start", id, name: todo?.text ?? routine.name, routine: routine.name, detail: todo ? `Sprout: ${routine.name}` : routine.description ?? "", steps, startedAt: Date.now() });
     let result: RoutineRunResult | undefined;
