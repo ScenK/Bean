@@ -189,6 +189,9 @@ export interface ChatSessionApi {
   runPrompt: (p: ChatPrompt) => void;
   /** Nothing said, staged or saved yet: a pushed prompt can start here instead of in a new chat. */
   blank: () => boolean;
+  /** Something unsent that leaving would lose: images or a PDF staged but not sent, or composer text
+   * with no saved thread to keep it (hasWork keeps a saved thread's draft mounted). */
+  draft: () => boolean;
   /** Not continued in Discord (that leaves the chat read-only). */
   writable: () => boolean;
   notices: (notices: InterruptedRunNotice[]) => void;
@@ -1738,6 +1741,9 @@ export function ChatSession({
     reattached: () => pullPosts(pullMain),
     runPrompt,
     blank: untouched,
+    draft: () => (pdfRef.current !== undefined && !pdfRef.current.sent)
+      || composerRef.current?.closest(".bean-chat")?.querySelector(".bean-chat-pending-image img") != null
+      || ((threadRef.current === undefined || unsavableRef.current) && (composerRef.current?.value.trim() ?? "") !== ""),
     writable: () => !continuedTo(itemsRef.current),
     // Rendered as a `reply` (not `status`) so it enters conversation history: a later "retry" needs
     // the full instruction (notice.text) in context, not just the short bubble text (notice.display).

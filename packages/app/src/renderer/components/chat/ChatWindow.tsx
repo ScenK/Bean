@@ -165,16 +165,17 @@ export function ChatWindow() {
   const pendingPromptRef = useRef<ChatPrompt | undefined>(undefined);
   // A drop starts a new task chat (#1001) — unless the shown one is an unused task chat with an empty
   // composer — and lands in it once the switch does (switchTo). Never into the main conversation, nor
-  // into another task. An unused chat holding an unsent draft can't be left without losing it (no
-  // thread, no row to come back to), so the drop is refused there, visibly, and the draft stays.
+  // into another task. A draft the switch would lose (api.draft) refuses the drop, visibly, and stays.
   const pendingDropRef = useRef<ChatDrop | undefined>(undefined);
   const takeDrop = (u: ChatDrop): void => {
     setSyncedShown(undefined);
     const api = shownApi();
-    if (api && (api.home() || !api.blank()) && !api.switching()) { pendingDropRef.current = u; api.open("new"); return; }
-    const draft = document.querySelector<HTMLTextAreaElement>(".bean-chat:not([hidden]) textarea.bean-input--composer")?.value.trim();
-    if (api && draft) { api.error("Send or clear your draft first, then drop it again — a drop starts its own task chat."); return; }
-    setDroppedUrl(u);
+    // First, every time: a refusal's own error row makes the chat non-blank, so a later check would miss it.
+    if (api?.draft()) { api.error("Send or clear your draft first, then drop it again — a drop starts its own task chat."); return; }
+    if (!api || (!api.home() && api.blank())) { setDroppedUrl(u); return; }
+    if (api.switching()) { api.error("Bean is still switching chats — drop it again in a moment."); return; }
+    pendingDropRef.current = u;
+    api.open("new");
   };
   const runPushedPrompt = (pushed: ChatPrompt): void => {
     // A Discord/Teams chat on screen can't take it: the desktop chat under it isn't "current", so

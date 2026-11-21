@@ -346,6 +346,12 @@ describe("ChatWindow Home", () => {
     await flush();
     expect(composer().value).toBe("half a thought");
     expect(shownChat().textContent).toContain("Send or clear your draft first");
+    // Dropped again: the refusal's error row made the chat non-blank, and the draft still holds it.
+    const mounts = bean.chatAttach!.mock.calls.length;
+    await act(async () => { listeners.onComponentDroppedUrl!("https://example.com/c"); });
+    await flush();
+    expect(composer().value).toBe("half a thought");
+    expect(bean.chatAttach!.mock.calls.length).toBe(mounts);
     composer().value = "";
 
     // A used task chat doesn't take the next drop either: it starts another one.
