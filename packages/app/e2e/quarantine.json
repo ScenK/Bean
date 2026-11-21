@@ -1,1 +1,32 @@
-[]
+[
+  {
+    "title": "chat history: closing the window counts tasks across chats and stops them all",
+    "file": "chat-history.e2e.ts",
+    "issue": 1020,
+    "since": "2026-11-21"
+  },
+  {
+    "title": "home: boot bubble, the pill on a shown Home, and the dot while another chat is shown",
+    "file": "home-arrival.e2e.ts",
+    "issue": 1021,
+    "since": "2026-11-21"
+  },
+  {
+    "title": "main conversation: named after the persona, the avatar's default; a drop opens a task chat",
+    "file": "home-arrival.e2e.ts",
+    "issue": 1022,
+    "since": "2026-11-21"
+  },
+  {
+    "title": "remote core: chat over ssh, reconnect bar, takeover banner",
+    "file": "remote-core.e2e.ts",
+    "issue": 1023,
+    "since": "2026-11-21"
+  },
+  {
+    "title": "remote core: update the core from About",
+    "file": "remote-core.e2e.ts",
+    "issue": 1024,
+    "since": "2026-11-21"
+  }
+]
