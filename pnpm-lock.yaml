@@ -219,8 +219,8 @@ importers:
         specifier: ^18.2.0
         version: 18.2.0
       preact:
-        specifier: ^11.1.0
-        version: 11.1.0
+        specifier: ^11.2.0
+        version: 11.2.0
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -2262,8 +2262,8 @@ packages:
     engines: {node: '>=14.0.0'}
     hasBin: true
 
-  preact@11.1.0:
-    resolution: {integrity: sha512-hz1VsjWx5pSYPDVEzb9w+XyOmQpP1qW/ZEaMiYm+C8ykJr8KP+TKGZIbCW0QmZ/Yr/jg3XkZoziEWn9iWHZ9Mw==}
+  preact@11.2.0:
+    resolution: {integrity: sha512-/HfHI/7N84e6GrWBJ3J280z3mLaRJiDcSvj/A+y/4AbLnND/1UlGHe1sR6oYuTGwId0nP7dqDU9OnLxMPZ7xBg==}
     peerDependencies:
       preact-render-to-string: '>=6.7.0'
     peerDependenciesMeta:
@@ -4876,7 +4876,7 @@ snapshots:
       commander: 9.5.0
     optional: true
 
-  preact@11.1.0: {}
+  preact@11.2.0: {}
 
   proc-log@6.1.0: {}
 
