@@ -338,5 +338,14 @@ describe("ChatWindow Home", () => {
     await flush();
     expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
     expect((shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement).value).toContain("https://example.com/a");
+
+    // A used task chat doesn't take the next drop either: it starts another one.
+    await send("work on a");
+    const used = bean.chat!.mock.calls.at(-1)![1];
+    await act(async () => { listeners.onComponentDroppedUrl!("https://example.com/b"); });
+    await flush();
+    expect(bean.chatAttach!.mock.calls.at(-1)![0]).not.toBe(used);
+    expect(shownChat().textContent).not.toContain("work on a");
+    expect((shownChat().querySelector("textarea.bean-input--composer") as HTMLTextAreaElement).value).toContain("https://example.com/b");
   });
 });

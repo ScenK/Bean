@@ -163,13 +163,13 @@ export function ChatWindow() {
   // Discord is read-only. Otherwise it waits here for the New chat switch (which may first ask about
   // an incognito chat or running work).
   const pendingPromptRef = useRef<ChatPrompt | undefined>(undefined);
-  // A drop opens a new task chat when the main conversation is shown (#1001), and lands in it once
-  // the switch does (switchTo); otherwise it goes into the shown chat.
+  // A drop starts a new task chat (#1001) — unless the shown one is an unused task chat — and lands in
+  // it once the switch does (switchTo). Never into the main conversation, nor into another task.
   const pendingDropRef = useRef<ChatDrop | undefined>(undefined);
   const takeDrop = (u: ChatDrop): void => {
     setSyncedShown(undefined);
     const api = shownApi();
-    if (api?.home() && !api.switching()) { pendingDropRef.current = u; api.open("new"); return; }
+    if (api && (api.home() || !api.blank()) && !api.switching()) { pendingDropRef.current = u; api.open("new"); return; }
     setDroppedUrl(u);
   };
   const runPushedPrompt = (pushed: ChatPrompt): void => {

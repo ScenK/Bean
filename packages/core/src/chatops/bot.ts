@@ -1786,7 +1786,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
       deps.conversations.setAmbientCutoff(conv, Date.now());
       await fx.reply(archived
-        ? "Fresh start — I've reset my context here. The earlier conversation stays in Bean's desktop history."
+        ? "Fresh start — I've reset my context here. The earlier conversation stays in the desktop app's chat history."
         : "Fresh start — I've cleared this conversation's context.");
       return true;
     }

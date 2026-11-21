@@ -83,10 +83,14 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   since #1001 — **every** plain open-chat from the avatar) pushes `chatShowHome` to an
   open window and leaves `getPendingChatHome` for one still loading. Main also replays the job list
   once the avatar has loaded — boot jobs were otherwise pushed to nobody.
-- Since #1001 the main conversation is the avatar's default, so it's never where a pushed prompt
-  (even Add to current chat / the blank-chat fast path) or a dropped URL lands: shown, they open a
-  task chat (`ChatWindow` `runPushedPrompt` / `takeDrop`). An e2e spec about a task chat opens one
-  with `e2e/fixtures/task-chat.ts`'s `startTaskChat`.
+- Since #1001 the main conversation is the avatar's default (its Chat tile and a double-click on the
+  bean, `avatar.ts` `dblclick`), so it's never where a pushed prompt (even Add to current chat / the
+  blank-chat fast path) lands when shown: that opens a task chat (`ChatWindow` `runPushedPrompt`); on
+  a task chat, Add to current chat still adds to it. A drop on the avatar (`takeDrop`) always starts
+  a task chat unless the shown one is an unused task chat. The persona is read over the wire
+  (`getPersona` is a remote op); it's never written remotely. An e2e spec about a task chat opens
+  one with `e2e/fixtures/task-chat.ts`'s `startTaskChat`; in e2e the empty bubble stack covers
+  `#bean`, so avatar gestures are dispatched, not mouse-driven.
 
 ## Sprout editor (#962)
 

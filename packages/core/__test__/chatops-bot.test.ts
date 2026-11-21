@@ -3730,7 +3730,7 @@ describe("desk turns (#528)", () => {
     d.conversations.append("t1", { role: "user", content: speakerLine("Scen", "old") });
     const reset = fx();
     await d.bot.onCommand({ conversationId: "t1", text: "new", fromId: "u1", fromName: "Scen", direct: false }, reset);
-    expect(reset.posted).toEqual(["Fresh start — I've reset my context here. The earlier conversation stays in Bean's desktop history."]);
+    expect(reset.posted).toEqual(["Fresh start — I've reset my context here. The earlier conversation stays in the desktop app's chat history."]);
     const archive = listChatopsConversations(dbFile(d.dir), [{ surface: "discord", ownerId: "u1" }])
       .find((r) => r.archivedFrom === "t1");
     expect(archive).toBeDefined();
