@@ -3,8 +3,10 @@ import { defineConfig } from "@playwright/test";
 
 // Quarantined tests (.memory/convention-e2e-tiers.md): skipped everywhere until their
 // "Flaky e2e:" issue fixes or deletes them. The E2E Patrol sprout adds entries; a fix removes one.
-const quarantined = (JSON.parse(readFileSync(new URL("./e2e/quarantine.json", import.meta.url), "utf8")) as { title: string }[])
-  .map((q) => q.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+// Matched against Playwright's grep title, "<file> [describe…] <title> [@tags]": the exact test, no substring.
+const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const quarantined = (JSON.parse(readFileSync(new URL("./e2e/quarantine.json", import.meta.url), "utf8")) as { file: string; title: string }[])
+  .map((q) => `(?:^| )${esc(q.file)} (?:.* )?${esc(q.title)}(?: @|$)`);
 
 export default defineConfig({
   testDir: "./e2e",

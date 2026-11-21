@@ -17,7 +17,8 @@ Who runs the suite:
   task's job: it is the **E2E Patrol** sprout's input.
 - **Dev sessions** — never the full suite; optionally the specs covering the diff.
 
-Quarantine (`packages/app/e2e/quarantine.json`, read by `playwright.config.ts` as `grepInvert`):
+Quarantine (`packages/app/e2e/quarantine.json`, read by `playwright.config.ts` as `grepInvert` on
+file + exact title — never a substring):
 
 - E2E Patrol (`~/.bean/scripts/bean-e2e-patrol.py`) adds a test that failed twice in 7 days
   (main CI, or a gate run that passed on retry) via a PR, and opens a `Flaky e2e: <title>` issue
