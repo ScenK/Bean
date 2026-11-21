@@ -28,7 +28,8 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 
 -- Dream bookkeeping (memory/dream.ts): lastDreamAt, the lastDream digest, and the dreamLease
--- that keeps two processes/triggers from consolidating at once. Plain KV, JSON values.
+-- that keeps two processes/triggers from consolidating at once. Plain KV, JSON values. Also the
+-- main conversation's cutover marker (main-conversation.ts).
 CREATE TABLE IF NOT EXISTS memory_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL

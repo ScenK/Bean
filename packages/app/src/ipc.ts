@@ -445,6 +445,7 @@ export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   const threads = host.threads;
   ipcMain.handle(IPC.chatThreadSave, (e, req: unknown, mountId: unknown) => chats.threadSave(e.sender.id, mountId, req));
   ipcMain.handle(IPC.chatThreadGet, (e, id: unknown, mountId: unknown) => chats.threadGet(e.sender.id, mountId, id));
+  ipcMain.handle(IPC.chatMainSince, (e, cursor: unknown, mountId: unknown) => chats.mainSince(e.sender.id, mountId, cursor));
   ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatClient(e.sender.id) ? threads.list() : notChat());
   ipcMain.handle(IPC.chatThreadDelete, (e, id: unknown) =>
     deps.isChatClient(e.sender.id) ? threads.delete(id) : notChat());
@@ -473,6 +474,8 @@ export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   ipcMain.handle(IPC.deskContinue, (e, req: unknown, mountId: unknown) => {
     const key = chats.key(e.sender.id, mountId);
     if (!deps.deskContinue) return { failed: "Continue in Discord isn't available." };
+    // The main conversation already continues in the owner's DMs (#997); a channel is a new task.
+    if (chats.isMain(key)) return { failed: "This conversation already follows you to your DMs — start a task chat to continue in a channel." };
     return deps.deskContinue({ clientId: e.sender.id, mountId: key }, chats.isIncognito(key), req);
   });
   // Fire-and-forget: the chat window is already closing. A failure already raised its bubble

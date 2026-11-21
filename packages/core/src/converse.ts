@@ -1,3 +1,4 @@
+import type { KeyedTurn } from "./main-conversation.js";
 import { composePrompt, linkedNoteData, quoteFence } from "./prompt.js";
 import { CARD_LEAD } from "./card-record.js";
 import { composePersonaPrompt, type Persona } from "./persona.js";
@@ -217,7 +218,13 @@ export interface ConverseResult {
 /** `summary` = the desktop chat's latest rolling summary (#975); `history` is then only the turns
  * after it. The host bounds the two with compactHistory. `gap` = the shell's time-divider rule fired
  * for this message (#977): the host prefixes it with gapMarkerLine. */
-export interface ChatRequest { history: ChatTurn[]; summary?: string; message: string; gap?: boolean; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string; }
+export interface ChatRequest {
+  history: ChatTurn[]; summary?: string; message: string; gap?: boolean; source?: TurnSource; incognito?: boolean; droppedUrl?: string;
+  linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string;
+  /** The main conversation (#997, after the cutover): the shell's turns new since its last ack, which
+   * the host appends to the log — `history` and `summary` are then unused. */
+  delta?: KeyedTurn[];
+}
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 /** The line a desktop message goes out under after a long gap (#977): the time in this process's

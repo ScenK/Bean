@@ -5,6 +5,9 @@
 import { randomUUID } from "node:crypto";
 import { openDb } from "./db.js";
 import { saveDesktopChat, type DesktopChatInput } from "./desktop-chats.js";
+import { insertTurn } from "./chatops/conversation.js";
+import { MAIN_CONVERSATION_ID, postTurnKey } from "./main-conversation.js";
+import { postTurn } from "./prompt.js";
 
 export interface HomePost {
   id: string;
@@ -90,18 +93,27 @@ export function markHomePostsDrained(file: string, ids: readonly string[], now: 
   return n;
 }
 
-/** Home's thread title before its first save. */
-export const HOME_THREAD_TITLE = "Home";
-
 /** Saves a Home transcript and marks the posts it now holds drained, in one transaction: a failed
  * save leaves them pending, and a crash can't drain a post the transcript doesn't hold. Returns the
- * stored title. */
-export function saveDesktopChatDraining(file: string, chat: DesktopChatInput, drained: readonly string[], now: Date = new Date()): string {
+ * stored title. `mainLog` (after the cutover, #997): each drained post is also appended to the main
+ * conversation's log, keyed by its id — a re-run drain appends it once. */
+export function saveDesktopChatDraining(
+  file: string, chat: DesktopChatInput, drained: readonly string[], now: Date = new Date(), opts: { mainLog?: boolean } = {},
+): string {
   const db = openDb(file);
   db.exec("BEGIN IMMEDIATE");
   try {
     const title = saveDesktopChat(file, chat, now);
+    // Only posts this save drains: a replayed drain must not re-add one compaction already folded away.
+    const get = db.prepare("SELECT sprout, body FROM home_posts WHERE id = ? AND drained_at IS NULL");
+    const fresh = opts.mainLog ? drained.flatMap((id) => {
+      const p = get.get(id) as { sprout: string; body: string } | undefined;
+      return p ? [{ id, ...p }] : [];
+    }) : [];
     markHomePostsDrained(file, drained, () => now);
+    for (const p of fresh) {
+      insertTurn(db, MAIN_CONVERSATION_ID, { role: "user", content: postTurn({ sprout: p.sprout, text: p.body }) }, { surface: "desktop", turnKey: postTurnKey(p.id) });
+    }
     db.exec("COMMIT");
     return title;
   } catch (err) {

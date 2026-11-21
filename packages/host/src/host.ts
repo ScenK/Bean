@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import {
   configFile, projectsFile, skillsDir, personaFile, dbFile, remindersFile, modelMemoryFile, clisFile, routinesDir, routineStateFile, outboxDir,
   scratchDir, imagesDir, isValidSessionId, resumeCommand, pruneStepAttempts, listStepAttempts, CLI_NAMES, loadCliModels,
-  loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
+  loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, loadPersonaNameSync, savePersona,
   makeOpenAIConverse, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
   deleteMemories, extractMemories, maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, holdSchedulerLease, enqueueOutbox,
   answerRoutineTrigger, answerTodoRun, queueTodoDispatch, pendingTodoCount, resolveTodoRoutine, sproutRunFacts, withDispatch, enqueueDispatchNotice, threadDispatches, markDispatchDelivered, dispatchContext, type Dispatch, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
@@ -16,7 +16,7 @@ import {
   deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
-  saveModelMemory, resolveDelegateSelection, liveRuns,
+  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID, MAIN_CONVERSATION_ID,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -385,7 +385,20 @@ export async function createHost(deps: HostDeps) {
   // the lease holder recovers todos: anything stuck `running` was interrupted by the previous
   // holder (quit/crash) — fail it visibly (retryable). A standby host must not touch them: the
   // current holder is still running them.
-  startScheduler = () => { void routines.start(); };
+  // The lease holder also runs the one-conversation cutover (#999): it holds the API key in remote
+  // setups. A failure, a source written mid-fold, or a Home open meanwhile (it runs on the shell's
+  // history until reopened) leaves everything dark; the next boot retries.
+  let homeHolder: (() => string | undefined) | undefined; // wired once the thread handlers exist
+  const cutover = (): void => {
+    if (mainCutover(db)) return;
+    void loadChatopsOwners(dir)
+      .then((owners) => runMainCutover(db, owners, { chat: runtime.converse, model: runtime.getModel() }, {
+        inUse: () => homeHolder?.() !== undefined,
+      }))
+      .then((r) => { if (r === "changed") console.warn("bean: main conversation cutover deferred to the next boot: Home was open or a history changed mid-fold"); })
+      .catch((err: unknown) => console.error("bean: main conversation cutover failed", err));
+  };
+  startScheduler = () => { void routines.start(); cutover(); };
   stopScheduler = () => routineScheduler.stop();
   if (schedulerLeaseHeld) startScheduler();
   deps.onQuit(() => routineScheduler.stop());
@@ -449,6 +462,7 @@ export async function createHost(deps: HostDeps) {
     save: (r) => handlers.routines.save(r),
     enableWatch: (name, until) => routineScheduler.enableWatch(name, false, until),
     cliModels: () => cliModels, destinations: () => listDestinations(db), newId: randomUUID,
+    personaName: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
   });
   // The running turn per chat (mount id), so image progress can find its bubble.
   const chatTurnIds = new Map<string, string>();
@@ -457,8 +471,16 @@ export async function createHost(deps: HostDeps) {
     projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), projectsFile: projectsFile(dir),
     personaFile: personaFile(dir), projectPersonaFile: personaFile(projectDir), dbFile: db,
   };
+  // The main conversation's log (#997): read per request, so the cutover (#999) switches it on live.
+  let mainStore: ConversationStore | undefined;
+  const mainLog = (): ConversationStore | undefined => {
+    if (!mainCutover(db)) return undefined;
+    return (mainStore ??= new ConversationStore(db));
+  };
   const chat = buildChatHandler({
     ...paths,
+    // `threads` is built just below; a turn only runs after both exist.
+    mainLog: (mountId) => (mountId !== undefined && threads.isMain(mountId) ? mainLog() : undefined),
     loadMemories, appendMemories, deleteMemories,
     ownerSubjectIds: () => ownerSubjectIds(db, dir),
     converse: runtime.converse,
@@ -496,11 +518,15 @@ export async function createHost(deps: HostDeps) {
   const threads = buildChatThreadHandlers({
     dbFile: db, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats,
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (file) => listPendingHomePosts(file), saveDesktopChatDraining,
+    mainLog,
     onDrained: () => homeBubble?.refresh(),
+    personaName: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
   });
+  homeHolder = () => threads.holderOf(HOME_THREAD_ID);
   homeBubble = createHomeBubble({
     count: () => countPendingHomePosts(db),
     nextExpiry: () => nextHomePostExpiry(db),
+    name: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
     status: taskStatus,
   });
   homeBubble.refresh(); // boot: posts left pending bring the bubble back
@@ -566,12 +592,20 @@ export async function createHost(deps: HostDeps) {
     paths: { config: cfgPath, skills: skillsDir(dir), projects: projectsFile(dir), persona: personaFile(dir) },
   });
 
+  const personaHandlers = buildPersonaHandlers(paths);
   const handlers = {
     chat: sessions,
     threads,
     memory,
     notes: buildNotesHandlers({ loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, dbFile: db }),
-    persona: buildPersonaHandlers(paths),
+    // A rename re-labels the avatar's bubble now, not at its next recount (#1001).
+    persona: {
+      ...personaHandlers,
+      save: async (persona: Parameters<typeof personaHandlers.save>[0]): Promise<void> => {
+        await personaHandlers.save(persona);
+        homeBubble?.refresh();
+      },
+    },
     listSkills: buildListSkillsHandler({ ...paths, loadRoutines: () => loadRoutines(routinesPath, true) }),
     saveSkill: buildSaveSkillHandler(paths),
     deleteSkill: buildDeleteSkillHandler(paths),
@@ -665,7 +699,15 @@ export async function createHost(deps: HostDeps) {
 
   // Last: a replayed autostart may answer a sprout tap at once, so the scheduler must exist.
   const bots = await startBots({
-    ...deps.bots, dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
+    ...deps.bots,
+    // A bot wrote the main log (#998): a text-free ping to the chat holding Home on it, which pulls
+    // the owner's DM rows (#1000) — over SSH too. Not a sidebar row, so never a synced-chat event.
+    onSynced: (e) => {
+      if (e.conversationId !== MAIN_CONVERSATION_ID) { deps.bots.onSynced(e); return; }
+      const home = threads.holderOf(HOME_THREAD_ID);
+      if (home !== undefined && threads.isMain(home)) push(home, "main", home);
+    },
+    dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
     onRoutineRunning: liveSprouts,
   });
   // The owner's daily memory digest (#859): under the scheduler lease, to every bot running now.

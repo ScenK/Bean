@@ -66,11 +66,11 @@ describe("destinations", () => {
       "Discord DM to user u1",
       "Teams conversation 19:abc@thread.v2",
     ]);
-    expect(off).toEqual(["no note", "no desktop notification", "no Home chat"]);
+    expect(off).toEqual(["no note", "no desktop notification", "no post to your chat with Bean"]);
   });
 
-  it("names the Home chat", () => {
-    expect(destinations({ home: { ttlMinutes: 30 } }, undefined).on).toEqual(["Posted to your Home chat"]);
+  it("names the main conversation after the persona", () => {
+    expect(destinations({ home: { ttlMinutes: 30 } }, undefined).on).toEqual(["Posted to your chat with Bean"]);
   });
 });
 

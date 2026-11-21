@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openDb } from "../db.js";
 import { DESKTOP_CHAT_RETENTION_DAYS } from "../desktop-chats.js";
+import { mainCutover } from "../main-conversation.js";
 import type { ChatTurn } from "../converse.js";
 import type { LiveCli } from "../live-session.js";
 
@@ -103,7 +104,8 @@ interface CatalogRow {
  * listed ones), then lists the catalog rows owned by the currently configured owner of each
  * surface, newest first. A row matches by the id the bot saw or (Teams) its AAD alias, so either
  * config form works; rows from a previous owner config stay hidden. An owner with an empty id
- * lists nothing. */
+ * lists nothing. After the main conversation's cutover (#999) the live owner-DM rows are left out:
+ * those DMs are the main conversation now; their pre-cutover history lists as an archive. */
 export function listChatopsConversations(
   file: string, owners: { surface: ChatopsSurface; ownerId: string }[], now: Date = new Date(),
 ): ChatopsConversation[] {
@@ -121,8 +123,10 @@ export function listChatopsConversations(
     "SELECT conversation_id, surface, kind, title, owner_id, live_cli, live_session_id, updated_at, archived_from FROM chatops_conversations " +
       "WHERE surface = ? AND (owner_id = ? OR owner_alt_id = ?)",
   );
+  const merged = mainCutover(file);
   const rows = owners.filter((o) => o.ownerId)
-    .flatMap((o) => stmt.all(o.surface, o.ownerId, o.ownerId) as unknown as CatalogRow[]);
+    .flatMap((o) => stmt.all(o.surface, o.ownerId, o.ownerId) as unknown as CatalogRow[])
+    .filter((r) => !(merged && r.kind === "dm" && !r.archived_from));
   return rows.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((r) => ({
     conversationId: r.conversation_id, surface: r.surface, kind: r.kind, title: r.title, ownerId: r.owner_id,
     ...(r.live_cli ? { liveCli: r.live_cli } : {}),

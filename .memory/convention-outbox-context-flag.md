@@ -30,7 +30,8 @@ is model-facing). A sprout dispatch notice (#920) carries both — `context: tru
 `displayBody` — since its saved `body` is the fenced brief; every drain branch still appends
 `body` exactly once per delivery, so a message carrying both can't double-write.
 
-Delivery-side appends go through each server's local `appendDelivered`, which also fires
+Delivery-side appends go through each server's local `appendDelivered` (core `appendDelivery`;
+an owner-DM delivery joins the main log after the cutover, #998), which also fires
 `maybeCompact` — `bot.ts` only compacts after an *inbound* turn, so a channel that merely
 receives digests would grow unbounded. `maybeCompact` is serialized per conversation
 (`chatops/compact.ts`) because it now has several fire-and-forget callers: two overlapping

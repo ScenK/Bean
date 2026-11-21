@@ -27,6 +27,7 @@ so the prompt prefix cache missed every turn. Now:
   stays first). Off-the-record chats never save, so their summary lives in memory only.
 - **Memory:** `closeTranscript` reads only the items after the latest summary; a summary is never
   episode evidence (`chatTurns` maps it to nothing).
+- **Home on the main log (#997):** none of this applies — see project-main-conversation-log.md.
 - **Known gap (deferred P2):** a card covered by the summary that changes state later (e.g. a
   20-turn-old send card confirmed) isn't re-recorded after the summary, so the model may still think
   it's pending. Fix if it bites: append the card's new record line after the summary on change.

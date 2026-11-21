@@ -21,6 +21,40 @@ export interface AppendOpts {
   turnKey?: string;
 }
 
+/** ConversationStore.append's write, for a caller already inside its own BEGIN IMMEDIATE on the same
+ * bean.db (the Home drain, #997). False = `opts.turnKey` is already in this conversation. Fires no
+ * onChange: the caller's own process isn't listening. */
+export function insertTurn(db: DatabaseSync, conversationId: string, turn: ChatTurn, opts: AppendOpts = {}): boolean {
+  if (opts.turnKey !== undefined &&
+    db.prepare("SELECT 1 FROM chatops_turns WHERE conversation_id = ? AND turn_key = ?").get(conversationId, opts.turnKey)) {
+    return false;
+  }
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT INTO chatops_turns (conversation_id, seq, role, content, created_at, surface, turn_key) " +
+      "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ? FROM chatops_turns WHERE conversation_id = ?",
+  ).run(conversationId, turn.role, turn.content, now, opts.surface ?? null, opts.turnKey ?? null, conversationId);
+  // Keeps the desktop's conversation list (chatops/catalog.ts) in recency order.
+  db.prepare("UPDATE chatops_conversations SET updated_at = ? WHERE conversation_id = ?").run(now, conversationId);
+  return true;
+}
+
+/** Moves a catalogued conversation's turns to a new archive id (`<id>~<uuid>`) with a copy of each
+ * catalog row marked `archived_from` (read-only on the desktop; no model read ever names it). For a
+ * caller inside its own BEGIN IMMEDIATE. Undefined = not catalogued or no turns: nothing moved. */
+export function archiveTurns(db: DatabaseSync, conversationId: string): string | undefined {
+  const has = (table: string): boolean =>
+    !!db.prepare(`SELECT 1 FROM ${table} WHERE conversation_id = ? LIMIT 1`).get(conversationId);
+  if (!has("chatops_conversations") || !has("chatops_turns")) return undefined;
+  const archiveId = `${conversationId}~${randomUUID()}`;
+  db.prepare("UPDATE chatops_turns SET conversation_id = ? WHERE conversation_id = ?").run(archiveId, conversationId);
+  db.prepare(
+    "INSERT INTO chatops_conversations (conversation_id, surface, kind, title, owner_id, owner_alt_id, live_cli, live_session_id, updated_at, archived_from) " +
+      "SELECT ?, surface, kind, title, owner_id, owner_alt_id, live_cli, NULL, updated_at, conversation_id FROM chatops_conversations WHERE conversation_id = ?",
+  ).run(archiveId, conversationId);
+  return archiveId;
+}
+
 /** Per-thread chat history backed by the shared bean.db (chatops_turns table) — persists across
  * bot restarts, unlike the old in-memory Map. turnCount/oldest/replaceOldest back
  * chatops/compact.ts's silent summarization pass, which keeps long conversations bounded the
@@ -70,23 +104,17 @@ export class ConversationStore {
   /** Appends `turn` at the next seq. Returns false — storing nothing — when `opts.turnKey` is
    * already in this conversation. */
   append(conversationId: string, turn: ChatTurn, opts: AppendOpts = {}): boolean {
-    const db = this.db;
-    const stored = this.tx(() => {
-      if (opts.turnKey !== undefined &&
-        db.prepare("SELECT 1 FROM chatops_turns WHERE conversation_id = ? AND turn_key = ?").get(conversationId, opts.turnKey)) {
-        return false;
-      }
-      const now = new Date().toISOString();
-      db.prepare(
-        "INSERT INTO chatops_turns (conversation_id, seq, role, content, created_at, surface, turn_key) " +
-          "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ? FROM chatops_turns WHERE conversation_id = ?",
-      ).run(conversationId, turn.role, turn.content, now, opts.surface ?? null, opts.turnKey ?? null, conversationId);
-      // Keeps the desktop's conversation list (chatops/catalog.ts) in recency order.
-      db.prepare("UPDATE chatops_conversations SET updated_at = ? WHERE conversation_id = ?").run(now, conversationId);
-      return true;
-    });
+    const stored = this.tx(() => insertTurn(this.db, conversationId, turn, opts));
     if (stored) this.changed(conversationId);
     return stored;
+  }
+
+  /** When the newest turn (highest seq) was written, or undefined for an empty conversation. */
+  lastTurnAt(conversationId: string): string | undefined {
+    const row = this.db.prepare(
+      "SELECT created_at FROM chatops_turns WHERE conversation_id = ? ORDER BY seq DESC LIMIT 1",
+    ).get(conversationId) as { created_at: string } | undefined;
+    return row?.created_at;
   }
 
   /** Empties a conversation's history — backs the "/new" fresh-start command. A catalogued
@@ -100,18 +128,8 @@ export class ConversationStore {
     let archiveId: string | undefined;
     db.exec("BEGIN IMMEDIATE");
     try {
-      const has = (table: string): boolean =>
-        !!db.prepare(`SELECT 1 FROM ${table} WHERE conversation_id = ? LIMIT 1`).get(conversationId);
-      if (has("chatops_conversations") && has("chatops_turns")) {
-        archiveId = `${conversationId}~${randomUUID()}`;
-        db.prepare("UPDATE chatops_turns SET conversation_id = ? WHERE conversation_id = ?").run(archiveId, conversationId);
-        db.prepare(
-          "INSERT INTO chatops_conversations (conversation_id, surface, kind, title, owner_id, owner_alt_id, live_cli, live_session_id, updated_at, archived_from) " +
-            "SELECT ?, surface, kind, title, owner_id, owner_alt_id, live_cli, NULL, updated_at, conversation_id FROM chatops_conversations WHERE conversation_id = ?",
-        ).run(archiveId, conversationId);
-      } else {
-        db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
-      }
+      archiveId = archiveTurns(db, conversationId);
+      if (!archiveId) db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
       db.prepare("DELETE FROM thread_sessions WHERE conversation_id = ?").run(conversationId);
       // Bumped on archive so the fresh conversation lists above its archive.
       db.prepare(

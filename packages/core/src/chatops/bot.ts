@@ -33,13 +33,14 @@ import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type DelegateRunRow, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
-import type { CardBuilders } from "./cards-api.js";
+import { lastSaidLine, type CardBuilders, type NoContinueReason } from "./cards-api.js";
 import { formatAmbientBlock, formatCarriedBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
-import type { ConversationCatalog, ConversationPlace } from "./catalog.js";
+import type { ChatopsSurface, ConversationCatalog, ConversationPlace } from "./catalog.js";
+import { MAIN_CONVERSATION_ID } from "../main-conversation.js";
 import { MAX_DESK_TEXT, type DeskAckResult, type DeskContinueBody, type DeskContinueResult, type DeskRefusal } from "./desk.js";
-import { maybeCompact } from "./compact.js";
+import { boundMainLog, maybeCompact } from "./compact.js";
 import { MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
 import type { NoteArchiveProposalStore } from "./note-archive-proposals.js";
@@ -226,6 +227,10 @@ export interface TeamsBotDeps {
   /** The owner's continuable conversations (owner DMs, owner-started live sessions) for the
    * desktop. Omit = nothing catalogued. */
   catalog?: ConversationCatalog;
+  /** One conversation (#998): once `cutover()` (the main log's marker, #997) holds, the owner's
+   * real 1:1 DM keeps its model history in the main conversation's log, tagged `surface`. Absent =
+   * never (every DM keeps its own history). */
+  mainLog?: { surface: ChatopsSurface; cutover: () => boolean };
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
   systemControlsEnabled: () => boolean;
@@ -319,6 +324,8 @@ const SEND_EXPIRED = "That send card expired — ask me again.";
 export const MAX_SEND_CHARS = 4000;
 
 /** `continue`'s answer per refusal; the rest fall back to a generic line. */
+const MAIN_CONTINUE_NONE = "There's no agent session to continue here.";
+
 const CONTINUE_REFUSED: Partial<Record<DeskRefusal, string>> = {
   "no-record": "There's no ended live session here to continue.",
   "channel-busy": "A live session is already running here.",
@@ -565,6 +572,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const detected = deps.detectClis();
     return LIVE_CLIS.filter((c) => detected.includes(c));
   };
+  // A finished/ended card's Continue live (#1002), or why there is none: only for the CLI that
+  // ran it, while live sessions are on and that CLI is still here, with that CLI's id shape.
+  const continueLive = (cli: CliName, sessionId: string | undefined): { resumeLiveId?: string; noContinue?: NoContinueReason } => {
+    if (!sessionId) return {};
+    if (!deps.liveSessionsEnabled()) return { noContinue: "disabled" };
+    if (!isLiveCli(cli) || !isLiveSessionId(cli, sessionId)) return { noContinue: "surface" };
+    if (!deps.detectClis().includes(cli)) return { noContinue: "cli-missing" };
+    return { resumeLiveId: sessionId };
+  };
   // The literal --model for a live session: kept only if that CLI's config offers it, else the
   // CLI's own default — a model from another provider never switches the engine.
   const liveModelFor = (cli: LiveCli, model: string | undefined): string | undefined =>
@@ -574,6 +590,22 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   const LIVE_PROJECT = "live:project", LIVE_CLI = "live:cli", LIVE_SKILL = "live:skill";
   const liveModelKey = (cli: LiveCli): string => `live:model:${cli}`;
 
+  // One conversation (#998): where a conversation's model history lives. Once the main log's
+  // cutover marker exists, the owner's real 1:1 DM — its catalog row (written only for an owner's
+  // direct message) whose owner is still the configured one (Teams aliases go through roleOf) —
+  // maps to the main conversation; everything else, and everything before the marker, keeps its
+  // own id. Fail closed: no mainLog, no catalog, no row, a changed owner → the real id. Only
+  // history moves: cards, runs, reminders, live bindings and catalog rows keep the real DM id.
+  const historyId = (conversationId: string): string => {
+    if (!deps.mainLog?.cutover()) return conversationId;
+    const row = deps.catalog?.get(conversationId);
+    return row?.kind === "dm" && !row.archivedFrom &&
+      deps.roles.roleOf({ fromId: row.ownerId, fromAltId: row.ownerAltId }) === "owner" ? MAIN_CONVERSATION_ID : conversationId;
+  };
+  const appendHistory = (conversationId: string, turn: ChatTurn, id = historyId(conversationId)): void => {
+    deps.conversations.append(id, turn, id === MAIN_CONVERSATION_ID && deps.mainLog ? { surface: deps.mainLog.surface } : {});
+  };
+
   // `/new` count per conversation (this process): a run launched before a reset must not
   // store its session afterwards and resurrect the pre-reset agent.
   const resets = new Map<string, number>();
@@ -582,7 +614,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // post and at each authorized outcome — kind, state and a catalog name only (card-record.ts).
   // Appended before the card edit is awaited, so a quick follow-up already sees it.
   const recordCard = (conversationId: string, kind: CardRecordKind, state: CardRecordState, name?: string): void => {
-    deps.conversations.append(conversationId, { role: "assistant", content: cardRecord(kind, state, name) });
+    appendHistory(conversationId, { role: "assistant", content: cardRecord(kind, state, name) });
   };
   // A tap whose claim came back empty: `expired` only when the proposal was still held for this
   // conversation (peeked raw before the claim). A consumed, forged or other-conversation id
@@ -607,7 +639,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       recordCard(p.conversationId, "delegate", "didn't start"); // never the unresolved picked name
       if (p.cardActivityId !== undefined) {
         await fx.updateCard(p.cardActivityId, deps.cards.finishedCard({
-          projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled",
+          projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", agent: cli,
         }));
       }
       await fx.post(`I can't find the \`${p.proposal.skillName}\` skill any more — ask me again and pick a skill that still exists.`);
@@ -616,7 +648,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // Thread sessions: continue this thread's earlier agent for the same CLI; another CLI
     // starts fresh, as does a session from another project (RunRegistry.start; see
     // .memory/project-thread-sessions.md).
-    const resume = deps.conversations.threadSession(p.conversationId, cli);
+    // The main conversation (#998) never resumes implicitly: every owner-DM delegate starts fresh;
+    // its finished card's Continue live (the durable delegate_runs row) is the explicit resume.
+    const onMain = historyId(p.conversationId) === MAIN_CONVERSATION_ID;
+    const resume = onMain ? undefined : deps.conversations.threadSession(p.conversationId, cli);
     const resetsAtLaunch = resets.get(p.conversationId) ?? 0;
     const req: DelegateRequest = {
       cli,
@@ -626,14 +661,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ...(resume ? { resume } : {}),
       ...(skill?.browser ? { browser: true } : {}),
     };
-    const receipt = (sessionId: string | undefined): { resume?: string; resumeLiveId?: string } =>
-      sessionId
-        ? {
-            resume: resumeCommand(cli, sessionId),
-            // Continue live only on the CLI that ran it, if it's still here, with that CLI's id shape.
-            ...(liveClis().includes(cli) && isLiveSessionId(cli, sessionId) ? { resumeLiveId: sessionId } : {}),
-          }
-        : {};
+    const receipt = (sessionId: string | undefined, last: string | undefined) => {
+      const line = lastSaidLine(last);
+      return {
+        agent: cli,
+        ...(line ? { lastLine: line } : {}),
+        ...(sessionId ? { resume: resumeCommand(cli, sessionId) } : {}),
+        ...continueLive(cli, sessionId),
+      };
+    };
     const cardId = p.cardActivityId;
     const updateTo = async (card: object): Promise<void> => {
       if (cardId !== undefined) await fx.updateCard(cardId, card);
@@ -650,27 +686,27 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         onDone: (result, sessionId) => {
           ended = true;
           void (async () => {
-            if (sessionId && (resets.get(p.conversationId) ?? 0) === resetsAtLaunch) {
+            if (sessionId && !onMain && (resets.get(p.conversationId) ?? 0) === resetsAtLaunch) {
               deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
             }
-            deps.conversations.append(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done", ...receipt(sessionId) })).catch(logRunEffectError);
+            appendHistory(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done", ...receipt(sessionId, result) })).catch(logRunEffectError);
             await (fx.postResult ?? fx.post)(result);
           })().catch(logRunEffectError);
         },
-        onError: (message, sessionId) => {
+        onError: (message, sessionId, last) => {
           ended = true;
           void (async () => {
             recordCard(p.conversationId, "delegate", "failed", p.proposal.skillName);
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId) })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId, last) })).catch(logRunEffectError);
             await fx.post(`Delegate run failed: ${message}`);
           })().catch(logRunEffectError);
         },
-        onCancelled: (sessionId) => {
+        onCancelled: (sessionId, last) => {
           ended = true;
           void (async () => {
             recordCard(p.conversationId, "delegate", "cancelled", p.proposal.skillName);
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId) })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId, last) })).catch(logRunEffectError);
             await fx.post("Run cancelled.");
           })().catch(logRunEffectError);
         },
@@ -761,6 +797,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     const resetsAtLaunch = resets.get(conv) ?? 0;
     let run: string | undefined; // set right after start(); turn results only arrive later
+    // For the ended card (#1002): the session to continue (a fresh one's arrives via onSessionId,
+    // once its delegate_runs row is written), this session's turns and the last thing the agent
+    // said — streamed text too, so a turn stopped mid-way still shows where it stopped.
+    let sessionId = resume?.sessionId;
+    let turns = 0;
+    let lastSaid: string | undefined;
     const started = deps.liveSessions.start({
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
@@ -775,16 +817,20 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       steering: p.proposal.steering ?? "restricted",
       sink,
       onTurnResult: (result) => {
-        deps.conversations.append(p.conversationId, { role: "assistant", content: `[live session] ${result}` });
+        turns++;
+        lastSaid = result;
+        appendHistory(p.conversationId, { role: "assistant", content: `[live session] ${result}` });
         // ponytail: the last 2000 chars — where an agent's closing question sits.
         noteLiveTurn(conv, run, { role: "assistant", content: result.slice(-2000) });
       },
-      // A `/new` since launch unbound the conversation; a late id must not bind it again.
-      ...(owner ? {
-        onSessionId: (id: string) => {
-          if ((resets.get(conv) ?? 0) === resetsAtLaunch) deps.catalog?.setLiveSession(conv, cli, id);
-        },
-      } : {}),
+      onAgentText: (text) => {
+        lastSaid = text;
+      },
+      onSessionId: (id: string) => {
+        sessionId = id;
+        // A `/new` since launch unbound the conversation; a late id must not bind it again.
+        if (owner && (resets.get(conv) ?? 0) === resetsAtLaunch) deps.catalog?.setLiveSession(conv, cli, id);
+      },
       onEnded: (notice) => {
         if (run && liveTurns.get(conv)?.run === run) liveTurns.delete(conv);
         updateToEnded().catch(logRunEffectError);
@@ -792,9 +838,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       },
     });
     async function updateToEnded(): Promise<void> {
-      // The session id doesn't change across a resume, so the ended card can offer it again.
+      // The session id doesn't change across a resume, so the ended card can offer it again; a
+      // resume's card says what it continued.
+      const prompt = resume ? resume.instruction : p.proposal.instruction;
+      const line = lastSaidLine(lastSaid);
       await updateTo(deps.cards.liveSessionResultCard({
-        projectName, startedBy, outcome: "ended", ...shownPrompt(p.proposal), ...(resume ? { resumeLiveId: resume.sessionId } : {}),
+        projectName, startedBy, outcome: "ended", agent: cli, turns,
+        ...(prompt ? { prompt } : {}), ...(line ? { lastLine: line } : {}), ...continueLive(cli, sessionId),
       }));
     }
     run = deps.liveSessions.generation(conv);
@@ -807,7 +857,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // or history (and the desktop's synced view) holds the agent's reply to nothing.
     if (fromCard) recordCard(conv, "live session", "started");
     if (!resume && p.proposal.instruction) {
-      deps.conversations.append(conv, { role: "user", content: speakerLine(startedBy, p.proposal.instruction) });
+      appendHistory(conv, { role: "user", content: speakerLine(startedBy, p.proposal.instruction) });
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started", ...shownPrompt(p.proposal) }));
     // A resume's project and CLI were locked to its row, not picked — nothing to remember.
@@ -1664,6 +1714,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (cmd === "continue") {
       if (speakerRole(msg).role !== "owner") await fx.reply("Only the owner can continue a live session.");
+      // The main conversation (#998) resumes only through a card: `/continue` posts the confirm card
+      // for the session last bound here (the same one Continue live posts), never reopens it directly.
+      else if (msg.direct && historyId(conv) === MAIN_CONVERSATION_ID) {
+        const sessionId = deps.catalog?.get(conv)?.liveSessionId;
+        const refused = sessionId ? await proposeResumeLive(conv, sessionId, msg.fromName, fx) : MAIN_CONTINUE_NONE;
+        if (refused) await fx.reply(refused);
+      }
       else if (!deps.liveSessionsEnabled()) await fx.reply("Live sessions are disabled here.");
       else {
         const r = await resumeBoundLive(conv, async () => fx);
@@ -1740,13 +1797,20 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (cmd === "new") {
       if (!(await permitted("fresh", "start a fresh conversation"))) return true;
+      // The owner's DM is part of the one ongoing conversation (#998): it never resets.
+      if (msg.direct && isOwner && deps.mainLog?.cutover()) {
+        const { name } = await deps.loadPersona();
+        await fx.reply(`This DM is part of your ongoing chat with ${name} — it doesn't reset. ` +
+          "For a fresh topic use a channel or a new task chat on the desktop.");
+        return true;
+      }
       const archived = deps.conversations.clear(conv);
       deps.noteProposals.forgetImages(conv);
       resets.set(conv, (resets.get(conv) ?? 0) + 1);
       // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
       deps.conversations.setAmbientCutoff(conv, Date.now());
       await fx.reply(archived
-        ? "Fresh start — I've reset my context here. The earlier conversation stays in Bean's desktop history."
+        ? "Fresh start — I've reset my context here. The earlier conversation stays in the desktop app's chat history."
         : "Fresh start — I've cleared this conversation's context.");
       return true;
     }
@@ -1790,7 +1854,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (!deps.liveSessions.send(conv, agentText)) return false;
     const saved = images?.length ? [text, "[image attached]"].filter(Boolean).join("\n") : text;
     noteLiveTurn(conv, run, { role: "user", content: saved });
-    deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, saved) });
+    appendHistory(conv, { role: "user", content: speakerLine(fromName, saved) });
     return true;
   }
 
@@ -1867,6 +1931,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // must still be the configured owner (a changed owner config hides the old owner's rows).
       const owner = { fromId: row.ownerId, fromAltId: row.ownerAltId };
       if (deps.roles.roleOf(owner) !== "owner") return ack({ refused: "not-eligible" });
+      // The owner's DM is part of the main conversation once the cutover is done (#998): the desk
+      // talks to it there, never through the synced row.
+      if (row.kind === "dm" && deps.mainLog?.cutover()) return ack({ refused: "main-conversation" });
       if (deps.liveSessions.has(conv) && !deps.liveSessions.canSteer(conv, row.ownerId)) return ack({ refused: "channel-busy" });
       if (deskInFlight >= MAX_DESK_IN_FLIGHT) return ack({ refused: "bot-busy" });
       deskInFlight++;
@@ -2043,7 +2110,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         // Typed `stop` with nothing live stays a model turn, as it always was; so does a typed
         // bare `continue` where no live session was ever bound (it's an ordinary word in a chat).
-        const plainContinue = cmd === "continue" && !msg.text.trim().startsWith("/") && !deps.catalog?.get(msg.conversationId)?.liveSessionId;
+        // In the owner's DM after the cutover (#998) a bare `continue` is always a Bean turn: the main
+        // conversation never reopens an agent without a card tap.
+        const plainContinue = cmd === "continue" && !msg.text.trim().startsWith("/") &&
+          (!deps.catalog?.get(msg.conversationId)?.liveSessionId || historyId(msg.conversationId) === MAIN_CONVERSATION_ID);
         if (cmd !== "stop" && !plainContinue && await onCommand(msg, fx)) return;
         const { role, scopeId } = speakerRole(msg);
         const isOwner = role === "owner";
@@ -2052,6 +2122,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (msg.direct && isOwner) {
           deps.catalog?.upsert({ conversationId: msg.conversationId, place: { kind: "dm", title: "DM" }, ownerId: msg.fromId, ownerAltId: msg.fromAltId });
         }
+        // Where this turn's history lives (#998): the main conversation only for the owner in a real
+        // 1:1 DM, checked here before any history read; anyone else, and every channel, keeps its own.
+        const hid = msg.direct && isOwner ? historyId(msg.conversationId) : msg.conversationId;
         const permitted = permittedFor(role, scopeId, fx);
         turnId = randomUUID();
         deps.onActivity?.({ type: "turn", phase: "start", id: turnId, who: msg.fromName, where: msg.channelName });
@@ -2092,7 +2165,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const sprouts = can(role, "runRoutines") ? deps.routines?.sprouts : undefined;
         const sproutRoutines = sprouts && deps.routines ? (await deps.routines.load()).filter((r) => !isArchived(r, new Date())) : [];
         const detected = deps.detectClis();
-        let history = deps.conversations.history(msg.conversationId);
+        let history = hid === MAIN_CONVERSATION_ID
+          ? await boundMainLog(deps.conversations, { chat: deps.chat, model: deps.model })
+          : deps.conversations.history(hid);
         if (fx.fetchRecent) {
           // ponytail: fixed 15-min window; the block carries timestamps so the model can
           // scope "the last 10 minutes" itself — parse the user's timeframe if it matters.
@@ -2106,7 +2181,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             const block = formatAmbientBlock(ambient, now);
             // Persist what Bean acted on so follow-up mentions read a coherent history;
             // appended after stored turns because the chatter is newer than they are.
-            deps.conversations.append(msg.conversationId, { role: "user", content: block });
+            appendHistory(msg.conversationId, { role: "user", content: block }, hid);
             history = [...history, { role: "user", content: block }];
           }
         }
@@ -2116,7 +2191,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (msg.repliedTo && !msg.repliedTo.unavailable) {
           const block = formatRepliedBlock(msg.repliedTo);
           if (!history.some((t) => t.content === block)) {
-            deps.conversations.append(msg.conversationId, { role: "user", content: block });
+            appendHistory(msg.conversationId, { role: "user", content: block }, hid);
             history = [...history, { role: "user", content: block }];
           }
         }
@@ -2212,14 +2287,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // follow-up "save that to a note". Before any proposal is added so the cap's
         // oldest-first eviction drops this slot, not the new proposal holding the same images.
         if (deps.saveNoteImage && msg.images?.length) deps.noteProposals.rememberImages(msg.conversationId, msg.images);
-        deps.conversations.append(msg.conversationId, {
+        appendHistory(msg.conversationId, {
           role: "user",
           content: speakerLine(msg.fromName, msg.images?.length ? `${msg.text}\n[image attached]` : msg.text),
-        });
+        }, hid);
         // A chat-target run answers in-line here, with no card for converse()'s lead-in to introduce.
         const reply = result.proposedRun?.target === "chat" && result.reply === CARD_LEAD ? "" : result.reply;
         if (reply) {
-          deps.conversations.append(msg.conversationId, { role: "assistant", content: reply });
+          appendHistory(msg.conversationId, { role: "assistant", content: reply }, hid);
           // The owner talking to Bean while away here: a reminder, kept out of history.
           await fx.reply(isOwner && deps.away?.get().on ? `${reply}\n\n${awayReminder(deps.away)}` : reply);
         }
@@ -2248,7 +2323,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         for (const r of reminderTools?.set ?? []) {
           if (deps.cards.reminderCard) await fx.postCard(deps.cards.reminderCard({ reminderId: r.id, text: r.text, at: r.at }));
         }
-        void maybeCompact(msg.conversationId, deps.conversations, { chat: deps.chat, model: deps.model });
+        // The main log is bounded before each turn instead (boundMainLog), on every surface.
+        if (hid !== MAIN_CONVERSATION_ID) void maybeCompact(hid, deps.conversations, { chat: deps.chat, model: deps.model });
         if (result.proposedRun) {
           // A `target: chat` skill runs on Bean's own model: resend the composed prompt
           // through this same conversation (mirrors ChatWindow's confirmProposal). No
@@ -2258,10 +2334,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             const run = result.proposedRun;
             const followup = await converse({
               ...converseBase,
-              history: [...deps.conversations.history(msg.conversationId), ...repliedHint],
+              history: [...deps.conversations.history(hid), ...repliedHint],
               latestUserText: run.composedPrompt,
             });
-            deps.conversations.append(msg.conversationId, { role: "user", content: speakerLine(msg.fromName, run.composedPrompt) });
+            appendHistory(msg.conversationId, { role: "user", content: speakerLine(msg.fromName, run.composedPrompt) }, hid);
             // Nested proposals from the skill prompt are deliberately ignored — one hop only —
             // except a send card, under the same owner-DM gate as the first hop.
             const sendCard = sendHere ? followup.proposedSend : undefined;
@@ -2270,7 +2346,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             const text = (sendCard || followup.reply !== CARD_LEAD ? followup.reply.trim() : "") ||
               (sendCard ? "" : `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`);
             if (text) {
-              deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
+              appendHistory(msg.conversationId, { role: "assistant", content: text }, hid);
               // reply, not post: this is the turn's answer, so surface extras (Discord voice
               // replies) apply to it too.
               await fx.reply(text);

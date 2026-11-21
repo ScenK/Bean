@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, TODO_RUN_NOW_LINE, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -116,23 +116,43 @@ function runningCard(input: RunningCardInput): object {
   };
 }
 
-// "Continue live" carries the Claude session id in its custom_id — rendered only when it fits
-// Discord's 100-char cap (a truncated id would resume nothing).
-function continueLiveRows(sessionId: string | undefined): object[] {
-  const customId = `bean:resume-live:${sessionId}`;
-  return sessionId && customId.length <= 100
-    ? [row([{ type: BUTTON, style: 1, label: "Continue live", custom_id: customId }])]
-    : [];
+// "Continue live" carries the session id in its custom_id — offered only when it fits Discord's
+// 100-char cap (a truncated id would resume nothing); otherwise the footer says why not.
+function continueLive(input: FinishedCardInput | LiveSessionResultCardInput): { footer?: { text: string }; components: object[] } {
+  const customId = `bean:resume-live:${input.resumeLiveId}`;
+  if (input.resumeLiveId && customId.length <= 100) {
+    return {
+      footer: { text: continueLiveLine(input.agent) },
+      components: [row([{ type: BUTTON, style: 1, label: "Continue live", custom_id: customId }])],
+    };
+  }
+  const reason = input.resumeLiveId ? "surface" : input.noContinue;
+  return { ...(reason ? { footer: { text: noContinueLine(reason, input.agent) } } : {}), components: [] };
+}
+
+// What the run was and where it stopped (#1002): agent, last line — the project and outcome ride the title.
+function sessionFields(input: FinishedCardInput | LiveSessionResultCardInput, turns?: number): object[] {
+  return [
+    ...(input.agent ? [{ name: "Agent", value: input.agent, inline: true }] : []),
+    ...(turns !== undefined ? [{ name: "Turns", value: String(turns), inline: true }] : []),
+    ...(input.lastLine ? [{ name: "Last", value: clampTail(input.lastLine) }] : []),
+  ];
 }
 
 function finishedCard(input: FinishedCardInput): object {
+  const { footer, components } = continueLive(input);
+  const fields = [
+    ...sessionFields(input),
+    ...(input.resume ? [{ name: `Resume (${input.projectName})`, value: `\`${input.resume}\`` }] : []),
+  ];
   return {
     embeds: [{
       title: `Run ${input.outcome} in ${input.projectName} (started by ${input.startedBy})`,
       description: clampInstruction(input.instruction),
-      ...(input.resume ? { fields: [{ name: `Resume (${input.projectName})`, value: `\`${input.resume}\`` }] } : {}),
+      ...(fields.length ? { fields } : {}),
+      ...(footer ? { footer } : {}),
     }],
-    components: continueLiveRows(input.resumeLiveId),
+    components,
   };
 }
 
@@ -444,9 +464,13 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
     : input.outcome === "cancelled"
       ? `Live session cancelled (by ${input.startedBy})`
       : `Live session in ${input.projectName} ended`;
+  const description = input.prompt ? { description: input.prompt.slice(0, LIVE_PROMPT_LIMIT) } : {};
+  if (input.outcome !== "ended") return { embeds: [{ title, ...description }], components: [] };
+  const { footer, components } = continueLive(input);
+  const fields = sessionFields(input, input.turns);
   return {
-    embeds: [{ title, ...(input.prompt ? { description: input.prompt.slice(0, LIVE_PROMPT_LIMIT) } : {}) }],
-    components: input.outcome === "ended" ? continueLiveRows(input.resumeLiveId) : [],
+    embeds: [{ title, ...description, ...(fields.length ? { fields } : {}), ...(footer ? { footer } : {}) }],
+    components,
   };
 }
 
