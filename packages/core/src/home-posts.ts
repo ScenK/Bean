@@ -93,9 +93,6 @@ export function markHomePostsDrained(file: string, ids: readonly string[], now: 
   return n;
 }
 
-/** Home's thread title before its first save. */
-export const HOME_THREAD_TITLE = "Home";
-
 /** Saves a Home transcript and marks the posts it now holds drained, in one transaction: a failed
  * save leaves them pending, and a crash can't drain a post the transcript doesn't hold. Returns the
  * stored title. `mainLog` (after the cutover, #997): each drained post is also appended to the main

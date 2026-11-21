@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import {
   configFile, projectsFile, skillsDir, personaFile, dbFile, remindersFile, modelMemoryFile, clisFile, routinesDir, routineStateFile, outboxDir,
   scratchDir, imagesDir, isValidSessionId, resumeCommand, pruneStepAttempts, listStepAttempts, CLI_NAMES, loadCliModels,
-  loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
+  loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, loadPersonaNameSync, savePersona,
   makeOpenAIConverse, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
   deleteMemories, extractMemories, maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, holdSchedulerLease, enqueueOutbox,
   answerRoutineTrigger, answerTodoRun, queueTodoDispatch, pendingTodoCount, resolveTodoRoutine, sproutRunFacts, withDispatch, enqueueDispatchNotice, threadDispatches, markDispatchDelivered, dispatchContext, type Dispatch, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
@@ -462,6 +462,7 @@ export async function createHost(deps: HostDeps) {
     save: (r) => handlers.routines.save(r),
     enableWatch: (name, until) => routineScheduler.enableWatch(name, false, until),
     cliModels: () => cliModels, destinations: () => listDestinations(db), newId: randomUUID,
+    personaName: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
   });
   // The running turn per chat (mount id), so image progress can find its bubble.
   const chatTurnIds = new Map<string, string>();
@@ -519,12 +520,13 @@ export async function createHost(deps: HostDeps) {
     renameDesktopChatGroup, listDesktopChats, listPendingHomePosts: (file) => listPendingHomePosts(file), saveDesktopChatDraining,
     mainLog,
     onDrained: () => homeBubble?.refresh(),
-    personaName: async () => (await loadPersona(personaFile(dir), personaFile(projectDir))).name,
+    personaName: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
   });
   homeHolder = () => threads.holderOf(HOME_THREAD_ID);
   homeBubble = createHomeBubble({
     count: () => countPendingHomePosts(db),
     nextExpiry: () => nextHomePostExpiry(db),
+    name: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
     status: taskStatus,
   });
   homeBubble.refresh(); // boot: posts left pending bring the bubble back
@@ -590,12 +592,20 @@ export async function createHost(deps: HostDeps) {
     paths: { config: cfgPath, skills: skillsDir(dir), projects: projectsFile(dir), persona: personaFile(dir) },
   });
 
+  const personaHandlers = buildPersonaHandlers(paths);
   const handlers = {
     chat: sessions,
     threads,
     memory,
     notes: buildNotesHandlers({ loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, dbFile: db }),
-    persona: buildPersonaHandlers(paths),
+    // A rename re-labels the avatar's bubble now, not at its next recount (#1001).
+    persona: {
+      ...personaHandlers,
+      save: async (persona: Parameters<typeof personaHandlers.save>[0]): Promise<void> => {
+        await personaHandlers.save(persona);
+        homeBubble?.refresh();
+      },
+    },
     listSkills: buildListSkillsHandler({ ...paths, loadRoutines: () => loadRoutines(routinesPath, true) }),
     saveSkill: buildSaveSkillHandler(paths),
     deleteSkill: buildDeleteSkillHandler(paths),

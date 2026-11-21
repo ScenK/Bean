@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONTRACT_VERSION } from "@bean/host";
 import { launchBean } from "./fixtures/launch-app.js";
+import { startTaskChat } from "./fixtures/task-chat.js";
 
 type Bean = { bean: { openComponent: (k: string) => Promise<void> } };
 
@@ -75,6 +76,7 @@ process.stdin.on("data", (d) => {
       : m.op === "routinesList" ? [{ name: "old-ask", description: "ping me when it lands", enabled: false, until: "2020-01-02", cron: "0 9 * * *", sinks: {}, steps: [{ kind: "chat", instruction: "x" }] }]
       : m.op === "routinesState" ? { "old-ask": { history: [], running: false, runningCount: 0, ended: { archived: true, text: "Nothing by Jan 2" } } }
       : m.op === "routinesBuilds" ? []
+      : m.op === "getPersona" ? { name: "Pip", tags: ["Warm"] }
       : ["listProjects", "availableClis", "availableModels", "detectedClis"].includes(m.op) ? [] : undefined;
     send({ type: "result", id: m.id, ok: true, value });
   }
@@ -106,6 +108,7 @@ test("remote core: chat over ssh, reconnect bar, takeover banner", async () => {
     ]);
     await chat.waitForLoadState("domcontentloaded");
     await expect(chat.locator(".bean-chat-host")).toHaveText("me@box");
+    await startTaskChat(chat);
     const composer = chat.locator(".bean-input--composer");
 
     await composer.fill("hi");
@@ -229,6 +232,8 @@ test("remote core: Home shows the owner's DM exchanges", async () => {
     ]);
     await chat.waitForLoadState("domcontentloaded");
     await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
+    // Named after the core's persona, read over the wire (#1001).
+    await expect(chat.locator(".bean-chat-sidebar-home-title")).toHaveText("🏠 Pip");
     const shown = chat.locator(".bean-chat:not([hidden])");
     await expect(shown.locator(".bean-dm .bean-bubble--user").first()).toContainText("written on the bus");
     await expect(shown.locator(".bean-dm-via").first()).toHaveText("via Discord");

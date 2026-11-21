@@ -163,16 +163,34 @@ export function ChatWindow() {
   // Discord is read-only. Otherwise it waits here for the New chat switch (which may first ask about
   // an incognito chat or running work).
   const pendingPromptRef = useRef<ChatPrompt | undefined>(undefined);
+  // A drop starts a new task chat (#1001) — unless the shown one is an unused task chat with an empty
+  // composer — and lands in it once the switch does (switchTo). Never into the main conversation, nor
+  // into another task. A draft the switch would lose (api.draft) refuses the drop, visibly, and stays.
+  const pendingDropRef = useRef<ChatDrop | undefined>(undefined);
+  const takeDrop = (u: ChatDrop): void => {
+    setSyncedShown(undefined);
+    const api = shownApi();
+    // First, every time: a refusal's own error row makes the chat non-blank, so a later check would miss it.
+    if (api?.draft()) { api.error("Send or clear your draft first, then drop it again — a drop starts its own task chat."); return; }
+    if (!api || (!api.home() && api.blank())) { setDroppedUrl(u); return; }
+    if (api.switching()) { api.error("Bean is still switching chats — drop it again in a moment."); return; }
+    pendingPromptRef.current = undefined; // a pushed prompt whose switch was refused or cancelled
+    pendingDropRef.current = u;
+    api.open("new");
+  };
   const runPushedPrompt = (pushed: ChatPrompt): void => {
     // A Discord/Teams chat on screen can't take it: the desktop chat under it isn't "current", so
     // Add to current chat falls back to Continue in chat's rule.
     const p = syncedRef.current !== undefined ? { ...pushed, here: false } : pushed;
     setSyncedShown(undefined);
     const api = shownApi();
-    if (!api || (p.here && api.writable()) || api.blank()) { api?.runPrompt(p); return; }
+    // Never into the main conversation (#1001): it's the avatar's default, not where a pushed task goes.
+    const onMain = api?.home() === true;
+    if (!api || (!onMain && ((p.here && api.writable()) || api.blank()))) { api?.runPrompt(p); return; }
     // Mid-switch, `open` is a no-op and the switch would land with this prompt in place of the one
     // it's for: refused, not queued (same rule as Add to current chat while Bean is answering).
     if (api.switching()) { api.error(`Bean is still switching chats — send "${p.label}" again in a moment.`); return; }
+    pendingDropRef.current = undefined; // a drop whose switch was refused or cancelled (Keep working)
     pendingPromptRef.current = p;
     api.open("new");
   };
@@ -205,8 +223,8 @@ export function ChatWindow() {
     // Pull any URL dropped before this window's renderer finished mounting — the push below
     // (onComponentDroppedUrl) can arrive first and gets silently dropped, same race
     // getPendingPlan fixes for the Plan window.
-    window.bean.getPendingDroppedUrl().then((u) => { if (u) { setSyncedShown(undefined); setDroppedUrl(u); } });
-    window.bean.onComponentDroppedUrl((u) => { setSyncedShown(undefined); setDroppedUrl(u); });
+    window.bean.getPendingDroppedUrl().then((u) => { if (u) takeDrop(u); });
+    window.bean.onComponentDroppedUrl(takeDrop);
     // A pushed prompt (Plan, Dashboard, Notes). main stores it and also pushes it; both paths claim
     // the one stored copy, so a prompt this window already ran can't replay at its next open.
     const claimPrompt = (): void => { window.bean.getPendingChatPrompt().then((p) => { if (p) runPushedPrompt(p); }, () => {}); };
@@ -282,6 +300,8 @@ export function ChatWindow() {
     const fresh = target === "new" || target === "incognito";
     const prompt = target === "new" ? pendingPromptRef.current : undefined;
     pendingPromptRef.current = undefined;
+    if (target === "new" && pendingDropRef.current !== undefined) setDroppedUrl(pendingDropRef.current);
+    pendingDropRef.current = undefined;
     const held = fresh ? undefined
       : [...sessions.values()].find((s) => s.mountId !== from && (target === "home" ? s.home() : s.threadId() === target));
     const next = held?.mountId ?? crypto.randomUUID();
@@ -300,6 +320,7 @@ export function ChatWindow() {
 
   const openThread = (target: string): void => {
     pendingPromptRef.current = undefined; // a pushed prompt waiting on a leave card the user cancelled
+    pendingDropRef.current = undefined;
     setOverlayOpen(false);
     if (synced.some((c) => syncedKey(c) === target)) {
       setSyncedShown(target);

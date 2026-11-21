@@ -1,3 +1,4 @@
+import { DEFAULT_PERSONA } from "@bean/core";
 import { HOME_JOB_ID, homeJob, type TaskStatus } from "./task-status.js";
 
 /** How often the pending count is re-read regardless (#961): a standby host (another process holds
@@ -12,6 +13,8 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 export function createHomeBubble(deps: {
   count: () => number;
   nextExpiry: () => string | undefined;
+  /** The persona's name, re-read on every recount (#1001). */
+  name?: () => string;
   status: Pick<TaskStatus, "upsert" | "dismiss">;
 }) {
   let expiry: ReturnType<typeof setTimeout> | undefined;
@@ -26,7 +29,7 @@ export function createHomeBubble(deps: {
       return;
     }
     if (count === 0) deps.status.dismiss(HOME_JOB_ID);
-    else deps.status.upsert(HOME_JOB_ID, homeJob(count));
+    else deps.status.upsert(HOME_JOB_ID, homeJob(count, deps.name?.() ?? DEFAULT_PERSONA.name));
     clearTimeout(expiry);
     expiry = next === undefined ? undefined
       : setTimeout(refresh, Math.min(MAX_TIMER_MS, Math.max(0, Date.parse(next) - Date.now()) + 50));

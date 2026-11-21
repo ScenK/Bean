@@ -414,7 +414,7 @@ export function chatRoutineProblem(
     if (resolved && "error" in resolved) return resolved.error;
     if (transport === "desktop") {
       if (sink.alias === undefined && (sink.user !== undefined || sink.channel !== undefined)) {
-        return "sprouts from this chat post to Home or DM you — pick other chat destinations in the sprout's editor";
+        return "sprouts from this chat post to your main chat or DM you — pick other chat destinations in the sprout's editor";
       }
       continue;
     }

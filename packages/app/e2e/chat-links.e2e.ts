@@ -3,6 +3,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { dbFile, saveDesktopChat } from "@bean/core";
 import { launchBean } from "./fixtures/launch-app.js";
+import { startTaskChat } from "./fixtures/task-chat.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
@@ -33,6 +34,7 @@ async function openChat(app: ElectronApplication): Promise<Page> {
   await chat.waitForLoadState("domcontentloaded");
   await expect.poll(() => app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))?.isVisible())).toBe(true);
+  await startTaskChat(chat);
   return chat;
 }
 

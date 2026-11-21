@@ -2734,6 +2734,8 @@ button, input, textarea, select, a {
   color: var(--bean-text-dim);
 }
 .bean-routines-sink-hint { font-size: 11.5px; }
+/* "Post to your chat with {persona name}" (#1001): a long name ellipsizes. */
+.bean-routines-sink-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .bean-routines-sink-suboption {
   margin-left: 22px;
   font-size: 12px;

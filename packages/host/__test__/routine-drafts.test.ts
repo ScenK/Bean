@@ -33,7 +33,7 @@ describe("desktop sprout drafts (#982)", () => {
   test("Save turns a scheduled draft on; the renderer hands back only the id", async () => {
     const s = setup();
     const card = await s.propose(cron);
-    expect(card).toMatchObject({ id: "d1", name: "album", stops: "Dec 20, 2026, or sooner if found", tellYou: ["Home"] });
+    expect(card).toMatchObject({ id: "d1", name: "album", stops: "Dec 20, 2026, or sooner if found", tellYou: ["Your chat with Bean"] });
     expect(await s.h.save("d1")).toEqual({ ok: true, name: "album" });
     expect(s.store).toEqual([cron]);
     expect(await s.h.save("d1")).toEqual({ ok: false, error: expect.stringMatching(/expired/) });
@@ -91,7 +91,7 @@ describe("desktop sprout drafts (#982)", () => {
     expect(await late.h.save("d1")).toEqual({ ok: false, error: expect.stringMatching(/end date has passed/) });
     const bad = setup();
     await bad.propose({ ...cron, sinks: { chatops: [{ transport: "discord", user: "x" }] } });
-    expect(await bad.h.save("d1")).toEqual({ ok: false, error: expect.stringMatching(/post to Home or DM you/) });
+    expect(await bad.h.save("d1")).toEqual({ ok: false, error: expect.stringMatching(/post to your main chat or DM you/) });
     expect(bad.save).not.toHaveBeenCalled();
   });
 
