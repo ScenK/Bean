@@ -6,7 +6,7 @@ import type {
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CardBuilders,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, TODO_RUN_NOW_LINE, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -95,12 +95,33 @@ export function finishedCard(input: FinishedCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: `Run ${input.outcome} in ${input.projectName} (started by ${input.startedBy})` },
       { type: "TextBlock", text: input.instruction, wrap: true, isSubtle: true },
+      ...sessionBlocks(input),
       ...(input.resume
         ? [{ type: "TextBlock", text: `Resume (${input.projectName}):` }, { type: "TextBlock", text: input.resume, fontType: "monospace", wrap: true }]
         : []),
+      ...continueLiveNote(input),
     ],
     actions: continueLiveActions(input.resumeLiveId),
   };
+}
+
+// What the session was and where it stopped (#1002): agent (+ turns for a live session), last line.
+function sessionBlocks(input: FinishedCardInput | LiveSessionResultCardInput, turns?: number): object[] {
+  const facts = [
+    ...(input.agent ? [{ title: "Agent", value: input.agent }] : []),
+    { title: "Project", value: input.projectName },
+    ...(turns !== undefined ? [{ title: "Turns", value: String(turns) }] : []),
+  ];
+  return [
+    { type: "FactSet", facts },
+    ...(input.lastLine ? [{ type: "TextBlock", text: `Last: ${input.lastLine}`, wrap: true }] : []),
+  ];
+}
+
+// The button's one-line explanation, or why there is no button.
+function continueLiveNote(input: FinishedCardInput | LiveSessionResultCardInput): object[] {
+  const text = input.resumeLiveId ? continueLiveLine(input.agent) : input.noContinue ? noContinueLine(input.noContinue, input.agent) : undefined;
+  return text ? [{ type: "TextBlock", text, wrap: true, isSubtle: true, size: "small" }] : [];
 }
 
 // "Continue live" on a finished delegate / ended live-session card; the session id rides the
@@ -497,6 +518,7 @@ export function liveSessionResultCard(input: LiveSessionResultCardInput): object
     body: [
       { type: "TextBlock", text, weight: "Bolder" },
       ...(input.prompt ? [{ type: "TextBlock", text: input.prompt, wrap: true }] : []),
+      ...(input.outcome === "ended" ? [...sessionBlocks(input, input.turns), ...continueLiveNote(input)] : []),
     ],
     ...(input.outcome === "ended" && input.resumeLiveId ? { actions: continueLiveActions(input.resumeLiveId) } : {}),
   };

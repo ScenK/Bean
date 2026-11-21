@@ -172,6 +172,15 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   and exit 1 **before** `system/init`: `startLiveSession` ignores pre-init `result`s on a resume
   and reports `RESUME_REJECTED`, never a fresh session. The id doesn't change, so the ended card
   re-offers the button and nothing new is recorded.
+- **Continue live cards say what they resume (#1002)**: finished and ended cards carry agent,
+  project, instruction/prompt (a resume's ended card shows the original instruction), outcome,
+  live turn count and the last thing the agent said (`lastSaidLine`, 200 chars), plus one line
+  beside the button (`continueLiveLine`) or why there is none (`noContinue`: live sessions off /
+  CLI gone / `surface` — not a live id shape, or Discord's 100-char `custom_id`, decided in the
+  Discord builder). bot.ts's `continueLive()` is the one gate for both cards. A fresh session's
+  ended card offers the id from `onSessionId`, which the registry fires only after its
+  `delegate_runs` row is written (so the button always resolves); it is passed for every starter,
+  not just owners — only the catalog binding stays owner-only.
 - **Lazy resume (#531)**: every Continue live (desktop, chatops card, `/live-session resume`) starts
   with `prompt: ""` — no synthetic opening turn (the old `RESUME_OPENING` is gone). Both engines
   then spawn **nothing until the first `send()`**, which becomes turn 1 (with the git trailer); the

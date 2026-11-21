@@ -1920,6 +1920,31 @@ test("a finished Claude run offers Continue live; the ended resumed session re-o
   await vi.waitFor(() => expect(fx2.updates.at(-1)?.card).toMatchObject({ outcome: "ended", resumeLiveId: "sess-1" }));
 });
 
+test("a finished run's card names the agent and its last line, and says why Continue live is missing (#1002)", async () => {
+  const finish = async (o: { enabled?: boolean; uninstalled?: boolean; sessionId?: string; done?: boolean }): Promise<object | undefined> => {
+    let detected: CliName[] = ["claude"];
+    const { deps, delegateCalls } = makeDeps({
+      converseResult: delegateResult, liveSessionsEnabled: () => o.enabled ?? true, detectClis: () => detected,
+    });
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    await buildTeamsBot(deps).onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    if (o.sessionId) delegateCalls[0]?.cb.onSessionStart?.(1, o.sessionId);
+    if (o.uninstalled) detected = []; // claude uninstalled while the run went
+    if (o.done) delegateCalls[0]?.cb.onDone?.("Summary\n\nAll green — merged.");
+    else delegateCalls[0]?.cb.onError(new Error("boom"));
+    await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "finished" }));
+    return effects.updates.at(-1)?.card;
+  };
+  expect(await finish({ sessionId: "sess-9", done: true })).toMatchObject({ agent: "claude", lastLine: "All green — merged.", resumeLiveId: "sess-9" });
+  expect(await finish({ sessionId: "sess-9" })).toMatchObject({ outcome: "error", resumeLiveId: "sess-9" });
+  expect(await finish({ sessionId: "sess-9", enabled: false })).toMatchObject({ noContinue: "disabled", resume: "claude --resume sess-9" });
+  expect(await finish({ sessionId: "sess-9", uninstalled: true })).toMatchObject({ noContinue: "cli-missing" });
+  const none = await finish({});
+  expect(none).not.toHaveProperty("noContinue");
+  expect(none).not.toHaveProperty("resumeLiveId");
+});
+
 test("a finished opencode run offers Continue live only while opencode is detected and the id is ses_-shaped", async () => {
   const finish = async (detected: CliName[], sessionId: string): Promise<object | undefined> => {
     const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, liveSessionsEnabled: () => true, detectClis: () => detected });
@@ -3541,6 +3566,26 @@ describe("conversation catalog (#527)", () => {
     expect(c.list()[0]?.liveSessionId).toBe("sess-1");
     const runs = openDb(c.file).prepare("SELECT surface, session_id, instruction FROM delegate_runs").all().map((r) => ({ ...r }));
     expect(runs).toEqual([{ surface: "discord", session_id: "sess-1", instruction: "fix the login bug" }]);
+  });
+
+  test("a fresh live session's ended card says what it was and offers Continue live with its new id (#1002)", async () => {
+    const c = catalogBot({ ownerId: "u1" });
+    for (const [fromId, conv] of [["u1", "t1"]] as const) {
+      const effects = fx();
+      await c.bot.proposeLiveSession({ conversationId: conv, instruction: "fix the login bug", proposedBy: "Scen" }, effects);
+      await c.bot.onCardAction({
+        conversationId: conv, fromId, fromName: "someone", place: { kind: "thread", title: "login bugs" },
+        value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) },
+      }, effects);
+      const cbs = c.cbs()!;
+      cbs.onSessionId?.(`sess-${conv}`);
+      cbs.onTurnComplete?.({ result: "looked at auth.ts\nFixed the redirect — want a test too?" });
+      cbs.onExit(undefined);
+      await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({
+        outcome: "ended", agent: "claude", turns: 1, prompt: "fix the login bug",
+        lastLine: "Fixed the redirect — want a test too?", resumeLiveId: `sess-${conv}`,
+      }));
+    }
   });
 
   test("a session id reported after /new doesn't bind the conversation again", async () => {

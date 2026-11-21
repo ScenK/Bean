@@ -33,7 +33,7 @@ import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type DelegateRunRow, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
-import type { CardBuilders } from "./cards-api.js";
+import { lastSaidLine, type CardBuilders, type NoContinueReason } from "./cards-api.js";
 import { formatAmbientBlock, formatCarriedBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
@@ -572,6 +572,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const detected = deps.detectClis();
     return LIVE_CLIS.filter((c) => detected.includes(c));
   };
+  // A finished/ended card's Continue live (#1002), or why there is none: only for the CLI that
+  // ran it, while live sessions are on and that CLI is still here, with that CLI's id shape.
+  const continueLive = (cli: CliName, sessionId: string | undefined): { resumeLiveId?: string; noContinue?: NoContinueReason } => {
+    if (!sessionId) return {};
+    if (!deps.liveSessionsEnabled()) return { noContinue: "disabled" };
+    if (!isLiveCli(cli) || !isLiveSessionId(cli, sessionId)) return { noContinue: "surface" };
+    if (!deps.detectClis().includes(cli)) return { noContinue: "cli-missing" };
+    return { resumeLiveId: sessionId };
+  };
   // The literal --model for a live session: kept only if that CLI's config offers it, else the
   // CLI's own default — a model from another provider never switches the engine.
   const liveModelFor = (cli: LiveCli, model: string | undefined): string | undefined =>
@@ -630,7 +639,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       recordCard(p.conversationId, "delegate", "didn't start"); // never the unresolved picked name
       if (p.cardActivityId !== undefined) {
         await fx.updateCard(p.cardActivityId, deps.cards.finishedCard({
-          projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled",
+          projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", agent: cli,
         }));
       }
       await fx.post(`I can't find the \`${p.proposal.skillName}\` skill any more — ask me again and pick a skill that still exists.`);
@@ -652,14 +661,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ...(resume ? { resume } : {}),
       ...(skill?.browser ? { browser: true } : {}),
     };
-    const receipt = (sessionId: string | undefined): { resume?: string; resumeLiveId?: string } =>
-      sessionId
-        ? {
-            resume: resumeCommand(cli, sessionId),
-            // Continue live only on the CLI that ran it, if it's still here, with that CLI's id shape.
-            ...(liveClis().includes(cli) && isLiveSessionId(cli, sessionId) ? { resumeLiveId: sessionId } : {}),
-          }
-        : {};
+    // The last streamed line: where a failed or cancelled run stopped.
+    let lastTail: string | undefined;
+    const receipt = (sessionId: string | undefined, last: string | undefined) => {
+      const line = lastSaidLine(last);
+      return {
+        agent: cli,
+        ...(line ? { lastLine: line } : {}),
+        ...(sessionId ? { resume: resumeCommand(cli, sessionId) } : {}),
+        ...continueLive(cli, sessionId),
+      };
+    };
     const cardId = p.cardActivityId;
     const updateTo = async (card: object): Promise<void> => {
       if (cardId !== undefined) await fx.updateCard(cardId, card);
@@ -670,6 +682,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       req,
       {
         onTail: (line) => {
+          lastTail = line;
           updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, runId }))
             .catch(logRunEffectError);
         },
@@ -680,7 +693,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
             }
             appendHistory(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done", ...receipt(sessionId) })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done", ...receipt(sessionId, result) })).catch(logRunEffectError);
             await (fx.postResult ?? fx.post)(result);
           })().catch(logRunEffectError);
         },
@@ -688,7 +701,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           ended = true;
           void (async () => {
             recordCard(p.conversationId, "delegate", "failed", p.proposal.skillName);
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId) })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId, lastTail) })).catch(logRunEffectError);
             await fx.post(`Delegate run failed: ${message}`);
           })().catch(logRunEffectError);
         },
@@ -696,7 +709,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           ended = true;
           void (async () => {
             recordCard(p.conversationId, "delegate", "cancelled", p.proposal.skillName);
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId) })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId, lastTail) })).catch(logRunEffectError);
             await fx.post("Run cancelled.");
           })().catch(logRunEffectError);
         },
@@ -787,6 +800,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     const resetsAtLaunch = resets.get(conv) ?? 0;
     let run: string | undefined; // set right after start(); turn results only arrive later
+    // For the ended card (#1002): the session to continue (a fresh one's arrives via onSessionId,
+    // once its delegate_runs row is written), this session's turns and its last answer.
+    let sessionId = resume?.sessionId;
+    let turns = 0;
+    let lastResult: string | undefined;
     const started = deps.liveSessions.start({
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
@@ -801,16 +819,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       steering: p.proposal.steering ?? "restricted",
       sink,
       onTurnResult: (result) => {
+        turns++;
+        lastResult = result;
         appendHistory(p.conversationId, { role: "assistant", content: `[live session] ${result}` });
         // ponytail: the last 2000 chars — where an agent's closing question sits.
         noteLiveTurn(conv, run, { role: "assistant", content: result.slice(-2000) });
       },
-      // A `/new` since launch unbound the conversation; a late id must not bind it again.
-      ...(owner ? {
-        onSessionId: (id: string) => {
-          if ((resets.get(conv) ?? 0) === resetsAtLaunch) deps.catalog?.setLiveSession(conv, cli, id);
-        },
-      } : {}),
+      onSessionId: (id: string) => {
+        sessionId = id;
+        // A `/new` since launch unbound the conversation; a late id must not bind it again.
+        if (owner && (resets.get(conv) ?? 0) === resetsAtLaunch) deps.catalog?.setLiveSession(conv, cli, id);
+      },
       onEnded: (notice) => {
         if (run && liveTurns.get(conv)?.run === run) liveTurns.delete(conv);
         updateToEnded().catch(logRunEffectError);
@@ -818,9 +837,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       },
     });
     async function updateToEnded(): Promise<void> {
-      // The session id doesn't change across a resume, so the ended card can offer it again.
+      // The session id doesn't change across a resume, so the ended card can offer it again; a
+      // resume's card says what it continued.
+      const prompt = resume ? resume.instruction : p.proposal.instruction;
+      const line = lastSaidLine(lastResult);
       await updateTo(deps.cards.liveSessionResultCard({
-        projectName, startedBy, outcome: "ended", ...shownPrompt(p.proposal), ...(resume ? { resumeLiveId: resume.sessionId } : {}),
+        projectName, startedBy, outcome: "ended", agent: cli, turns,
+        ...(prompt ? { prompt } : {}), ...(line ? { lastLine: line } : {}), ...continueLive(cli, sessionId),
       }));
     }
     run = deps.liveSessions.generation(conv);

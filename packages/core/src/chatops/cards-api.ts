@@ -45,6 +45,34 @@ export interface FinishedCardInput {
   resume?: string;
   /** CLI session id for a "Continue live" button (beanAction `resume-live`); absent = no button. */
   resumeLiveId?: string;
+  /** The CLI that ran it (claude/codex/opencode). */
+  agent?: string;
+  /** Where it stopped: the last thing the agent said, one clamped line (`lastSaidLine`). */
+  lastLine?: string;
+  /** Set when a session exists but no button is offered: the card says why. */
+  noContinue?: NoContinueReason;
+}
+
+/** Why a finished/ended card with a session carries no Continue live button. `surface` = this
+ * surface can't carry the id (Discord's 100-char custom_id) or it isn't a live session id. */
+export type NoContinueReason = "disabled" | "cli-missing" | "surface";
+
+/** The Continue live button's one-line explanation, shown beside it. */
+export const continueLiveLine = (agent = "agent"): string =>
+  `Continue live reopens this ${agent} session with everything it did so far. Messages here go to it until you end it.`;
+
+/** The one line a card shows instead of Continue live. */
+export function noContinueLine(reason: NoContinueReason, agent = "the agent"): string {
+  return reason === "disabled" ? "No Continue live: live sessions are off."
+    : reason === "cli-missing" ? `No Continue live: ${agent} isn't installed here any more.`
+      : "No Continue live: it can't be offered on this surface.";
+}
+
+/** The last non-blank line of an agent's output, clamped from its end — where it stopped. */
+export function lastSaidLine(text: string | undefined, max = 200): string | undefined {
+  const line = text?.split("\n").map((l) => l.trim()).filter(Boolean).pop();
+  if (!line) return undefined;
+  return line.length <= max ? line : "…" + line.slice(-(max - 1));
 }
 
 export interface NoteProposalCardInput {
@@ -234,8 +262,14 @@ export interface LiveSessionResultCardInput {
   /** A fresh session's opening prompt: this card replaces the proposal card that showed it (and a
    * Discord `/live-session` prompt is never a message of its own), so it would vanish otherwise. */
   prompt?: string;
-  /** On "ended": re-offer "Continue live" for this session id (a resumed session). */
+  /** On "ended": offer "Continue live" for this session id. */
   resumeLiveId?: string;
+  /** On "ended": the CLI, the turns this session ran, the last thing the agent said, and why no
+   * button is offered (see FinishedCardInput). */
+  agent?: string;
+  turns?: number;
+  lastLine?: string;
+  noContinue?: NoContinueReason;
 }
 
 export interface CardBuilders {
