@@ -324,7 +324,7 @@ const SEND_EXPIRED = "That send card expired — ask me again.";
 export const MAX_SEND_CHARS = 4000;
 
 /** `continue`'s answer per refusal; the rest fall back to a generic line. */
-const MAIN_CONTINUE_LINE = "To reopen an agent session here, tap Continue live on its card.";
+const MAIN_CONTINUE_NONE = "There's no agent session to continue here.";
 
 const CONTINUE_REFUSED: Partial<Record<DeskRefusal, string>> = {
   "no-record": "There's no ended live session here to continue.",
@@ -1690,8 +1690,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (cmd === "continue") {
       if (speakerRole(msg).role !== "owner") await fx.reply("Only the owner can continue a live session.");
-      // The main conversation (#998) resumes only through a card: Continue live on the session's card.
-      else if (msg.direct && historyId(conv) === MAIN_CONVERSATION_ID) await fx.reply(MAIN_CONTINUE_LINE);
+      // The main conversation (#998) resumes only through a card: `/continue` posts the confirm card
+      // for the session last bound here (the same one Continue live posts), never reopens it directly.
+      else if (msg.direct && historyId(conv) === MAIN_CONVERSATION_ID) {
+        const sessionId = deps.catalog?.get(conv)?.liveSessionId;
+        const refused = sessionId ? await proposeResumeLive(conv, sessionId, msg.fromName, fx) : MAIN_CONTINUE_NONE;
+        if (refused) await fx.reply(refused);
+      }
       else if (!deps.liveSessionsEnabled()) await fx.reply("Live sessions are disabled here.");
       else {
         const r = await resumeBoundLive(conv, async () => fx);

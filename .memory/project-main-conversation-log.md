@@ -47,7 +47,8 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
   never `maybeCompact`, which clips the log's summary row like a turn.
 - **No implicit delegate resume:** owner-DM delegates neither read nor write `thread_sessions`; the
   finished card's Continue live (`delegate_runs`) is the only resume. A bound live session doesn't
-  reopen from text either: bare `continue` is a Bean turn, `/continue` points at the card.
+  reopen from text either: bare `continue` is a Bean turn, `/continue` posts the resume confirm card
+  (`proposeResumeLive`) for the session last bound there — Start is the tap.
 - `/new` in the owner DM answers a fixed line naming the persona, no reset. Desk sends to a `dm` row
   are refused `main-conversation`.
 - **Outbox:** `appendDelivery` (core) maps a delivery only when it provably went to the owner's 1:1

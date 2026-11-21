@@ -4980,8 +4980,12 @@ describe("owner DMs share the main conversation's history (#998)", () => {
     expect(m.rows(MAIN_CONVERSATION_ID).at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed", surface: "discord" });
     expect(m.rows("d1")).toEqual([]);
   });
-  test("a bound owner-DM live session never reopens from `continue`: bare is a Bean turn, slashed points at the card", async () => {
+  test("a bound owner-DM live session never reopens from `continue`: bare is a Bean turn, slashed posts the confirm card", async () => {
     const m = mainBots();
+    m.discord.deps.findDelegateRun = (id) => (id === "sess-1"
+      ? { run: { surface: "discord", cli: "claude", sessionId: "sess-1", projectPath: "/p/bean", instruction: "fix the login bug" } }
+      : { refusal: "no record" });
+    m.discord.bot = buildTeamsBot(m.discord.deps);
     await m.discord.bot.onMessage(ownerDm, fx());
     new ConversationCatalog(m.file, "discord").upsert({
       conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1", live: { cli: "claude", sessionId: "sess-1" },
@@ -4992,8 +4996,14 @@ describe("owner DMs share the main conversation's history (#998)", () => {
     expect(m.rows(MAIN_CONVERSATION_ID).at(-2)).toMatchObject({ content: speakerLine("Scen", "continue") });
     const slashed = fx();
     await m.discord.bot.onMessage({ ...ownerDm, text: "/continue" }, slashed);
-    expect(slashed.posted).toEqual(["To reopen an agent session here, tap Continue live on its card."]);
+    expect(slashed.posted).toEqual([CARD_LEAD]);
+    expect(slashed.cards).toEqual([expect.objectContaining({ continues: "fix the login bug" })]);
     expect(m.discord.deps.liveSessions.has("d1")).toBe(false);
+    const none = mainBots();
+    await none.discord.bot.onMessage(ownerDm, fx());
+    const nothing = fx();
+    await none.discord.bot.onMessage({ ...ownerDm, text: "/continue" }, nothing);
+    expect(nothing.posted).toEqual(["There's no agent session to continue here."]);
   });
 });
 
