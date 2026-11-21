@@ -4,11 +4,5 @@
     "file": "home-arrival.e2e.ts",
     "issue": 1021,
     "since": "2026-11-21"
-  },
-  {
-    "title": "remote core: update the core from About",
-    "file": "remote-core.e2e.ts",
-    "issue": 1024,
-    "since": "2026-11-21"
   }
 ]
