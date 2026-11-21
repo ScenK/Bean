@@ -289,4 +289,7 @@ test("finished/ended cards say what Continue live resumes, or why it's missing (
   expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "ended", agent: "claude", turns: 0, noContinue: "surface" })))
     .toContain("can't be offered on this surface");
   expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "started", agent: "claude" }))).not.toContain("FactSet");
+  // Instruction/prompt are clamped for display.
+  expect(JSON.stringify(finishedCard({ projectName: "bean", instruction: "i".repeat(3000), startedBy: "bob", outcome: "done" }))).not.toContain("i".repeat(1000));
+  expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "ended", prompt: "p".repeat(3000) }))).not.toContain("p".repeat(1000));
 });

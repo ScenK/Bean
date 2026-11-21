@@ -3580,10 +3580,12 @@ describe("conversation catalog (#527)", () => {
       const cbs = c.cbs()!;
       cbs.onSessionId?.(`sess-${conv}`);
       cbs.onTurnComplete?.({ result: "looked at auth.ts\nFixed the redirect — want a test too?" });
+      // A second turn stopped mid-way: its streamed text is where it stopped.
+      cbs.onOutput("Now adding the test…");
       cbs.onExit(undefined);
       await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({
         outcome: "ended", agent: "claude", turns: 1, prompt: "fix the login bug",
-        lastLine: "Fixed the redirect — want a test too?", resumeLiveId: `sess-${conv}`,
+        lastLine: "Now adding the test…", resumeLiveId: `sess-${conv}`,
       }));
     }
   });

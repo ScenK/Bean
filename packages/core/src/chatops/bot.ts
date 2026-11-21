@@ -661,8 +661,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ...(resume ? { resume } : {}),
       ...(skill?.browser ? { browser: true } : {}),
     };
-    // The last streamed line: where a failed or cancelled run stopped.
-    let lastTail: string | undefined;
     const receipt = (sessionId: string | undefined, last: string | undefined) => {
       const line = lastSaidLine(last);
       return {
@@ -682,7 +680,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       req,
       {
         onTail: (line) => {
-          lastTail = line;
           updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, runId }))
             .catch(logRunEffectError);
         },
@@ -697,19 +694,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             await (fx.postResult ?? fx.post)(result);
           })().catch(logRunEffectError);
         },
-        onError: (message, sessionId) => {
+        onError: (message, sessionId, last) => {
           ended = true;
           void (async () => {
             recordCard(p.conversationId, "delegate", "failed", p.proposal.skillName);
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId, lastTail) })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId, last) })).catch(logRunEffectError);
             await fx.post(`Delegate run failed: ${message}`);
           })().catch(logRunEffectError);
         },
-        onCancelled: (sessionId) => {
+        onCancelled: (sessionId, last) => {
           ended = true;
           void (async () => {
             recordCard(p.conversationId, "delegate", "cancelled", p.proposal.skillName);
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId, lastTail) })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId, last) })).catch(logRunEffectError);
             await fx.post("Run cancelled.");
           })().catch(logRunEffectError);
         },
@@ -801,10 +798,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const resetsAtLaunch = resets.get(conv) ?? 0;
     let run: string | undefined; // set right after start(); turn results only arrive later
     // For the ended card (#1002): the session to continue (a fresh one's arrives via onSessionId,
-    // once its delegate_runs row is written), this session's turns and its last answer.
+    // once its delegate_runs row is written), this session's turns and the last thing the agent
+    // said — streamed text too, so a turn stopped mid-way still shows where it stopped.
     let sessionId = resume?.sessionId;
     let turns = 0;
-    let lastResult: string | undefined;
+    let lastSaid: string | undefined;
     const started = deps.liveSessions.start({
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
@@ -820,10 +818,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       sink,
       onTurnResult: (result) => {
         turns++;
-        lastResult = result;
+        lastSaid = result;
         appendHistory(p.conversationId, { role: "assistant", content: `[live session] ${result}` });
         // ponytail: the last 2000 chars — where an agent's closing question sits.
         noteLiveTurn(conv, run, { role: "assistant", content: result.slice(-2000) });
+      },
+      onAgentText: (text) => {
+        lastSaid = text;
       },
       onSessionId: (id: string) => {
         sessionId = id;
@@ -840,7 +841,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // The session id doesn't change across a resume, so the ended card can offer it again; a
       // resume's card says what it continued.
       const prompt = resume ? resume.instruction : p.proposal.instruction;
-      const line = lastSaidLine(lastResult);
+      const line = lastSaidLine(lastSaid);
       await updateTo(deps.cards.liveSessionResultCard({
         projectName, startedBy, outcome: "ended", agent: cli, turns,
         ...(prompt ? { prompt } : {}), ...(line ? { lastLine: line } : {}), ...continueLive(cli, sessionId),

@@ -87,6 +87,11 @@ export function runningCard(input: RunningCardInput): object {
   };
 }
 
+// Display-only clamp for an instruction/prompt on a receipt card (#1002); the full text lives in
+// the proposal and history.
+const RECEIPT_TEXT_LIMIT = 1000;
+const clampReceipt = (text: string): string => (text.length <= RECEIPT_TEXT_LIMIT ? text : text.slice(0, RECEIPT_TEXT_LIMIT - 1) + "…");
+
 export function finishedCard(input: FinishedCardInput): object {
   return {
     $schema: SCHEMA,
@@ -94,7 +99,7 @@ export function finishedCard(input: FinishedCardInput): object {
     version: "1.4",
     body: [
       { type: "TextBlock", weight: "bolder", text: `Run ${input.outcome} in ${input.projectName} (started by ${input.startedBy})` },
-      { type: "TextBlock", text: input.instruction, wrap: true, isSubtle: true },
+      { type: "TextBlock", text: clampReceipt(input.instruction), wrap: true, isSubtle: true },
       ...sessionBlocks(input),
       ...(input.resume
         ? [{ type: "TextBlock", text: `Resume (${input.projectName}):` }, { type: "TextBlock", text: input.resume, fontType: "monospace", wrap: true }]
@@ -517,7 +522,7 @@ export function liveSessionResultCard(input: LiveSessionResultCardInput): object
     type: "AdaptiveCard", version: "1.4",
     body: [
       { type: "TextBlock", text, weight: "Bolder" },
-      ...(input.prompt ? [{ type: "TextBlock", text: input.prompt, wrap: true }] : []),
+      ...(input.prompt ? [{ type: "TextBlock", text: clampReceipt(input.prompt), wrap: true }] : []),
       ...(input.outcome === "ended" ? [...sessionBlocks(input, input.turns), ...continueLiveNote(input)] : []),
     ],
     ...(input.outcome === "ended" && input.resumeLiveId ? { actions: continueLiveActions(input.resumeLiveId) } : {}),

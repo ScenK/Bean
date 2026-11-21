@@ -174,7 +174,9 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   re-offers the button and nothing new is recorded.
 - **Continue live cards say what they resume (#1002)**: finished and ended cards carry agent,
   project, instruction/prompt (a resume's ended card shows the original instruction), outcome,
-  live turn count and the last thing the agent said (`lastSaidLine`, 200 chars), plus one line
+  live turn count and the last thing the agent said (`lastSaidLine`, 200 chars — from the
+  unthrottled stream: `RunEvents` error/cancel carry `last`, live sessions use `onAgentText`, so a
+  cancel or a turn stopped mid-way still shows where it stopped), plus one line
   beside the button (`continueLiveLine`) or why there is none (`noContinue`: live sessions off /
   CLI gone / `surface` — not a live id shape, or Discord's 100-char `custom_id`, decided in the
   Discord builder). bot.ts's `continueLive()` is the one gate for both cards. A fresh session's
