@@ -298,8 +298,12 @@ test("remote core: update the core from About", async () => {
     await about.clock.install();
     await section.getByRole("button", { name: "Update core" }).click();
     await expect(section.getByRole("button", { name: "Restarting core…" })).toBeVisible();
-    await about.clock.fastForward(2 * 60_000 + 1_000);
-    await expect(section).toContainText("Core didn't come back after updating.");
+    // The two-minute timer is armed only once the apply reply lands, which can be after
+    // "Restarting core…" shows — so fast-forward again until it has fired.
+    await expect(async () => {
+      await about.clock.fastForward(2 * 60_000 + 1_000);
+      await expect(section).toContainText("Core didn't come back after updating.", { timeout: 500 });
+    }).toPass({ timeout: 10_000 });
     await expect(section.locator(".bean-cores-command")).toHaveText("ssh me@box bean-core rollback");
   } finally {
     await app.close().catch(() => {});
