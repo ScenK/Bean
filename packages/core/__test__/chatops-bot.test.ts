@@ -4980,6 +4980,21 @@ describe("owner DMs share the main conversation's history (#998)", () => {
     expect(m.rows(MAIN_CONVERSATION_ID).at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed", surface: "discord" });
     expect(m.rows("d1")).toEqual([]);
   });
+  test("a bound owner-DM live session never reopens from `continue`: bare is a Bean turn, slashed points at the card", async () => {
+    const m = mainBots();
+    await m.discord.bot.onMessage(ownerDm, fx());
+    new ConversationCatalog(m.file, "discord").upsert({
+      conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1", live: { cli: "claude", sessionId: "sess-1" },
+    });
+    const bare = fx();
+    await m.discord.bot.onMessage({ ...ownerDm, text: "continue" }, bare);
+    expect(bare.posted).toEqual(["ok"]);
+    expect(m.rows(MAIN_CONVERSATION_ID).at(-2)).toMatchObject({ content: speakerLine("Scen", "continue") });
+    const slashed = fx();
+    await m.discord.bot.onMessage({ ...ownerDm, text: "/continue" }, slashed);
+    expect(slashed.posted).toEqual(["To reopen an agent session here, tap Continue live on its card."]);
+    expect(m.discord.deps.liveSessions.has("d1")).toBe(false);
+  });
 });
 
 describe("appendDelivery (#998)", () => {

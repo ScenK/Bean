@@ -46,9 +46,10 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
 - **Bounded before each turn** with the desktop budget (core `boundMainLog`, shared with the host) —
   never `maybeCompact`, which clips the log's summary row like a turn.
 - **No implicit delegate resume:** owner-DM delegates neither read nor write `thread_sessions`; the
-  finished card's Continue live (`delegate_runs`) is the only resume.
+  finished card's Continue live (`delegate_runs`) is the only resume. A bound live session doesn't
+  reopen from text either: bare `continue` is a Bean turn, `/continue` points at the card.
 - `/new` in the owner DM answers a fixed line naming the persona, no reset. Desk sends to a `dm` row
   are refused `main-conversation`.
 - **Outbox:** `appendDelivery` (core) maps a delivery only when it provably went to the owner's 1:1
-  (Discord: no `userId` or the owner's; Teams: `ownerDmRefs` on the ref), under the existing
+  (Discord: no `userId` or the owner's, or a named destination that is the owner's DM channel; Teams: `ownerDmRefs` on the ref), under the existing
   `context` rule, keyed `delivery:<outbox id>` so a Teams fan-out to several owner DMs appends once.

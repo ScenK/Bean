@@ -324,6 +324,8 @@ const SEND_EXPIRED = "That send card expired — ask me again.";
 export const MAX_SEND_CHARS = 4000;
 
 /** `continue`'s answer per refusal; the rest fall back to a generic line. */
+const MAIN_CONTINUE_LINE = "To reopen an agent session here, tap Continue live on its card.";
+
 const CONTINUE_REFUSED: Partial<Record<DeskRefusal, string>> = {
   "no-record": "There's no ended live session here to continue.",
   "channel-busy": "A live session is already running here.",
@@ -1688,6 +1690,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (cmd === "continue") {
       if (speakerRole(msg).role !== "owner") await fx.reply("Only the owner can continue a live session.");
+      // The main conversation (#998) resumes only through a card: Continue live on the session's card.
+      else if (msg.direct && historyId(conv) === MAIN_CONVERSATION_ID) await fx.reply(MAIN_CONTINUE_LINE);
       else if (!deps.liveSessionsEnabled()) await fx.reply("Live sessions are disabled here.");
       else {
         const r = await resumeBoundLive(conv, async () => fx);
@@ -2077,7 +2081,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         // Typed `stop` with nothing live stays a model turn, as it always was; so does a typed
         // bare `continue` where no live session was ever bound (it's an ordinary word in a chat).
-        const plainContinue = cmd === "continue" && !msg.text.trim().startsWith("/") && !deps.catalog?.get(msg.conversationId)?.liveSessionId;
+        // In the owner's DM after the cutover (#998) a bare `continue` is always a Bean turn: the main
+        // conversation never reopens an agent without a card tap.
+        const plainContinue = cmd === "continue" && !msg.text.trim().startsWith("/") &&
+          (!deps.catalog?.get(msg.conversationId)?.liveSessionId || historyId(msg.conversationId) === MAIN_CONVERSATION_ID);
         if (cmd !== "stop" && !plainContinue && await onCommand(msg, fx)) return;
         const { role, scopeId } = speakerRole(msg);
         const isOwner = role === "owner";

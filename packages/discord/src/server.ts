@@ -841,7 +841,9 @@ setInterval(() => {
     if (!channel?.isTextBased() || !("send" in channel)) throw new Error(`channel ${msg.channel} not sendable`);
     await sendChunks(text, async (chunk): Promise<{ id: string }> => channel.send(chunk), chunkGroups);
     destinations.seen(channel);
-    if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body);
+    // A named destination can be the owner's own DM channel: that one maps too (#998).
+    const ownerDm = channel.type === ChannelType.DM && !!discordConfig.ownerId && channel.recipientId === discordConfig.ownerId;
+    if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body, ownerDm ? msg.id : undefined);
   }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed:", outboxErrorLine(err)));
 }, OUTBOX_POLL_MS);
 
