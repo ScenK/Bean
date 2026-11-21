@@ -151,9 +151,9 @@ describe("parallel groups on the host", () => {
       commandStep: async () => (n <= 2 ? { exitCode: 1, output: "fail" } : { exitCode: 0, output: "pass" }),
     });
     const res = await h.runOneRoutine(routine([
-      { kind: "delegate", id: "a", skill: "lint", instruction: "x" },
-      { kind: "delegate", id: "b", skill: "test", instruction: "y", alongside: true },
-      { kind: "command", id: "j", command: "check", gate: { onFail: { goto: "a" } } },
+      { kind: "delegate", id: "lint", skill: "lint", instruction: "x" },
+      { kind: "delegate", id: "test", skill: "test", instruction: "y", alongside: true },
+      { kind: "command", id: "j", command: "check", gate: { onFail: { goto: "lint" } } },
     ]));
     expect(res.record.status).toBe("ok");
     const lines = h.status.flatMap((e) => (e.type === "step" ? [e.line] : []));

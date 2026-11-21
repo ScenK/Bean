@@ -1,6 +1,6 @@
 import { useId } from "preact/hooks";
 import type { FlowEdge, RoutineStep } from "@bean/core";
-import { stepFlow } from "@bean/core/routine-graph";
+import { namedStepId, stepFlow } from "@bean/core/routine-graph";
 import { layoutStepFlow, NODE_H, NODE_W } from "./step-flow-layout.js";
 
 const clip = (text: string, max: number): string => {
@@ -87,7 +87,7 @@ export function StepFlow(props: { steps: RoutineStep[]; lanes?: number[] }) {
               <rect class={`bean-flow-node${node.flagged ? " bean-flow-node--flagged" : ""}`} x={b.x} y={b.y} width={NODE_W} height={NODE_H} rx="9" />
               {/* HTML, not <text>: CSS ellipsis clips by real glyph width, a char count can't. */}
               <foreignObject x={b.x + 10} y={b.y + 5} width={NODE_W - 20} height={NODE_H - 10}>
-                <div class="bean-flow-title"><span class="bean-flow-clip">{`${b.index + 1} · ${step.skill || step.kind}`}</span>{lane === undefined ? null : <span class="bean-flow-lane" title={`Shares step ${lane + 1}'s agent session`}>{` ↻${lane + 1}`}</span>}</div>
+                <div class="bean-flow-title"><span class="bean-flow-clip">{`${b.index + 1} · ${namedStepId(step) ?? (step.skill || step.kind)}`}</span>{lane === undefined ? null : <span class="bean-flow-lane" title={`Shares step ${lane + 1}'s agent session`}>{` ↻${lane + 1}`}</span>}</div>
                 <div class="bean-flow-snippet bean-flow-clip">{(text ?? "").replace(/\s+/g, " ").trim()}</div>
               </foreignObject>
             </g>

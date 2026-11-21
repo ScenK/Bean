@@ -2,6 +2,12 @@
 // save-time validator and the editor's inline checks so both say exactly the same thing.
 import type { RoutineStep } from "./routine-store.js";
 
+/** A step's hand-chosen id (`implement`, `review`), or undefined for none or an editor-made
+ * `<skill>-<n>` — which names nothing the skill doesn't. Lets steps sharing one skill read apart.
+ * ponytail: any `-<digits>` tail counts as editor-made, so a hand-written `phase-2` shows its skill. */
+export const namedStepId = (step: { id?: string }): string | undefined =>
+  step.id && !/-\d+$/.test(step.id) ? step.id : undefined;
+
 export const DEFAULT_GATE_ROUNDS = 3;
 export const MAX_GATE_ROUNDS = 5;
 

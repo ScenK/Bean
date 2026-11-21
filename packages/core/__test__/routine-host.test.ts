@@ -67,6 +67,16 @@ describe("createRoutineHost", () => {
     expect(h.status.at(-1)).toMatchObject({ type: "finish", state: "failed" });
   });
 
+  it("labels bubble steps by their hand-chosen id, so steps sharing a skill read apart", async () => {
+    const h = host();
+    await h.runOneRoutine(routine([
+      { kind: "delegate", id: "implement", skill: "dev", instruction: "a" },
+      { kind: "delegate", id: "dev-2", skill: "dev", instruction: "b" },
+      { kind: "command", command: "true" },
+    ])).catch(() => {});
+    expect(h.status[0]).toMatchObject({ type: "start", steps: ["implement", "dev", "true"] });
+  });
+
   it("runs a lone delegate step: verbatim digest with no session footer, status start/step/finish, attempt recorded", async () => {
     const h = host();
     const res = await h.runOneRoutine(routine([{ kind: "delegate", instruction: "check the build please" }]));
