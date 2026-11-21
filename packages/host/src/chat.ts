@@ -69,6 +69,9 @@ export interface ChatHandlerDeps {
   mainLog?: (mountId: string | undefined) => ConversationStore | undefined;
 }
 
+// What formatSummaryBlock puts before a summary's text: how the log's summary row is told apart.
+const SUMMARY_PREFIX = formatSummaryBlock("");
+
 /** Appends a shell's keyed turns to the main log; a key already there appends nothing. */
 function appendDelta(log: ConversationStore, turns: readonly KeyedTurn[]): void {
   for (const t of turns) {
@@ -141,10 +144,14 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       // The desktop budget (#975) on the log, before the model sees it: past 60 turns or 200 KB the
       // oldest fold into one summary that replaces them in the log (compare-and-swap: a turn another
       // writer added meanwhile is never lost — the swap is just skipped and this request still bounded).
+      // The log's own summary row leads it: it rides as the previous summary (folded whole, never
+      // clipped like a turn) and goes with the turns it is replaced along with.
       const rows = log.oldest(MAIN_CONVERSATION_ID, log.turnCount(MAIN_CONVERSATION_ID));
-      const bounded = await compactHistory(rows.map(({ role, content }) => ({ role, content })), undefined, { chat: deps.converse, model: deps.getModel() }, signal);
+      const head = rows[0]?.role === "user" && rows[0].content.startsWith(SUMMARY_PREFIX) ? rows[0] : undefined;
+      const turns = (head ? rows.slice(1) : rows).map(({ role, content }) => ({ role, content }));
+      const bounded = await compactHistory(turns, head?.content.slice(SUMMARY_PREFIX.length), { chat: deps.converse, model: deps.getModel() }, signal);
       if (bounded.summary) {
-        log.replaceOldest(MAIN_CONVERSATION_ID, rows.slice(0, bounded.summary.covers), { role: "user", content: formatSummaryBlock(bounded.summary.text) });
+        log.replaceOldest(MAIN_CONVERSATION_ID, rows.slice(0, bounded.summary.covers + (head ? 1 : 0)), { role: "user", content: formatSummaryBlock(bounded.summary.text) });
       }
       history = bounded.history;
     } else {
@@ -453,7 +460,9 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     },
     get,
     /** Undefined = refused by the latch (quietly: the renderer already stopped saving). */
-    save: (key: string, req: unknown): ChatThreadAck | undefined => {
+    /** `keepNote`: the saved note link stays whatever the request says — a remote shell can't look
+     * notes up (no `listNotes` over SSH), so its save would otherwise unlink the chat (#997). */
+    save: (key: string, req: unknown, opts: { keepNote?: boolean } = {}): ChatThreadAck | undefined => {
       if (unsavable.has(key)) return undefined;
       const o = req as Partial<ChatThreadSaveRequest> | null;
       if (!o || typeof o.id !== "string" || !THREAD_ID.test(o.id)) throw new Error("chat thread id must be a UUID");
@@ -469,7 +478,8 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       // Checked before anything is written; appended before the save, so a failed save re-sends them.
       const turns = log ? checkKeyedTurns(o.turns) : [];
       const at = now();
-      const chat = { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null };
+      const noteSlug = opts.keepNote ? deps.getDesktopChat(deps.dbFile, o.id)?.noteSlug ?? null : o.noteSlug ?? null;
+      const chat = { id: o.id, title: o.title, itemsJson, noteSlug };
       if (log) appendDelta(log, turns);
       // Home posts (#960) drain with the save that holds them: the `post` items in this transcript
       // whose ids were handed to this chat with this thread — never another chat's, never a guess.

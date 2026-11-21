@@ -119,9 +119,9 @@ describe("remote attach over the unix socket", () => {
           if (mounts.get(m) !== c) throw new Error("not your chat");
           return { id: id === "home" ? "home-id" : id, title: "Home", items: [], noteSlug: null, home: { posts: [], log: true } };
         },
-        threadSave: (c: number, m: string, req: { id: string; title: string; turns?: unknown[] }) => {
+        threadSave: (c: number, m: string, req: { id: string; title: string; turns?: unknown[] }, opts?: unknown) => {
           if (mounts.get(m) !== c) throw new Error("not your chat");
-          saved.push(req);
+          saved.push({ ...req, opts });
           return { id: req.id, title: req.title, updatedAt: "now", home: true };
         },
       },
@@ -234,7 +234,7 @@ describe("remote attach over the unix socket", () => {
     expect(await shell.call("chatThreadGet", "home", "m1")).toMatchObject({ ok: true, value: { home: { log: true } } });
     const turns = [{ key: "r1", role: "assistant", content: "[card: note — saved]" }];
     expect(await shell.call("chatThreadSave", { id: "home-id", title: "Home", items: [], turns }, "m1")).toMatchObject({ ok: true, value: { home: true } });
-    expect(saved).toEqual([expect.objectContaining({ turns })]);
+    expect(saved).toEqual([expect.objectContaining({ turns, opts: { keepNote: true } })]); // no notes over SSH: never unlinks
     expect(await shell.call("chatThreadSave", { id: "home-id", title: "Home", items: [], turns: [{ key: "x", role: "system", content: "" }] }, "m1"))
       .toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
     // Another client's mount is refused by the handler, never served.

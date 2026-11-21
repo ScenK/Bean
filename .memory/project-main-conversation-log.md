@@ -8,7 +8,8 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
   bots use (cross-process safe since #996). Bounded **before** each desktop turn with the desktop budget
   (`compactHistory`: >60 turns or >200 KB → summary + 20-turn tail), the summary swapped into the log
   by `replaceOldest` (CAS) — a turn-count-only pass after the reply let large posts overflow the
-  model's context. No renderer `summary` item for Home on the log.
+  model's context. The log's leading summary row (`formatSummaryBlock` prefix) rides as the
+  *previous* summary and is replaced with the turns — as a turn it was clipped to 2,000 chars. No renderer `summary` item for Home on the log.
 - **Who is "main":** the host decides — the chat (mount) pinned to `HOME_THREAD_ID` while the marker
   exists (`threads.isMain`). The shell learns it from `chatThreadGet("home")` → `home.log`.
 - **Keys = dedupe:** every desktop turn rides with a `turn_key` (`desktop:<key>`): a user turn or reply
@@ -28,6 +29,8 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
   task chat. A pre-cutover `continued` pointer is dropped when Home restores on the log.
 - **Over SSH:** `chatThreadGet`/`chatThreadSave` are `REMOTE_OPS` (mount-checked by the host's chat
   sessions), so a remote shell opens Home, gets `home.log` and flushes `turns`; the thread list stays local.
+  A remote save keeps the stored note link (`keepNote`): there's no `listNotes` over SSH, so the
+  shell's save would unlink it.
 - **Known gap (deferred P2):** a card left pending is expired by the restore, but restored keys count
   as acked, so the log keeps its `pending` line.
 - Wire: `CONTRACT_VERSION` 4 (`delta` in both chat guards, `turns` in the save guard).

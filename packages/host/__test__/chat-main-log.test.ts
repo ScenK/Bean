@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
-  ConversationStore, deleteDesktopChat, getDesktopChat, groupDesktopChats, HOME_THREAD_ID, insertHomePost, listDesktopChats,
+  ConversationStore, deleteDesktopChat, formatSummaryBlock, getDesktopChat, groupDesktopChats, HOME_THREAD_ID, insertHomePost, listDesktopChats,
   listPendingHomePosts, MAIN_CONVERSATION_ID, renameDesktopChat, renameDesktopChatGroup, saveDesktopChat, saveDesktopChatDraining,
   starDesktopChat, type ChatMessage,
 } from "@bean/core";
@@ -94,6 +94,32 @@ describe("Home on the main log", () => {
     expect(sent).toBeLessThan(200_000);
     expect(log()[0]!.content).toMatch(/^\[Summary of the earlier conversation/);
     expect(log().map((t) => t.content).join("").length).toBeLessThan(200_000);
+  });
+
+  it("folds the log's own summary whole (not clipped as a turn) and replaces it with the turns", async () => {
+    const { dbFile, flags, threads, chat, seen, log } = setup();
+    flags.cutover = true;
+    threads.get("a", HOME_TARGET);
+    const store = new ConversationStore(dbFile);
+    store.append(MAIN_CONVERSATION_ID, { role: "user", content: formatSummaryBlock(`${"s".repeat(3000)} END-OF-SUMMARY`) });
+    for (let i = 0; i < 61; i++) store.append(MAIN_CONVERSATION_ID, { role: i % 2 ? "assistant" : "user", content: `turn ${i}` });
+    await chat({ history: [], message: "next", turnId: "t1" }, 1, "a");
+    const ask = seen.find((m) => String(m[0]?.content).startsWith("Summarize"))!;
+    expect(String(ask[1]!.content)).toMatch(/^Summary so far:\n[\s\S]*END-OF-SUMMARY/);
+    expect(String(ask[1]!.content)).not.toContain("[Summary of the earlier conversation");
+    const after = log();
+    expect(after.filter((t) => t.content.startsWith("[Summary of the earlier conversation"))).toHaveLength(1);
+    expect(after[0]!.content).toBe(formatSummaryBlock("reply"));
+  });
+
+  it("a remote save (keepNote) never unlinks the chat's note", () => {
+    const { dbFile, threads } = setup();
+    saveDesktopChat(dbFile, { id: HOME_THREAD_ID, title: "Home", itemsJson: "[]", noteSlug: "n1" });
+    threads.get("a", HOME_TARGET);
+    threads.save("a", { id: HOME_THREAD_ID, title: "Home", items: [] }, { keepNote: true });
+    expect(getDesktopChat(dbFile, HOME_THREAD_ID)?.noteSlug).toBe("n1");
+    threads.save("a", { id: HOME_THREAD_ID, title: "Home", items: [] }); // a local unlink still unlinks
+    expect(getDesktopChat(dbFile, HOME_THREAD_ID)?.noteSlug).toBeNull();
   });
 
   it("a drain replayed after compaction doesn't bring the post back", () => {

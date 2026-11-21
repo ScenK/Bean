@@ -153,7 +153,8 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
   chatStop: op((h, c, mountId, turnId) => h.chat.stop(c, mountId, turnId), str, str),
   chatIncognito: op((h, c, on, mountId) => h.chat.incognito(c, mountId, on), bool, str),
   // Mount-checked like every chat op: a chat's thread pin and Home's drain are the host's, per mount.
-  chatThreadSave: op((h, c, req, mountId) => h.chat.threadSave(c, mountId, req), threadSave, str),
+  // keepNote: a remote shell has no notes to link (no listNotes here), so its save never unlinks one.
+  chatThreadSave: op((h, c, req, mountId) => h.chat.threadSave(c, mountId, req, { keepNote: true }), threadSave, str),
   chatThreadGet: op((h, c, id, mountId) => h.chat.threadGet(c, mountId, id), str, str),
   rememberOnClose: op((h, c, transcript, opts) => h.chat.rememberOnClose(c, transcript, opts), arr(turn), closeOpts),
   delegateStart: op((h, c, req, mountId) => h.chat.delegateStart(c, mountId, req), delegateStart, str),
