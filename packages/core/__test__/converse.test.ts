@@ -1241,6 +1241,7 @@ describe("propose_routine", () => {
         expect(t).toContain('"until"?: "YYYY-MM-DD"');
         expect(t).toContain('{"when": "found", "goto": "done"}, {"when": "nothing", "goto": "quiet"}');
         expect(t).toContain("stops after 30 days");
+        expect(t).toContain("never the owner's mail, calendar, accounts or files; anything there needs a delegate step");
         expect(t).not.toContain("ttlMinutes");
         expect(t).not.toMatch(/"kind": "command"/);
       }
