@@ -124,8 +124,8 @@ describe("chat link tokens", () => {
   });
 
   it("terminal rows link a rooted path after a key= prefix", () => {
-    const row = "searchDir=/Users/me/app --out=~/x.log file=release/a.yaml /tmp/b";
-    expect(rootedPaths(row).map((t) => t.value)).toEqual(["/Users/me/app", "~/x.log", "/tmp/b"]);
+    const row = `searchDir=/Users/me/app --out=~/x.log file=release/a.yaml /tmp/b --log="/tmp/c"`;
+    expect(rootedPaths(row).map((t) => t.value)).toEqual(["/Users/me/app", "~/x.log", "/tmp/b", "/tmp/c"]);
     const [t] = rootedPaths(row);
     expect(row.slice(t!.start, t!.end)).toBe("/Users/me/app");
   });
