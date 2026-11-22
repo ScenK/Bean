@@ -2217,6 +2217,26 @@ test("background_work: the owner gets live counts; a member's DM reads no dispat
   }
 });
 
+test("read_sprout / read_skill / run_history are offered to the owner only", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-bot-read-"));
+  const offered: string[][] = [];
+  for (const who of [owner, member]) {
+    const { deps } = withRoles({
+      chat: async (a) => {
+        offered.push((a.tools ?? []).map((t) => t.name).filter((n) => ["read_sprout", "read_skill", "run_history"].includes(n)));
+        return { content: "ok", toolCalls: [] };
+      },
+    });
+    deps.backgroundWork = { file: join(dir, "bean.db"), stateFile: join(dir, ".state.json"), dispatches: () => [] };
+    deps.routines = {
+      transport: "teams", load: async () => [], save: async () => {}, create: async () => {},
+      notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+    };
+    await buildTeamsBot(deps).onMessage({ ...who, direct: true, conversationId: `dm-${who.fromId}` }, fx());
+  }
+  expect(offered).toEqual([["read_sprout", "read_skill", "run_history"], []]);
+});
+
 test("a member's forced delegate/skill proposal (not offered) is refused at runtime: no card, no IO", async () => {
   for (const converseResult of [delegateResult, { reply: "", proposedSkill: { name: "x", body: "b" } } as ConverseResult]) {
     const { deps, delegateCalls, savedSkills } = withRoles({ converseResult });

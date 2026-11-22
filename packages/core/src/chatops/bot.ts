@@ -11,6 +11,7 @@ import { extractMemories, memoryCategories } from "../memory/extract.js";
 import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { makeBackgroundWorkTool } from "../background-work.js";
+import { makeSproutReadTools } from "../sprout-read-tools.js";
 import type { Dispatch } from "../dispatch-store.js";
 import { chatRoutineProblem, draftNames, hasEnded, isArchived, isExpired, todoRunHint, untilLabel, type Routine } from "../routine-store.js";
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
@@ -2250,9 +2251,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // execute anything from Teams/Discord; propose_delegate is the only run path.
         // The tool list is built from the role (action tools run inside converse(), so leaving
         // them out is their gate); proposals are re-checked against the role below.
+        // read_sprout / read_skill / run_history: owner only — step instructions and skill bodies are theirs.
+        const readTools = isOwner && work && deps.routines
+          ? makeSproutReadTools({ routines: deps.routines.load, skills, stateFile: work.stateFile, dbFile: work.file })
+          : [];
         const actions = [
           ...(can(role, "notes") ? [noteTool] : []), ...(can(role, "systemControl") ? [systemTool] : []),
-          ...(imageTool ? [imageTool.tool] : []),
+          ...(imageTool ? [imageTool.tool] : []), ...readTools,
         ];
         const converseBase = {
           skills, projects, persona, memories,

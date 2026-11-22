@@ -43,6 +43,7 @@ export * from "./desktop-chats.js";
 export * from "./destinations.js";
 export * from "./step-attempts.js";
 export * from "./retro.js";
+export * from "./sprout-read-tools.js";
 export * from "./drop-plan.js";
 export * from "./updater.js";
 export * from "./update-public-key.js";
