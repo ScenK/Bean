@@ -289,7 +289,40 @@ button, input, textarea, select, a {
     color-mix(in oklch, var(--bean-orb-2) 8%, var(--bean-surface));
   box-shadow: 0 10px 24px -16px var(--bean-orb-glow);
 }
-.bean-chat-sidebar-home .bean-chat-sidebar-open { padding: 10px 12px; }
+/* Nameplate sheen: a diagonal light band that slides with the pointer (--bean-home-sheen is set on
+   pointermove in ChatSidebar; keep the 110deg in step with SHEEN_DEG there), plus the same band
+   brighter on the rim. Sits under the content, fades in on hover. */
+.bean-chat-sidebar-home { position: relative; }
+.bean-chat-sidebar-home::before,
+.bean-chat-sidebar-home::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.bean-chat-sidebar-home::before {
+  background: linear-gradient(110deg, transparent calc(var(--bean-home-sheen, -100px) - 34px),
+    color-mix(in oklch, var(--bean-orb-1) 14%, transparent) calc(var(--bean-home-sheen, -100px) - 10px),
+    color-mix(in oklch, var(--bean-orb-1) 28%, white 6%) var(--bean-home-sheen, -100px),
+    color-mix(in oklch, var(--bean-orb-1) 14%, transparent) calc(var(--bean-home-sheen, -100px) + 10px),
+    transparent calc(var(--bean-home-sheen, -100px) + 34px));
+}
+.bean-chat-sidebar-home::after {
+  inset: -1px;
+  padding: 1px;
+  background: linear-gradient(110deg, transparent calc(var(--bean-home-sheen, -100px) - 28px),
+    color-mix(in oklch, var(--bean-orb-1) 70%, white) var(--bean-home-sheen, -100px),
+    transparent calc(var(--bean-home-sheen, -100px) + 28px));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.bean-chat-sidebar-home:hover::before,
+.bean-chat-sidebar-home:hover::after { opacity: 1; }
+.bean-chat-sidebar-home .bean-chat-sidebar-open { position: relative; z-index: 1; padding: 10px 12px; }
 .bean-chat-sidebar-home .bean-chat-sidebar-line { gap: 11px; }
 .bean-chat-sidebar-home--active .bean-chat-sidebar-open { cursor: default; }
 .bean-chat-sidebar-home-orb { position: relative; transition: transform 0.2s; }

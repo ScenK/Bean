@@ -154,6 +154,8 @@ export const CHAT_DRAG_TYPE = "application/x-bean-chat";
 /** Drop-highlight silence timeout: Chromium re-fires dragover ~every 350ms over a target, so this
  * long without one means the drag's terminal events were lost (safety-drag-mode-needs-watchdog). */
 const DROP_WATCHDOG_MS = 800;
+/** Angle of the Home nameplate's sheen band; shared.css's 110deg gradients must match. */
+const SHEEN_DEG = 110;
 /** The Group control's "New group…" value — whitespace only, so never a stored group name. */
 const NEW_GROUP = "\n";
 
@@ -348,7 +350,19 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
       <div class="bean-chat-sidebar-head">
         <span>All chats · {rows.length}</span>
       </div>
-      <div class={`bean-chat-sidebar-home${homeActive ? " bean-chat-sidebar-home--active" : ""}`}>
+      <div
+        class={`bean-chat-sidebar-home${homeActive ? " bean-chat-sidebar-home--active" : ""}`}
+        // The nameplate sheen follows the pointer: a diagonal band at SHEEN_DEG, placed where the
+        // pointer projects onto the CSS gradient line (which runs corner to corner through the center).
+        onPointerMove={(e) => {
+          const el = e.currentTarget;
+          const r = el.getBoundingClientRect();
+          const sin = Math.sin(SHEEN_DEG * Math.PI / 180), cos = Math.cos(SHEEN_DEG * Math.PI / 180);
+          const along = (e.clientX - r.left - r.width / 2) * sin - (e.clientY - r.top - r.height / 2) * cos;
+          const line = Math.abs(r.width * sin) + Math.abs(r.height * cos);
+          el.style.setProperty("--bean-home-sheen", `${along + line / 2}px`);
+        }}
+      >
         <button
           type="button"
           class="bean-chat-sidebar-open"
