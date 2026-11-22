@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Routine } from "../src/routine-store.js";
 import type { Project, Skill } from "../src/types.js";
-import { projectForFolder, skillSection, skillUsage, sproutProblems, sproutProjects } from "../src/usage-sections.js";
+import { projectForFolder, skillSection, skillUsage, sproutProblems, sproutProjects, trimSlashes } from "../src/usage-sections.js";
 
 const sprout = (name: string, steps: Routine["steps"], over: Partial<Routine> = {}): Routine =>
   ({ name, enabled: true, cron: "0 8 * * *", steps, sinks: {}, ...over });
@@ -90,5 +90,14 @@ describe("sproutProblems", () => {
     const rs = [sprout("on", [delegate("x")]), { ...sprout("off", [delegate("x")]), enabled: false }];
     expect(skillUsage(rs).get("x")).toEqual(["on", "off"]);
     expect(skillUsage(rs, true).get("x")).toEqual(["off"]);
+  });
+});
+
+describe("trimSlashes", () => {
+  it("drops trailing slashes, keeps root, and stays linear on long slash runs", () => {
+    expect(trimSlashes("/w/app//")).toBe("/w/app");
+    expect(trimSlashes("///")).toBe("/");
+    expect(trimSlashes("/w")).toBe("/w");
+    expect(trimSlashes(`a${"/".repeat(100_000)}b`)).toBe(`a${"/".repeat(100_000)}b`);
   });
 });

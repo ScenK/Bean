@@ -1,5 +1,5 @@
 import type { Project, Routine } from "@bean/core";
-import { isFolderProblem, sproutProblems, sproutProjects, type SproutProblem } from "@bean/core/usage-sections";
+import { isFolderProblem, sproutProblems, sproutProjects, trimSlashes, type SproutProblem } from "@bean/core/usage-sections";
 
 // The Sprouts list's sections (#883): Needs fixing, then registered projects A–Z, then Scratch,
 // then Archived (#983). Derived on every render from the saved sprouts, the registry and the
@@ -53,7 +53,7 @@ export function derivedSectionLabel(routine: Routine, projects: readonly Project
   return homes.length > 0 ? homes.map((p) => p.name).join(", ") : "Scratch";
 }
 
-const trim = (p: string): string => p.replace(/\/+$/, "") || "/";
+const trim = trimSlashes;
 export const isListedUnder = (routine: Routine, path: string): boolean =>
   routine.projects?.some((p) => trim(p) === trim(path)) ?? false;
 

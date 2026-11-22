@@ -36,7 +36,13 @@ export function skillSection(
   return "skills";
 }
 
-const trim = (p: string): string => p.replace(/\/+$/, "") || "/";
+/** Drops trailing slashes (`/` stays `/`). Index scan, not `/\/+$/`: that regex is quadratic on long `/` runs. */
+export const trimSlashes = (p: string): string => {
+  let end = p.length;
+  while (end > 0 && p[end - 1] === "/") end--;
+  return p.slice(0, end) || "/";
+};
+const trim = trimSlashes;
 /** `folder` is `base` or below it, on a path-segment boundary (`/w/app` holds `/w/app/sub`, not `/w/application`). */
 const within = (folder: string, base: string): boolean => {
   const f = trim(folder);
