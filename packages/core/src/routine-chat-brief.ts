@@ -81,7 +81,13 @@ export function finalStepOutput(routine: Routine, results: StepResult[]): string
 // A balanced `(…)` belongs to the URL (wiki links); a bare `)` ends it (markdown `[text](url)`).
 const URL_RE = /https?:\/\/(?:[^\s<>()"'`\]]|\([^\s<>()"'`\]]*\))+/g;
 const NUMBER_RE = /\d+(?:[.,:]\d+)*/g;
-const urls = (text: string): string[] => (text.match(URL_RE) ?? []).map((u) => u.replace(/[.,;:!?]+$/, ""));
+// A loop, not `/[.,;:!?]+$/`: that regex is quadratic on a long punctuation run inside a URL.
+const trimTail = (u: string): string => {
+  let end = u.length;
+  while (end > 0 && ".,;:!?".includes(u[end - 1]!)) end--;
+  return u.slice(0, end);
+};
+const urls = (text: string): string[] => (text.match(URL_RE) ?? []).map(trimTail);
 
 /** Why `brief` isn't a sound summary of `input`, or undefined when it passes: it must be short
  * and name no link or number the run (or the sprout's `purpose`, the owner's own words) didn't.
