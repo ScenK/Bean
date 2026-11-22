@@ -5,7 +5,7 @@ import { parseCron } from "../cron.js";
 import { DEFAULT_PERSONA } from "../persona.js";
 import { isArchived, memberTodoEligible, routesToDone, stopsLabel, watchEveryMinutes, type Routine, type RoutineStep } from "../routine-store.js";
 import type { Project } from "../types.js";
-import { sproutProblems, sproutProjects, type SproutProblem } from "../usage-sections.js";
+import { isFolderProblem, sproutProblems, sproutProjects, type SproutProblem } from "../usage-sections.js";
 import type { RoutineProposalCardInput } from "./cards-api.js";
 import { localTimeZone } from "./turn-cap.js";
 
@@ -269,6 +269,7 @@ const inert = (s: string): string =>
 /** A short marker for one problem; folders show their basename only (no absolute paths in channels). */
 function problemText(p: SproutProblem): string {
   if (p.kind === "missing-skill") return `step ${p.step} skill ${inert(p.skill)} not found`;
+  if (p.kind === "disabled-skill") return `step ${p.step} skill ${inert(p.skill)} is switched off`;
   const folder = inert(basename(p.folder) || p.folder);
   return p.kind === "ancestor-folder" ? `step ${p.step} folder ${folder} holds several projects` : `step ${p.step} folder ${folder} isn't a registered project`;
 }
@@ -276,11 +277,12 @@ function problemText(p: SproutProblem): string {
 /** The owner's `sprouts` reply, sectioned like the desktop Sprouts list (#885): Needs fixing, the
  * registered projects A–Z, Scratch; empty sections dropped. Each sprout is listed once — under
  * Needs fixing if a step folder needs fixing, else its first project in registry order (`· also`
- * names the rest), else Scratch. `skillNames` must be the full catalog (hidden skills included).
+ * names the rest), else Scratch. `skillNames` must be the full catalog (hidden skills included);
+ * `disabledSkills` its `enabled: false` names (flagged, never Needs fixing).
  * `runnable` = this bot can run a sprout on request (headless): the list says so. */
 export function routineListText(
   routines: Routine[], projects: readonly Project[], skillNames: ReadonlySet<string>,
-  tz: string = localTimeZone(), runnable = false,
+  tz: string = localTimeZone(), runnable = false, disabledSkills: ReadonlySet<string> = new Set(),
 ): string {
   if (routines.length === 0) return "No sprouts yet — describe one and I'll draft it.";
   const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name));
@@ -291,9 +293,9 @@ export function routineListText(
   ];
   const at = (p: Project | undefined): number => (p ? 1 + sorted.indexOf(p) : sections.length - 1);
   for (const r of routines) {
-    const problems = sproutProblems(r, projects, skillNames);
+    const problems = sproutProblems(r, projects, skillNames, disabledSkills);
     const homes = sproutProjects(r, projects);
-    const needsFixing = problems.some((p) => p.kind !== "missing-skill");
+    const needsFixing = problems.some(isFolderProblem);
     const also = (needsFixing ? homes : homes.slice(1)).map((p) => inert(p.name));
     let line = `• **${r.name}** — ${r.enabled ? "on" : r.watch ? "off" : "on demand"} — ${describeSchedule(r, tz).replace(` (${tz})`, "")}`;
     if (also.length > 0) line += ` · also ${also.join(", ")}`;

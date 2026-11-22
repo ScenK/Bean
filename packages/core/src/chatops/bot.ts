@@ -1405,7 +1405,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const all = (await r.load()).filter((x) => !isArchived(x, nowT));
     if (c.kind === "list") {
       const [projects, skills] = await Promise.all([deps.loadProjects(), deps.loadSkills()]);
-      return routineListText(all, projects, new Set(skills.map((s) => s.name)), undefined, r.sprouts !== undefined);
+      const disabled = new Set(skills.filter((s) => s.enabled === false).map((s) => s.name));
+      return routineListText(all, projects, new Set(skills.map((s) => s.name)), undefined, r.sprouts !== undefined, disabled);
     }
     // Exact name, else a unique case-insensitive match (phones capitalize the first letter).
     const loose = all.filter((x) => x.name.toLowerCase() === c.name.toLowerCase());

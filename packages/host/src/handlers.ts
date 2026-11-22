@@ -20,8 +20,11 @@ export function buildListSkillsHandler(deps: ListSkillsHandlerDeps) {
   return async (): Promise<Skill[]> => {
     const skills = (await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir)).filter((s) => !s.hidden);
     // Unreadable sprouts → no `usedBy` at all (unknown), never `[]` (would read as "unused").
-    const usage = deps.loadRoutines ? await deps.loadRoutines().then(skillUsage, () => undefined) : undefined;
-    return usage ? skills.map((s) => ({ ...s, usedBy: usage.get(s.name) ?? [] })) : skills;
+    const routines = deps.loadRoutines ? await deps.loadRoutines().catch(() => undefined) : undefined;
+    if (!routines) return skills;
+    const usage = skillUsage(routines);
+    const off = skillUsage(routines, true);
+    return skills.map((s) => ({ ...s, usedBy: usage.get(s.name) ?? [], usedByOff: off.get(s.name) ?? [] }));
   };
 }
 

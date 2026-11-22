@@ -283,8 +283,14 @@ export function RoutinesPanel() {
 
   useEffect(() => { void refresh(); void reloadDestinations(); }, []);
   useEffect(() => {
-    void Promise.all([window.bean.listSkills(), window.bean.listProjects()])
-      .then(([sk, pr]) => { setSkills(sk); setProjects(pr); });
+    // Re-read on focus: a skill switched off in the Skills window must show here before a resume.
+    const load = (): void => {
+      void Promise.all([window.bean.listSkills(), window.bean.listProjects()])
+        .then(([sk, pr]) => { setSkills(sk); setProjects(pr); });
+    };
+    load();
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
   }, []);
   useEffect(() => {
     // Piggyback on the same 5s poll so "running now" chips update live while a todo-driven
@@ -372,9 +378,12 @@ export function RoutinesPanel() {
   // `listSkills` omits hidden skills, so a step naming one reads as missing here (as in the steps editor).
   // Archived is the core's call (core time), so a remote shell lists exactly what the core does.
   const archivedKey = Object.keys(states).filter((n) => states[n]?.ended?.archived).sort().join("\n");
+  const disabledSkills = useMemo(() => new Set(skills.filter((s) => s.enabled === false).map((s) => s.name)), [skills]);
   const sections = useMemo(
-    () => sproutSections(filtered, projects, new Set(skills.map((s) => s.name)), new Set(archivedKey ? archivedKey.split("\n") : [])),
-    [filtered, projects, skills, archivedKey],
+    () => sproutSections(
+      filtered, projects, new Set(skills.map((s) => s.name)), new Set(archivedKey ? archivedKey.split("\n") : []), disabledSkills,
+    ),
+    [filtered, projects, skills, archivedKey, disabledSkills],
   );
   const setSectionFolded = (key: string, folded: boolean): void => {
     setFoldedSections((prev) => {
@@ -668,11 +677,14 @@ export function RoutinesPanel() {
           {problems.filter((p) => p.kind === "missing-skill").map((p) => (
             <span key={`skill${p.step}`} class="bean-routines-row-note"> · step {p.step} skill not found</span>
           ))}
+          {problems.filter((p) => p.kind === "disabled-skill").map((p) => (
+            <span key={`off${p.step}`} class="bean-routines-row-note"> · step {p.step} skill switched off</span>
+          ))}
         </div>
         {also.length > 0 ? <div class="bean-routines-row-sub bean-routines-row-note">also: {also.join(", ")}</div> : null}
         {sectionKey === NEEDS_FIXING ? (
           <div class="bean-routines-fix">
-            {[...new Map(problems.flatMap((p) => (p.kind === "missing-skill" ? [] : [[p.folder, p] as const]))).values()].map((p) => (
+            {[...new Map(problems.flatMap((p) => (p.kind === "unregistered-folder" || p.kind === "ancestor-folder" ? [[p.folder, p] as const] : []))).values()].map((p) => (
               <div key={p.folder} class="bean-routines-fix-line">
                 <span class="bean-routines-fix-text">Starts in <code>{p.folder}</code> — not a project</span>
                 {p.kind === "unregistered-folder" ? (
@@ -713,7 +725,7 @@ export function RoutinesPanel() {
   const buildView = selectedBuild ? builds.find((b) => b.name === selectedBuild) : undefined;
   const notifyOnly = Boolean(draft.watch) && draft.steps.length === 0;
   // Enable warns: a pinned harness/model this Mac can't run fails the unattended run.
-  const stepProblems = stepProblemsText(draft.steps, clis, models);
+  const stepProblems = stepProblemsText(draft.steps, clis, models, disabledSkills);
   const status = draft.watch ? watchStatusLine(savedRoutine?.watch ? savedRoutine : draft, selectedState, new Date()) : undefined;
   // Slots come from the saved definition — that's what the scheduler runs.
   const slots = savedRoutine?.todoDriven ? savedRoutine.maxParallel ?? 1 : 1;
@@ -830,6 +842,7 @@ export function RoutinesPanel() {
             clis={clis}
             models={models}
             projects={projects}
+            disabledSkills={disabledSkills}
             onDiscard={() => void remove()}
             onOpenEditor={() => setEditorFor(savedRoutine.name)}
             onEnabled={(note) => { void refresh().then(() => { setEditorFor(savedRoutine.name); setNotice(note); }); }}

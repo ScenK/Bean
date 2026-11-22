@@ -36,6 +36,8 @@ export interface Skill {
   /** Names of the saved sprouts whose steps use this skill — set only by the host's `listSkills`
    * (derived, never in the file). Absent = unknown (sprouts couldn't be read, or an older core). */
   usedBy?: string[];
+  /** The subset of `usedBy` whose sprout is off (`enabled: false`) — same source and absence rule. */
+  usedByOff?: string[];
 }
 
 export interface Project {

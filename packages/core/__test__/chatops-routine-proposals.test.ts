@@ -132,6 +132,11 @@ describe("routineListText sections (#885)", () => {
     expect(text).toMatch(/Times are UTC\. `enable <name>` \/ `disable <name>` to switch one\.$/);
   });
 
+  test("a switched-off step skill is flagged and stays out of Needs fixing (#1035)", () => {
+    const out = routineListText([sprout("nightly", { steps: [delegate("/w/app")] })], projects, skills, "UTC", false, new Set(["fix"]));
+    expect(out.split("\n").slice(0, 2)).toEqual(["**App**", "• **nightly** — on — Weekdays at 7:00 AM · ⚠ step 1 skill fix is switched off"]);
+  });
+
   test("no projects: everything under Scratch", () => {
     expect(routineListText([base], [], skills, "UTC").split("\n").slice(0, 2)).toEqual(["**Scratch**", "• **r** — on — Weekdays at 7:00 AM"]);
   });
