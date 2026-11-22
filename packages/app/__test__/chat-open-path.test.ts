@@ -4,7 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatPathTarget, chooseOpen, openChatPath, PATH_LIMIT, type OpenPathDeps } from "../src/chat-open-path.js";
-import { classifyLink, linkAt } from "../src/renderer/components/chat/chat-links.js";
+import { classifyLink, linkAt, rootedPaths } from "../src/renderer/components/chat/chat-links.js";
 
 const HOME = "/Users/me";
 
@@ -121,5 +121,12 @@ describe("chat link tokens", () => {
     expect(classifyLink("~/My Notes/a b.md:3", true)).toBe("path");
     expect(classifyLink("/Users/me/My Project/out.md")).toBeUndefined();
     for (const t of ["pnpm test /foo", "/ ", "1/2", "and/or"]) expect(classifyLink(t, true)).toBeUndefined();
+  });
+
+  it("terminal rows link a rooted path after a key= prefix", () => {
+    const row = "searchDir=/Users/me/app --out=~/x.log file=release/a.yaml /tmp/b";
+    expect(rootedPaths(row).map((t) => t.value)).toEqual(["/Users/me/app", "~/x.log", "/tmp/b"]);
+    const [t] = rootedPaths(row);
+    expect(row.slice(t!.start, t!.end)).toBe("/Users/me/app");
   });
 });
