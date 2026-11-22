@@ -12,9 +12,10 @@ import { dbFile, outboxDir, routinesDir, routineStateFile } from "./config.js";
 import { enqueueOutbox } from "./outbox.js";
 import { saveNote } from "./note-store.js";
 import { listSkillProposals, RETRO_SKILL, saveSkillProposals, withProposalFooter } from "./retro.js";
-import { listStepAttempts, recordStepAttempt } from "./step-attempts.js";
+import { recordStepAttempt } from "./step-attempts.js";
+import { sproutHistory } from "./sprout-read-tools.js";
 import { claimTodo, listTodos, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
-import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine, type RoutineChatopsSink } from "./routine-store.js";
+import { DEFAULT_GATE_ROUNDS, loadRoutines, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine, type RoutineChatopsSink } from "./routine-store.js";
 import { listDestinations } from "./destinations.js";
 import { todoDispatchOrigins } from "./dispatch-store.js";
 import { insertHomePost } from "./home-posts.js";
@@ -183,12 +184,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
           if (live && a.stepIndex >= live.first && a.stepIndex <= live.last) { live.left--; showGroup(live); }
         },
         retro: {
-          history: async (name) => {
-            const analyzed = (await loadRoutines(routinesDir(dir))).find((r) => r.name === name);
-            if (!analyzed) return undefined;
-            const history = (await loadRoutineStates(routineStateFile(dir)))[name]?.history ?? [];
-            return { routine: analyzed, runs: history.map((record) => ({ record, attempts: record.id ? listStepAttempts(dbFile(dir), record.id) : [] })) };
-          },
+          history: sproutHistory({ routines: () => loadRoutines(routinesDir(dir)), stateFile: routineStateFile(dir), dbFile: dbFile(dir) }),
           save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
         },
         // The scheduler's lane-admitted claim when it gives one (#980: stops at the deadline).

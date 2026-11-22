@@ -1,6 +1,6 @@
 import {
   converse, checkPdfAttachment, isArchived, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
+  checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, makeBackgroundWorkTool, makeSproutReadTools, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
@@ -127,7 +127,11 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           dispatches: () => (mountId === undefined ? [] : work.threadsOf(mountId).flatMap((t) => threadDispatches(deps.dbFile, t))),
         })
       : undefined;
-    const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? []), ...(workTool ? [workTool] : [])];
+    // The desktop is the owner's: read_sprout / read_skill / run_history over every sprout and skill.
+    const readTools = work && deps.loadRoutines
+      ? makeSproutReadTools({ routines: deps.loadRoutines, skills: async () => skills, stateFile: work.stateFile, dbFile: deps.dbFile })
+      : [];
+    const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? []), ...(workTool ? [workTool] : []), ...readTools];
     const log = deps.mainLog?.(mountId);
     let history: ChatTurn[];
     let gapMarker: string | undefined;
