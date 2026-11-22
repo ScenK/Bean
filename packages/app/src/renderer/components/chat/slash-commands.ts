@@ -1,6 +1,7 @@
 import type { AvailableModel, CliName, LiveCli, Project, Skill } from "@bean/core";
 import { resolveCliModelSelection } from "@bean/core/models";
 import { bestProjectForSkill } from "@bean/core/project-select";
+import { skillSection } from "@bean/core/usage-sections";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId } from "../../shared/chat-types.js";
 import { parseSlash } from "./agent-mode.js";
@@ -60,9 +61,9 @@ export const SECTION_TITLES: Record<SlashKind, string> = { agent: "Switch to", s
 export const slugify = (name: string): string =>
   name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
-/** Every runnable entry for the mode: agents and skills. Agent mode captions a skill `→ <Agent>` (any
- * target runs in the live session). Hidden/disabled skills are left out. In Bean mode a terminal
- * skill's caption is its delegate destination, `<CLI> · <project>`. */
+/** Every runnable entry for the mode: agents and skills. A skill's caption names where it runs, in one
+ * shape: agent mode `→ <Agent>` (any target runs in the live session); Bean mode `→ <CLI> · <project>`
+ * for a terminal skill's delegate, `→ chat` for a chat skill. Hidden/disabled skills are left out. */
 export function slashEntries(mode: AgentId, c: SlashCatalogs): SlashEntry[] {
   const agents: AgentId[] = ["bean", ...c.agents];
   const raw: Omit<SlashEntry, "command">[] = agents.map((a) => ({ kind: "agent", name: a, slug: a, caption: AGENT_NAMES[a], description: "" }));
@@ -73,8 +74,8 @@ export function slashEntries(mode: AgentId, c: SlashCatalogs): SlashEntry[] {
       continue;
     }
     const dest = s.target === "chat" || !c.delegate ? undefined : terminalDestination(s.name, c.delegate);
-    const caption = s.target === "chat" ? "chat" : dest ? `${dest.cli ?? "no coding agent"} · ${dest.projectName}` : "terminal";
-    raw.push({ kind: "skill", name: s.name, slug: slugify(s.name), caption, description: s.description });
+    const where = s.target === "chat" ? "chat" : dest ? `${dest.cli ? AGENT_NAMES[dest.cli] : "no coding agent"} · ${dest.projectName}` : "terminal";
+    raw.push({ kind: "skill", name: s.name, slug: slugify(s.name), caption: `→ ${where}`, description: s.description });
   }
   return raw.map((e) => {
     // Bare only if no higher-precedence kind owns the slug; agents are always bare.
@@ -122,6 +123,8 @@ export function slashPick(value: string, token: string, command: string): string
 }
 
 /** The `/` menu for the text typed so far (`/`, `/rev`, `/skill:re`): every match, by section —
+ * minus sprout-step skills (the Skills panel's Sprout steps section: they run as sprout steps, not by
+ * hand; typing one in full still resolves) —
  * Skills, Switch to — prefix matches before description matches. The row a typed command
  * resolves to (its exact bare/qualified command) leads, with its section, so Enter on the first
  * row still runs what `resolveSlash` would. This display order is separate from `rank()`, which
@@ -132,8 +135,11 @@ export function slashMenu(text: string, mode: AgentId, c: SlashCatalogs): SlashE
   const of = m[1]?.toLowerCase();
   const q = m[2]!.toLowerCase();
   const qSlug = slugify(q);
+  const projects = c.delegate?.projects ?? [];
+  const stepOnly = new Set(c.skills.filter((s) => skillSection(s, projects) === "sprout-steps").map((s) => s.name));
   const scored = slashEntries(mode, c).flatMap((e) => {
     if (of && e.kind !== of) return [];
+    if (e.kind === "skill" && stepOnly.has(e.name)) return [];
     // 0 = what resolveSlash picks for this text (a qualified slug, or the bare command), 1 = prefix, 2 = description.
     const score = qSlug && (of ? e.slug === qSlug : e.command === `/${qSlug}`) ? 0
       : e.slug.startsWith(qSlug) || e.name.toLowerCase().startsWith(q) ? 1

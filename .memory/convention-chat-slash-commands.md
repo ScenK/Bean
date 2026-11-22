@@ -33,3 +33,5 @@ are easy to break:
 - **Mid-text `/word` (after whitespace) only completes a skill name** (`slashInsert`) — skills
   only, nothing sent, and a submission is still resolved from the composer's start alone. A held
   Enter's repeats never send, and arrows/Esc pass through when the menu has no rows.
+- **The menu leaves out sprout-step skills** (`skillSection` = `sprout-steps`) — display only;
+  `resolveSlash` still runs one typed in full. Captions share one shape: `→ <where>`.

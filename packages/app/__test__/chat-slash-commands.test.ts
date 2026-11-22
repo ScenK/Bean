@@ -91,9 +91,9 @@ describe("slash commands", () => {
     expect(terminalDestination("other", d)).toMatchObject({ projectPath: "", projectName: "scratch" }); // unlinked
     expect(terminalDestination("deploy", { ...d, projects: [] })).toMatchObject({ projectPath: "", projectName: "scratch" });
     expect(terminalDestination("deploy", { ...d, clis: [] }).cli).toBeUndefined();
-    expect(slashEntries("bean", { ...catalogs, delegate: d }).find((e) => e.name === "deploy")?.caption).toBe("claude · mine");
+    expect(slashEntries("bean", { ...catalogs, delegate: d }).find((e) => e.name === "deploy")?.caption).toBe("→ Claude Code · mine");
     expect(slashEntries("bean", { ...catalogs, delegate: { ...d, clis: [], projects: [] } }).find((e) => e.name === "deploy")?.caption)
-      .toBe("no coding agent · scratch");
+      .toBe("→ no coding agent · scratch");
 
     // The caption's CLI is the one main's resolveDelegateSelection starts, for the remembered model.
     const cliModels: CliModels[] = [{ provider: "claude", models: ["sonnet"] }, { provider: "codex", models: ["gpt-5.6-sol"] }];
@@ -125,6 +125,17 @@ describe("slash commands", () => {
     expect(slashMenu("/sprout:", "bean", catalogs)).toEqual([]);
     const ranked = slashMenu("/beta", "bean", { agents: [], skills: [skill("alpha", { description: "beta things" }), skill("Beta")] });
     expect(ranked.map((e) => e.name)).toEqual(["Beta", "alpha"]); // prefix, then description
+    expect(slashEntries("bean", catalogs).find((e) => e.name === "Review Code")?.caption).toBe("→ chat");
+  });
+
+  it("menu: leaves out sprout-step skills, which still resolve when typed in full", () => {
+    const step = skill("nightly-step", { usedBy: ["nightly"], quickLaunch: false });
+    const c = { ...catalogs, skills: [...catalogs.skills, step, skill("linked-step", { usedBy: ["nightly"], quickLaunch: false })],
+      delegate: { projects: [{ name: "p", path: "/p", skills: ["linked-step"] }], clis: [], models: [], delegateCli: "", lastUsedModels: {} } };
+    const names = slashMenu("/", "bean", c).map((e) => e.name);
+    expect(names).not.toContain("nightly-step");
+    expect(names).toContain("linked-step"); // linked to a project: not step-only
+    expect(resolveSlash("/nightly-step go", "bean", c)).toEqual({ kind: "skill", name: "nightly-step", rest: "go" });
   });
 
   it("menu: the row a typed command resolves to leads, so Enter on the first row matches resolveSlash", () => {
@@ -226,7 +237,7 @@ describe("ChatWindow slash commands", () => {
     bean.delegateStart = vi.fn(() => new Promise<string>((r) => { started = r; }));
     await mount();
     await type("/dep");
-    expect(root.querySelector(".bean-slash-menu")?.textContent).toContain("/deploy claude · Bean");
+    expect(root.querySelector(".bean-slash-menu")?.textContent).toContain("/deploy → Claude Code · Bean");
     await key("Escape");
 
     await send("/deploy fix X");
