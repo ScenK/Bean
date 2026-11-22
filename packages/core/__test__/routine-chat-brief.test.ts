@@ -65,6 +65,15 @@ describe("briefGuardMiss", () => {
     expect(briefGuardMiss(STEPS, "PR #42 is green and merged: https://github.com/x/y/pull/42. 8/8 tests pass.")).toBeUndefined();
     expect(briefGuardMiss(STEPS, "All merged, nothing left for you.")).toBeUndefined();
   });
+  it("drops a trailing punctuation run from a link", () => {
+    expect(briefGuardMiss("See https://github.com/x/y/pull/42!?.", "Merged: https://github.com/x/y/pull/42.")).toBeUndefined();
+  });
+  it("checks a link holding a long punctuation run in linear time", () => {
+    const input = `https://example.com/${"!".repeat(50_000)}x`;
+    const start = Date.now();
+    briefGuardMiss(input, "Done.");
+    expect(Date.now() - start).toBeLessThan(500);
+  });
   it.each([
     ["a made-up link", "PR #42: https://github.com/x/y/pull/42, docs at https://example.com/docs", "made up a link"],
     ["a link that is only a prefix of a reported one", "PR #42: https://github.com/x/y/pull/4", "made up a link"],
