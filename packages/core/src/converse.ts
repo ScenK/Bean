@@ -512,7 +512,10 @@ function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
       "A watch commitment (\"tell me when X is out\", \"let me know if Y happens\") is one chat step that checks and " +
       'ends with a route: {"paths": [{"when": "found", "goto": "done"}, {"when": "nothing", "goto": "quiet"}]} — ' +
       '"done" tells the owner and ends the sprout, "quiet" ends that check without a message. Watch a feed when the ' +
-      "thing has one (the step judges each new item); otherwise a daily cron with webSearch: true. Put the owner's " +
+      "thing has one (the step judges each new item); otherwise a daily cron with webSearch: true. A chat step sees " +
+      "only the public web (with webSearch) and Bean's own tools — never the owner's mail, calendar, accounts or " +
+      "files; anything there needs a delegate step (its coding agent has the owner's connectors), with the same " +
+      "route. Put the owner's " +
       "own words and today's date in description. Set until only to an end the owner named — with none, it stops " +
       `after ${COMMITMENT_DAYS} days. Command steps and command watches can't be set up from chat. ` +
       (live.length > 0 ? `Existing sprouts: ${live.join(", ")}. ` : "") +
