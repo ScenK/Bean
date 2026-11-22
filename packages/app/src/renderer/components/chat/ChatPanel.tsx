@@ -19,7 +19,7 @@ import {
 } from "./agent-mode.js";
 import { dividerLabel, timeDividers, TRIM_NOTICE, trimNoticeText } from "./chat-thread.js";
 import { usePersonaName } from "../../shared/persona-name.js";
-import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
+import { SECTION_TITLES, slashInsert, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
 import { copyPath, useCapabilities } from "../../shared/capabilities.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
@@ -316,12 +316,15 @@ export function ChatPanel({
   const modelName = (id: string): string => runModels.find((m) => m.id === id)?.label ?? id;
   // The chip names the running session's actual model, else the next start's; none = the default.
   const chipModel = live ? live.model : agentModel;
-  // The `/` menu: the `/word` before the caret at the composer's start ("" = closed), and the picked row.
+  // The `/` menu: the `/word` before the caret ("" = closed), whether it sits mid-text (skills only,
+  // a pick completes the name in place), and the picked row.
   const [slashText, setSlashText] = useState("");
+  const [slashMid, setSlashMid] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   // Hidden while Bean answers, like the chip — switching mid-turn isn't allowed.
   const menu = slashText && !busy
     ? slashMenu(slashText, mode, { agents: liveAgents, skills, delegate: { projects, clis, models: runModels, delegateCli, lastUsedModels } })
+      .filter((e) => !slashMid || e.kind === "skill")
     : undefined;
   const pickable = menu ?? [];
   const activeEntry = pickable.length ? pickable[((slashIndex % pickable.length) + pickable.length) % pickable.length] : undefined;
@@ -342,6 +345,7 @@ export function ChatPanel({
     if (next && !slashText) onSlashOpen();
     if (next !== slashText) setSlashIndex(0);
     setSlashText(next);
+    setSlashMid(!!next && el.selectionStart > next.length);
   };
   // Agent mode (#628): an image is an `[Image #N]` label in the composer, mapped to a file the agent
   // reads by path. Inserted at the cursor as it is when the label is ready.
@@ -589,8 +593,21 @@ export function ChatPanel({
   };
 
   // A menu pick runs its command as if typed: an agent switches, a skill runs with no instruction.
+  // Mid-text it only completes the skill name and keeps composing.
   const pickEntry = (entry: SlashEntry): void => {
     if (!inputRef.current) return;
+    if (slashMid) {
+      const el = inputRef.current;
+      // A click can land after the caret left the `/word` (a drop moves it without an input event).
+      if (slashToken(el.value, el.selectionStart) !== slashText) { setSlashText(""); return; }
+      const next = slashInsert(el.value, el.selectionStart, slashText, entry.command);
+      el.value = next.value;
+      el.selectionStart = el.selectionEnd = next.caret;
+      onComposerInput(el);
+      resizeInput();
+      el.focus();
+      return;
+    }
     inputRef.current.value = slashPick(inputRef.current.value, slashText, entry.command);
     // Re-sync the token to the replaced text: a blocked submit (an image still reading) leaves it in the composer.
     onComposerInput(inputRef.current);
@@ -1127,13 +1144,13 @@ export function ChatPanel({
               // A menu whose `/word` the caret has left is stale: this key is not a pick.
               const live = !!slashText && slashToken(e.currentTarget.value, e.currentTarget.selectionStart) === slashText;
               if (slashText && !live) setSlashText("");
-              if (live && menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              if (live && pickable.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
                 e.preventDefault();
                 const at = activeEntry ? pickable.indexOf(activeEntry) : 0;
                 setSlashIndex(at + (e.key === "ArrowDown" ? 1 : -1));
                 return;
               }
-              if (live && menu && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
+              if (live && pickable.length && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
               if (e.key === "Escape" && canStop) {
                 if (e.repeat) return;
                 if (escArmed) { e.preventDefault(); disarmEsc(); onStopTurn(); return; }
@@ -1145,6 +1162,7 @@ export function ChatPanel({
               if (escArmed) disarmEsc();
               if (live && activeEntry && e.key === "Tab") {
                 e.preventDefault();
+                if (slashMid) { pickEntry(activeEntry); return; }
                 const el = e.currentTarget;
                 const tail = slashPick(el.value, slashText, "").trimStart();
                 el.value = `${activeEntry.command} ${tail}`;
@@ -1154,6 +1172,8 @@ export function ChatPanel({
               }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
+                // A held Enter that just completed a name mid-text must not also send.
+                if (e.repeat) return;
                 if (live && activeEntry) pickEntry(activeEntry);
                 else submit();
               }

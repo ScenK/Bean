@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { availableModels, resolveDelegateSelection, type CliModels, type CliName, type Project, type Skill } from "@bean/core";
 import {
-  resolveSlash, slashEntries, slashMenu, slashPick, slashToken, slugify, terminalDestination, type SlashCatalogs, type SlashDelegate,
+  resolveSlash, slashEntries, slashInsert, slashMenu, slashPick, slashToken, slugify, terminalDestination, type SlashCatalogs, type SlashDelegate,
 } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 
@@ -91,9 +91,9 @@ describe("slash commands", () => {
     expect(terminalDestination("other", d)).toMatchObject({ projectPath: "", projectName: "scratch" }); // unlinked
     expect(terminalDestination("deploy", { ...d, projects: [] })).toMatchObject({ projectPath: "", projectName: "scratch" });
     expect(terminalDestination("deploy", { ...d, clis: [] }).cli).toBeUndefined();
-    expect(slashEntries("bean", { ...catalogs, delegate: d }).find((e) => e.name === "deploy")?.caption).toBe("claude · mine");
+    expect(slashEntries("bean", { ...catalogs, delegate: d }).find((e) => e.name === "deploy")?.caption).toBe("→ Claude Code · mine");
     expect(slashEntries("bean", { ...catalogs, delegate: { ...d, clis: [], projects: [] } }).find((e) => e.name === "deploy")?.caption)
-      .toBe("no coding agent · scratch");
+      .toBe("→ no coding agent · scratch");
 
     // The caption's CLI is the one main's resolveDelegateSelection starts, for the remembered model.
     const cliModels: CliModels[] = [{ provider: "claude", models: ["sonnet"] }, { provider: "codex", models: ["gpt-5.6-sol"] }];
@@ -125,6 +125,17 @@ describe("slash commands", () => {
     expect(slashMenu("/sprout:", "bean", catalogs)).toEqual([]);
     const ranked = slashMenu("/beta", "bean", { agents: [], skills: [skill("alpha", { description: "beta things" }), skill("Beta")] });
     expect(ranked.map((e) => e.name)).toEqual(["Beta", "alpha"]); // prefix, then description
+    expect(slashEntries("bean", catalogs).find((e) => e.name === "Review Code")?.caption).toBe("→ chat");
+  });
+
+  it("menu: leaves out sprout-step skills, which still resolve when typed in full", () => {
+    const step = skill("nightly-step", { usedBy: ["nightly"], quickLaunch: false });
+    const c = { ...catalogs, skills: [...catalogs.skills, step, skill("linked-step", { usedBy: ["nightly"], quickLaunch: false })],
+      delegate: { projects: [{ name: "p", path: "/p", skills: ["linked-step"] }], clis: [], models: [], delegateCli: "", lastUsedModels: {} } };
+    const names = slashMenu("/", "bean", c).map((e) => e.name);
+    expect(names).not.toContain("nightly-step");
+    expect(names).toContain("linked-step"); // linked to a project: not step-only
+    expect(resolveSlash("/nightly-step go", "bean", c)).toEqual({ kind: "skill", name: "nightly-step", rest: "go" });
   });
 
   it("menu: the row a typed command resolves to leads, so Enter on the first row matches resolveSlash", () => {
@@ -226,7 +237,7 @@ describe("ChatWindow slash commands", () => {
     bean.delegateStart = vi.fn(() => new Promise<string>((r) => { started = r; }));
     await mount();
     await type("/dep");
-    expect(root.querySelector(".bean-slash-menu")?.textContent).toContain("/deploy claude · Bean");
+    expect(root.querySelector(".bean-slash-menu")?.textContent).toContain("/deploy → Claude Code · Bean");
     await key("Escape");
 
     await send("/deploy fix X");
@@ -354,6 +365,15 @@ describe("ChatWindow slash commands", () => {
     expect(slashToken("/rev", 4)).toBe("/rev");
     expect(slashToken("/rev 1234", 9)).toBe(""); // past the command: closed
     expect(slashToken("1234/", 5)).toBe("");
+    expect(slashToken("and/or", 4)).toBe(""); // a / inside a word never opens it
+  });
+
+  it("mid-text: a / after whitespace opens the menu and a pick completes the name in place", () => {
+    expect(slashToken("写评测\n/rev", 8)).toBe("/rev");
+    expect(slashToken("fix this /re now", 12)).toBe("/re");
+    expect(slashToken("fix this /re now", 16)).toBe(""); // past the word: closed
+    expect(slashInsert("写评测\n/rev", 8, "/rev", "/review-skill")).toEqual({ value: "写评测\n/review-skill ", caret: 18 });
+    expect(slashInsert("fix /re now", 7, "/re", "/review-code")).toEqual({ value: "fix /review-code now", caret: 17 });
     expect(slashPick("/rev1234", "/rev", "/review-code")).toBe("/review-code 1234");
     expect(slashPick("/ 1234", "/", "/claude")).toBe("/claude 1234");
     expect(slashPick("/rev", "/rev", "/review-code")).toBe("/review-code");
@@ -379,5 +399,22 @@ describe("ChatWindow slash commands", () => {
     await key("Enter");
     expect(bean.chat!.mock.calls[1]![0].message).toContain("1234");
     expect(bean.chat!.mock.calls[1]![0].message).toContain("# quiet");
+  });
+
+  it("menu: mid-text it lists skills only and a pick completes the name without sending", async () => {
+    await mount();
+    const ta = composer();
+    ta.value = "写评测\n/qu";
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+    await act(async () => { ta.dispatchEvent(new Event("input", { bubbles: true })); });
+    await flush();
+    const menu = root.querySelector(".bean-slash-menu")?.textContent ?? "";
+    expect(menu).toContain("/quiet");
+    expect(menu).not.toContain("Switch to");
+    await key("Enter");
+    expect(composer().value).toBe("写评测\n/quiet ");
+    await key("Enter", { repeat: true }); // the held key that picked must not also send
+    expect(bean.chat).not.toHaveBeenCalled();
+    expect(root.querySelector(".bean-slash-menu")).toBeNull();
   });
 });

@@ -30,3 +30,8 @@ are easy to break:
   `/` typed in front of a draft opens it; a pick keeps the draft as the instruction (`slashPick`).
   `slashText` is state and the caret moves without input events — every pick path must re-check
   it against the live caret (`live` in the keydown handler), or a stale menu runs a skill.
+- **Mid-text `/word` (after whitespace) only completes a skill name** (`slashInsert`) — skills
+  only, nothing sent, and a submission is still resolved from the composer's start alone. A held
+  Enter's repeats never send, and arrows/Esc pass through when the menu has no rows.
+- **The menu leaves out sprout-step skills** (`skillSection` = `sprout-steps`) — display only;
+  `resolveSlash` still runs one typed in full. Captions share one shape: `→ <where>`.
