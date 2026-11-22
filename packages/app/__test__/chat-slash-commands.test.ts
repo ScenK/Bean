@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { availableModels, resolveDelegateSelection, type CliModels, type CliName, type Project, type Skill } from "@bean/core";
 import {
-  resolveSlash, slashEntries, slashMenu, slashPick, slashToken, slugify, terminalDestination, type SlashCatalogs, type SlashDelegate,
+  resolveSlash, slashEntries, slashInsert, slashMenu, slashPick, slashToken, slugify, terminalDestination, type SlashCatalogs, type SlashDelegate,
 } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 
@@ -354,6 +354,15 @@ describe("ChatWindow slash commands", () => {
     expect(slashToken("/rev", 4)).toBe("/rev");
     expect(slashToken("/rev 1234", 9)).toBe(""); // past the command: closed
     expect(slashToken("1234/", 5)).toBe("");
+    expect(slashToken("and/or", 4)).toBe(""); // a / inside a word never opens it
+  });
+
+  it("mid-text: a / after whitespace opens the menu and a pick completes the name in place", () => {
+    expect(slashToken("写评测\n/rev", 8)).toBe("/rev");
+    expect(slashToken("fix this /re now", 12)).toBe("/re");
+    expect(slashToken("fix this /re now", 16)).toBe(""); // past the word: closed
+    expect(slashInsert("写评测\n/rev", 8, "/rev", "/review-skill")).toEqual({ value: "写评测\n/review-skill ", caret: 18 });
+    expect(slashInsert("fix /re now", 7, "/re", "/review-code")).toEqual({ value: "fix /review-code now", caret: 17 });
     expect(slashPick("/rev1234", "/rev", "/review-code")).toBe("/review-code 1234");
     expect(slashPick("/ 1234", "/", "/claude")).toBe("/claude 1234");
     expect(slashPick("/rev", "/rev", "/review-code")).toBe("/review-code");
@@ -379,5 +388,21 @@ describe("ChatWindow slash commands", () => {
     await key("Enter");
     expect(bean.chat!.mock.calls[1]![0].message).toContain("1234");
     expect(bean.chat!.mock.calls[1]![0].message).toContain("# quiet");
+  });
+
+  it("menu: mid-text it lists skills only and a pick completes the name without sending", async () => {
+    await mount();
+    const ta = composer();
+    ta.value = "写评测\n/qu";
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+    await act(async () => { ta.dispatchEvent(new Event("input", { bubbles: true })); });
+    await flush();
+    const menu = root.querySelector(".bean-slash-menu")?.textContent ?? "";
+    expect(menu).toContain("/quiet");
+    expect(menu).not.toContain("Switch to");
+    await key("Enter");
+    expect(composer().value).toBe("写评测\n/quiet ");
+    expect(bean.chat).not.toHaveBeenCalled();
+    expect(root.querySelector(".bean-slash-menu")).toBeNull();
   });
 });

@@ -100,11 +100,18 @@ export function resolveSlash(text: string, mode: AgentId, c: SlashCatalogs): Sla
   return m[1] ? { kind: "unknown", of: "skill", slug } : undefined;
 }
 
-/** The `/word` the caret sits right after when it opens the composer ("" = none) — what the menu
- * filters on. Text after the caret is ignored, so a `/` typed in front of a draft still opens it. */
+/** The `/word` the caret sits right after ("" = none) — what the menu filters on. At the composer's
+ * start it is a command; after whitespace mid-text it only completes a skill name (`slashInsert`).
+ * Text after the caret is ignored, so a `/` typed in front of a draft still opens it. */
 export function slashToken(value: string, caret: number): string {
-  const head = value.slice(0, caret);
-  return /^\/\S*$/.test(head) ? head : "";
+  return /(?:^|\s)(\/\S*)$/.exec(value.slice(0, caret))?.[1] ?? "";
+}
+
+/** A mid-text menu pick: `command` and a space replace the `/word` ending at the caret, nothing is
+ * sent, and the caret lands after the space. */
+export function slashInsert(value: string, caret: number, token: string, command: string): { value: string; caret: number } {
+  const head = `${value.slice(0, caret - token.length)}${command} `;
+  return { value: head + value.slice(caret).replace(/^ +/, ""), caret: head.length };
 }
 
 /** The composer text after a menu pick: `command` in place of the typed token, the draft behind
