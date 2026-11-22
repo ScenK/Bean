@@ -18,6 +18,8 @@ test("chat: a dropped PDF is pinned and sent as input_file on consecutive turns"
       avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
     ]) as [Page, unknown];
     await chat.waitForLoadState("domcontentloaded");
+    // Drop only once the window has switched to Home — a drop before it pins the evicted blank mount (#1043).
+    await expect(chat.locator(".bean-chat-sidebar-home--active")).toBeVisible();
     const composer = chat.locator(".bean-input--composer");
     await composer.evaluate((el) => {
       const dt = new DataTransfer();

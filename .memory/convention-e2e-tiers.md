@@ -31,6 +31,9 @@ file + exact title — never a substring):
   call without an `after` event is the stalled step. A bare `Test timeout` = a click or wait with no
   timeout of its own. Seen (#1020): a `/skill` sent before the new mount's skill catalog loaded
   goes to Bean as plain text, so no card. Wait for the `/` menu to list the skill first.
+  Seen (#1043): a bare `openComponent("chat")` opens Home — the window first mounts a blank chat,
+  then switches to Home when `getPendingChatHome` answers, evicting that mount. A drop/fill before
+  the switch is lost. Wait for `.bean-chat-sidebar-home--active` before the first composer action.
 - No `retries` in `playwright.config.ts`: the avatar startup race
   ([project-e2e-ipc-ready-race.md](project-e2e-ipc-ready-race.md)) looked like a flake and was a
   real bug — quarantine keeps that signal as an issue instead of hiding it.

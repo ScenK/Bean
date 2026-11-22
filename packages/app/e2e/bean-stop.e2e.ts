@@ -12,6 +12,9 @@ async function openChat(app: ElectronApplication): Promise<Page> {
     avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
   ]) as [Page, unknown];
   await chat.waitForLoadState("domcontentloaded");
+  // A bare open lands on Home: the window mounts a blank chat, then switches to Home once main's
+  // pending-Home pull answers. A drop or send before that switch goes to the evicted mount (#1043).
+  await expect(chat.locator(".bean-chat-sidebar-home--active")).toBeVisible();
   return chat;
 }
 
@@ -26,6 +29,13 @@ test("Bean's turn: the row's Stop and Esc Esc end it, the next send answers; a s
     const stop = working.getByRole("button", { name: "Stop", exact: true });
     const stopped = chat.locator(".bean-status", { hasText: "Stopped by you." });
     const send = async (text: string): Promise<void> => { await composer.fill(text); await composer.press("Enter"); };
+    // A Stop before the request reaches the stub has nothing to abort: wait for the held request.
+    const hang = async (text: string): Promise<void> => {
+      stub.queue({ hang: true });
+      const before = stub.requests.length;
+      await send(text);
+      await expect.poll(() => stub.requests.length).toBeGreaterThan(before);
+    };
     const answers = async (text: string): Promise<void> => {
       stub.queue({ content: text });
       await send("still there?");
@@ -41,8 +51,7 @@ test("Bean's turn: the row's Stop and Esc Esc end it, the next send answers; a s
     });
 
     // Turn 1 — the working row's Stop.
-    stub.queue({ hang: true });
-    await send("first");
+    await hang("first");
     await expect(stop).toBeVisible();
     await expect(stop).toHaveAttribute("title", "Stop this turn (Esc Esc)");
     await stop.click();
@@ -53,8 +62,7 @@ test("Bean's turn: the row's Stop and Esc Esc end it, the next send answers; a s
     await answers("Back to normal.");
 
     // Turn 2 — Esc Esc in the composer.
-    stub.queue({ hang: true });
-    await send("second");
+    await hang("second");
     await expect(stop).toBeVisible();
     await composer.press("Escape");
     await expect(working.getByText("Esc again to stop")).toBeVisible();
@@ -64,8 +72,7 @@ test("Bean's turn: the row's Stop and Esc Esc end it, the next send answers; a s
     await answers("Still fine.");
 
     // Turn 3 — a single Esc with the history overlay open only closes the overlay.
-    stub.queue({ hang: true });
-    await send("third");
+    await hang("third");
     await expect(stop).toBeVisible();
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!.setSize(500, 600);
