@@ -402,6 +402,7 @@ describe("ChatWindow slash commands", () => {
     expect(menu).not.toContain("Switch to");
     await key("Enter");
     expect(composer().value).toBe("写评测\n/quiet ");
+    await key("Enter", { repeat: true }); // the held key that picked must not also send
     expect(bean.chat).not.toHaveBeenCalled();
     expect(root.querySelector(".bean-slash-menu")).toBeNull();
   });

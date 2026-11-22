@@ -598,10 +598,13 @@ export function ChatPanel({
     if (!inputRef.current) return;
     if (slashMid) {
       const el = inputRef.current;
+      // A click can land after the caret left the `/word` (a drop moves it without an input event).
+      if (slashToken(el.value, el.selectionStart) !== slashText) { setSlashText(""); return; }
       const next = slashInsert(el.value, el.selectionStart, slashText, entry.command);
       el.value = next.value;
       el.selectionStart = el.selectionEnd = next.caret;
       onComposerInput(el);
+      resizeInput();
       el.focus();
       return;
     }
@@ -1141,13 +1144,13 @@ export function ChatPanel({
               // A menu whose `/word` the caret has left is stale: this key is not a pick.
               const live = !!slashText && slashToken(e.currentTarget.value, e.currentTarget.selectionStart) === slashText;
               if (slashText && !live) setSlashText("");
-              if (live && menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              if (live && pickable.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
                 e.preventDefault();
                 const at = activeEntry ? pickable.indexOf(activeEntry) : 0;
                 setSlashIndex(at + (e.key === "ArrowDown" ? 1 : -1));
                 return;
               }
-              if (live && menu && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
+              if (live && pickable.length && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
               if (e.key === "Escape" && canStop) {
                 if (e.repeat) return;
                 if (escArmed) { e.preventDefault(); disarmEsc(); onStopTurn(); return; }
@@ -1169,6 +1172,8 @@ export function ChatPanel({
               }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
+                // A held Enter that just completed a name mid-text must not also send.
+                if (e.repeat) return;
                 if (live && activeEntry) pickEntry(activeEntry);
                 else submit();
               }
