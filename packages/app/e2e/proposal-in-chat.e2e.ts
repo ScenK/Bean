@@ -21,6 +21,8 @@ test("proposal (in-chat target): confirming sends the composed prompt in chat", 
       avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
     ]);
     await chat.waitForLoadState("domcontentloaded");
+    // A bare open lands on Home: a send before the switch goes to the evicted mount (#1043).
+    await expect(chat.locator(".bean-chat-sidebar-home--active")).toBeVisible();
     await chat.locator(".bean-input--composer").fill("draft a reply to Jane");
     await chat.locator(".bean-send").click();
 
