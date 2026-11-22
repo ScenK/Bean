@@ -7,6 +7,12 @@ the optional `Routine.projects`.
 - `Skill.usedBy` is set only by the host's `listSkills` (local IPC and the remote wire). Absent =
   unknown (sprouts unreadable via `loadRoutines(dir, true)`, or an older core) — never send `[]`
   for that, or sprout-only skills get misfiled; consumers fall back to the flat list.
+  `usedByOff` (#1035) is the subset whose sprout is `enabled: false`, set and omitted together with
+  `usedBy`. A disabled skill warns (red) only for enabled sprouts; off ones get a neutral
+  `↻ <sprout> (off) — fails if run` chip.
+- `sproutProblems()`'s `disabled-skill` (step skill exists but is off) is a row note / `⚠` only —
+  never Needs fixing. Needs fixing is `isFolderProblem` (folder kinds listed explicitly); the
+  runtime throw in `routine-runner.ts` is still the only block.
 - `Routine.projects` is display only: never a cwd, command, permission or recipient. Unknown
   paths stay in the file and are ignored for sectioning; `[]` is stored as absent. Every path that
   rewrites a sprout must keep it — spreads do; an owner's chat replacement copies it over from

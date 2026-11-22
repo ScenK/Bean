@@ -25,11 +25,25 @@ test("chips name the avatar, projects and each sprout", () => {
     .toEqual(["avatar", "app", "↻ a", "↻ b"]);
 });
 
-test("a disabled skill a sprout still uses warns that the step fails", () => {
-  const off = sk("x", { enabled: false, usedBy: ["nightly"] });
+test("a disabled skill an enabled sprout still uses warns that the step fails", () => {
+  const off = sk("x", { enabled: false, usedBy: ["nightly"], usedByOff: [] });
   expect(keys([off], [])).toEqual([["disabled", ["x"]]]);
   expect(skillChips(off, [])).toEqual([{ label: "used by nightly — its step fails", kind: "warn" }]);
   expect(skillChips(sk("y", { enabled: false, usedBy: [] }), [])).toEqual([]);
+});
+
+test("a disabled skill used only by off sprouts gets neutral chips, no warning (#1035)", () => {
+  expect(skillChips(sk("x", { enabled: false, usedBy: ["a", "b"], usedByOff: ["a", "b"] }), [])).toEqual([
+    { label: "↻ a (off) — fails if run", kind: "general" },
+    { label: "↻ b (off) — fails if run", kind: "general" },
+  ]);
+});
+
+test("a disabled skill used by on and off sprouts warns naming only the on one, plus a neutral chip for the off one", () => {
+  expect(skillChips(sk("x", { enabled: false, usedBy: ["live", "paused"], usedByOff: ["paused"] }), [])).toEqual([
+    { label: "used by live — its step fails", kind: "warn" },
+    { label: "↻ paused (off) — fails if run", kind: "general" },
+  ]);
 });
 
 test("usedBy absent on any skill renders the flat list (enabled, then Disabled), never Sprout steps", () => {

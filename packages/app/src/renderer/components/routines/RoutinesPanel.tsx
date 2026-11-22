@@ -373,7 +373,10 @@ export function RoutinesPanel() {
   // Archived is the core's call (core time), so a remote shell lists exactly what the core does.
   const archivedKey = Object.keys(states).filter((n) => states[n]?.ended?.archived).sort().join("\n");
   const sections = useMemo(
-    () => sproutSections(filtered, projects, new Set(skills.map((s) => s.name)), new Set(archivedKey ? archivedKey.split("\n") : [])),
+    () => sproutSections(
+      filtered, projects, new Set(skills.map((s) => s.name)), new Set(archivedKey ? archivedKey.split("\n") : []),
+      new Set(skills.filter((s) => s.enabled === false).map((s) => s.name)),
+    ),
     [filtered, projects, skills, archivedKey],
   );
   const setSectionFolded = (key: string, folded: boolean): void => {
@@ -668,11 +671,14 @@ export function RoutinesPanel() {
           {problems.filter((p) => p.kind === "missing-skill").map((p) => (
             <span key={`skill${p.step}`} class="bean-routines-row-note"> · step {p.step} skill not found</span>
           ))}
+          {problems.filter((p) => p.kind === "disabled-skill").map((p) => (
+            <span key={`off${p.step}`} class="bean-routines-row-note"> · step {p.step} skill switched off</span>
+          ))}
         </div>
         {also.length > 0 ? <div class="bean-routines-row-sub bean-routines-row-note">also: {also.join(", ")}</div> : null}
         {sectionKey === NEEDS_FIXING ? (
           <div class="bean-routines-fix">
-            {[...new Map(problems.flatMap((p) => (p.kind === "missing-skill" ? [] : [[p.folder, p] as const]))).values()].map((p) => (
+            {[...new Map(problems.flatMap((p) => (p.kind === "unregistered-folder" || p.kind === "ancestor-folder" ? [[p.folder, p] as const] : []))).values()].map((p) => (
               <div key={p.folder} class="bean-routines-fix-line">
                 <span class="bean-routines-fix-text">Starts in <code>{p.folder}</code> — not a project</span>
                 {p.kind === "unregistered-folder" ? (

@@ -6,10 +6,12 @@ import type { Project, Skill } from "./types.js";
 // picks a cwd, a command, a permission or a recipient.
 
 /** Skill name → names of the saved sprouts whose delegate/chat steps name it (each sprout once,
- * in `routines` order; disabled sprouts included). Flat `steps[]` — every step, any branch. */
-export function skillUsage(routines: readonly Routine[]): Map<string, string[]> {
+ * in `routines` order; disabled sprouts included). Flat `steps[]` — every step, any branch.
+ * `onlyOff`: count only `enabled: false` sprouts (the host's `usedByOff`). */
+export function skillUsage(routines: readonly Routine[], onlyOff = false): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const r of routines) {
+    if (onlyOff && r.enabled) continue;
     for (const s of r.steps) {
       if (!s.skill) continue;
       const names = out.get(s.skill) ?? [];
@@ -73,11 +75,18 @@ export function sproutProjects(routine: Routine, projects: readonly Project[]): 
 export type SproutProblem =
   | { kind: "unregistered-folder"; step: number; folder: string }
   | { kind: "ancestor-folder"; step: number; folder: string }
-  | { kind: "missing-skill"; step: number; skill: string };
+  | { kind: "missing-skill"; step: number; skill: string }
+  | { kind: "disabled-skill"; step: number; skill: string };
+
+/** The folder kinds — the ones that file a sprout under Needs fixing. Skill problems never do. */
+export const isFolderProblem = (p: SproutProblem): boolean => p.kind === "unregistered-folder" || p.kind === "ancestor-folder";
 
 /** `skillNames` must be the full catalog — hidden and disabled skills included — or a hidden
- * step skill reads as missing. */
-export function sproutProblems(routine: Routine, projects: readonly Project[], skillNames: ReadonlySet<string>): SproutProblem[] {
+ * step skill reads as missing. `disabledSkills`: the catalog's `enabled: false` names; a step
+ * naming one is `disabled-skill` (missing wins). */
+export function sproutProblems(
+  routine: Routine, projects: readonly Project[], skillNames: ReadonlySet<string>, disabledSkills: ReadonlySet<string> = new Set(),
+): SproutProblem[] {
   const out: SproutProblem[] = [];
   if (listedProjects(routine, projects).length === 0) {
     for (const { step, folder } of stepFolders(routine)) {
@@ -87,7 +96,9 @@ export function sproutProblems(routine: Routine, projects: readonly Project[], s
     }
   }
   routine.steps.forEach((s, i) => {
-    if (s.skill && !skillNames.has(s.skill)) out.push({ kind: "missing-skill", step: i + 1, skill: s.skill });
+    if (!s.skill) return;
+    if (!skillNames.has(s.skill)) out.push({ kind: "missing-skill", step: i + 1, skill: s.skill });
+    else if (disabledSkills.has(s.skill)) out.push({ kind: "disabled-skill", step: i + 1, skill: s.skill });
   });
   return out.sort((a, b) => a.step - b.step);
 }

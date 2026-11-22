@@ -79,4 +79,16 @@ describe("sproutProblems", () => {
     const r = sprout("a", [delegate("hidden-skill"), { kind: "chat", skill: "nope", instruction: "c" }, { kind: "command", command: "ls" }]);
     expect(sproutProblems(r, projects, skills)).toEqual([{ kind: "missing-skill", step: 2, skill: "nope" }]);
   });
+  it("flags a step skill that is switched off; missing wins over disabled (#1035)", () => {
+    const r = sprout("a", [delegate("x"), { kind: "chat", skill: "nope", instruction: "c" }]);
+    expect(sproutProblems(r, projects, skills, new Set(["x", "nope"]))).toEqual([
+      { kind: "disabled-skill", step: 1, skill: "x" },
+      { kind: "missing-skill", step: 2, skill: "nope" },
+    ]);
+  });
+  it("skillUsage onlyOff counts only off sprouts", () => {
+    const rs = [sprout("on", [delegate("x")]), { ...sprout("off", [delegate("x")]), enabled: false }];
+    expect(skillUsage(rs).get("x")).toEqual(["on", "off"]);
+    expect(skillUsage(rs, true).get("x")).toEqual(["off"]);
+  });
 });

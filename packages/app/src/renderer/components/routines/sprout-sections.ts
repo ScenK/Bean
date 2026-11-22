@@ -1,5 +1,5 @@
 import type { Project, Routine } from "@bean/core";
-import { sproutProblems, sproutProjects, type SproutProblem } from "@bean/core/usage-sections";
+import { isFolderProblem, sproutProblems, sproutProjects, type SproutProblem } from "@bean/core/usage-sections";
 
 // The Sprouts list's sections (#883): Needs fixing, then registered projects A–Z, then Scratch,
 // then Archived (#983). Derived on every render from the saved sprouts, the registry and the
@@ -15,14 +15,13 @@ export const ARCHIVED = "!archived";
 export interface SproutRow { routine: Routine; also: string[]; problems: SproutProblem[] }
 export interface SproutSection { key: string; label: string; rows: SproutRow[] }
 
-const isFolderProblem = (p: SproutProblem): boolean => p.kind !== "missing-skill";
-
 /** An archived sprout (`archived`, the core's derived set) goes only under Archived. Otherwise: a
  * sprout with a folder problem goes under Needs fixing; one listed under (or whose steps start
  * in) projects goes under each of them, `also` naming the others; anything else under Scratch.
- * `skillNames` should be the full catalog, or a hidden step skill reads as missing. Empty sections
+ * `skillNames` should be the full catalog, or a hidden step skill reads as missing; `disabledSkills`
+ * its `enabled: false` names (a muted note, never Needs fixing). Empty sections
  * are dropped; rows keep `routines` order. */
-export function sproutSections(routines: readonly Routine[], projects: readonly Project[], skillNames: ReadonlySet<string>, archived: ReadonlySet<string> = new Set()): SproutSection[] {
+export function sproutSections(routines: readonly Routine[], projects: readonly Project[], skillNames: ReadonlySet<string>, archived: ReadonlySet<string> = new Set(), disabledSkills: ReadonlySet<string> = new Set()): SproutSection[] {
   const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name));
   const sections: SproutSection[] = [
     { key: NEEDS_FIXING, label: "Needs fixing", rows: [] },
@@ -36,7 +35,7 @@ export function sproutSections(routines: readonly Routine[], projects: readonly 
       byKey.get(ARCHIVED)!.rows.push({ routine, also: [], problems: [] });
       continue;
     }
-    const problems = sproutProblems(routine, projects, skillNames);
+    const problems = sproutProblems(routine, projects, skillNames, disabledSkills);
     const homes = sproutProjects(routine, projects);
     const names = homes.map((p) => p.name);
     if (problems.some(isFolderProblem)) byKey.get(NEEDS_FIXING)!.rows.push({ routine, also: names, problems });

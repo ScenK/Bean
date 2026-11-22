@@ -38,7 +38,8 @@ export function skillGroups(skills: Skill[], projects: Project[], sectioned: boo
 export type SkillChip = { label: string; kind: "tag" | "general" | "warn" };
 
 /** Where a row's skill is reachable: `avatar`, its projects, `↻ <sprout>` per sprout — or
- * `chat & bots` when none apply. A disabled skill a sprout still uses says that step fails. */
+ * `chat & bots` when none apply. A disabled skill an enabled sprout still uses says that step
+ * fails; an off sprout (`usedByOff`) gets a neutral `fails if run` chip instead. */
 export function skillChips(skill: Skill, projects: Project[]): SkillChip[] {
   const off = skill.enabled === false;
   const sprouts = skill.usedBy ?? [];
@@ -47,9 +48,13 @@ export function skillChips(skill: Skill, projects: Project[]): SkillChip[] {
     ...projects.filter((p) => p.skills?.includes(skill.name)).map((p) => ({ label: p.name, kind: "tag" as const })),
   ];
   if (off) {
-    if (sprouts.length > 0) {
-      chips.push({ label: `used by ${sprouts.join(", ")} — ${sprouts.length === 1 ? "its step fails" : "their steps fail"}`, kind: "warn" });
+    // Only an enabled sprout's step fails on its own; an off one fails only if run by hand.
+    const offSprouts = new Set(skill.usedByOff ?? []);
+    const on = sprouts.filter((n) => !offSprouts.has(n));
+    if (on.length > 0) {
+      chips.push({ label: `used by ${on.join(", ")} — ${on.length === 1 ? "its step fails" : "their steps fail"}`, kind: "warn" });
     }
+    chips.push(...sprouts.filter((n) => offSprouts.has(n)).map((n) => ({ label: `↻ ${n} (off) — fails if run`, kind: "general" as const })));
     return chips;
   }
   chips.push(...sprouts.map((n) => ({ label: `↻ ${n}`, kind: "tag" as const })));

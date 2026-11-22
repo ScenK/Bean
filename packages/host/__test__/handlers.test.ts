@@ -35,14 +35,18 @@ test("listSkills handler adds each visible skill's usedBy; unreadable sprouts om
     { name: "fix", description: "", body: "" }, { name: "lone", description: "", body: "" },
     { name: "intro", description: "", body: "", hidden: true },
   ];
-  const routines = [{ name: "nightly", enabled: true, cron: "0 1 * * *", steps: [{ kind: "chat" as const, skill: "fix", instruction: "go" }], sinks: {} }];
+  const step = [{ kind: "chat" as const, skill: "fix", instruction: "go" }];
+  const routines = [
+    { name: "nightly", enabled: true, cron: "0 1 * * *", steps: step, sinks: {} },
+    { name: "paused", enabled: false, cron: "0 2 * * *", steps: step, sinks: {} },
+  ];
   const deps = { loadSkills: async () => skills, projectSkillsDir: "/p", skillsDir: "/u" };
   expect(await buildListSkillsHandler({ ...deps, loadRoutines: async () => routines })()).toEqual([
-    { ...skills[0], usedBy: ["nightly"] }, { ...skills[1], usedBy: [] },
+    { ...skills[0], usedBy: ["nightly", "paused"], usedByOff: ["paused"] }, { ...skills[1], usedBy: [], usedByOff: [] },
   ]);
   const failed = await buildListSkillsHandler({ ...deps, loadRoutines: async () => { throw new Error("EACCES"); } })();
   expect(failed).toEqual(skills.slice(0, 2));
-  expect(failed.some((s) => "usedBy" in s)).toBe(false);
+  expect(failed.some((s) => "usedBy" in s || "usedByOff" in s)).toBe(false);
 });
 
 test("listProjects handler loads projects from the configured projects file", async () => {

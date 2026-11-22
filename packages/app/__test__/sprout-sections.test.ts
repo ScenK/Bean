@@ -49,6 +49,13 @@ test("a missing step skill is a row problem, not a section", () => {
   expect(only?.rows[0]?.problems).toEqual([{ kind: "missing-skill", step: 2, skill: "gone" }]);
 });
 
+test("a switched-off step skill is a row problem, never Needs fixing (#1035)", () => {
+  const skilled = r("s", [], { steps: [{ kind: "delegate", instruction: "y", skill: "off" }] });
+  const [only] = sproutSections([skilled], [], new Set(["off"]), new Set(), new Set(["off"]));
+  expect(only?.key).toBe(SCRATCH);
+  expect(only?.rows[0]?.problems).toEqual([{ kind: "disabled-skill", step: 1, skill: "off" }]);
+});
+
 test("Listed under toggles one path, keeps unknown paths and every other draft edit, and drops an emptied list", () => {
   const draft = r("d", [], { description: "unsaved edit", projects: ["/gone"] });
   const on = toggleListedUnder(draft, "/w/a");
