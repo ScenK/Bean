@@ -14,7 +14,8 @@ const RECENT_RUNS = 5;
 
 export interface SproutReadDeps {
   routines: () => Promise<Routine[]>;
-  skills: Skill[];
+  /** Every skill, disabled ones included — a disabled skill is still a file the owner can edit. */
+  skills: () => Promise<Skill[]>;
   /** routines/.state.json */
   stateFile: string;
   /** bean.db — each run's step attempts. */
@@ -35,7 +36,6 @@ const nameArg = (args: unknown): string | undefined => {
 };
 
 export function makeSproutReadTools(deps: SproutReadDeps): ActionTool[] {
-  const findSkill = (name: string): Skill | undefined => deps.skills.find((s) => s.name === name);
   const readSprout: ActionTool = {
     spec: {
       name: "read_sprout",
@@ -68,7 +68,7 @@ export function makeSproutReadTools(deps: SproutReadDeps): ActionTool[] {
     run: async (args) => {
       const name = nameArg(args);
       if (name === undefined) return "error: read_skill needs { name }";
-      const body = findSkill(name)?.body;
+      const body = (await deps.skills()).find((s) => s.name === name)?.body;
       if (body === undefined) return `error: no skill named ${JSON.stringify(name)}`;
       // ponytail: a cut file would be rewritten without its tail — refuse instead of truncating.
       if (body.length > SKILL_CAP) return `error: skill ${name} is too large to show (${body.length} chars) — edit it in a delegate`;
@@ -76,6 +76,10 @@ export function makeSproutReadTools(deps: SproutReadDeps): ActionTool[] {
     },
   };
   // The retro step's run_history, read-only here: its proposals bookkeeping is never finished.
-  const runHistory = retroSession({ history: sproutHistory(deps), save: () => {} }, "", findSkill, () => new Date()).tool;
-  return [readSprout, readSkill, runHistory];
+  // run_history shows the sprout's skills' current bodies too; retroSession looks them up synchronously.
+  let loaded: Skill[] = [];
+  const history = sproutHistory(deps);
+  const retro = retroSession({ history: async (name) => { loaded = await deps.skills(); return history(name); }, save: () => {} },
+    "", (name) => loaded.find((s) => s.name === name), () => new Date()).tool;
+  return [readSprout, readSkill, retro];
 }

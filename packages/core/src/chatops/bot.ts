@@ -2253,7 +2253,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // them out is their gate); proposals are re-checked against the role below.
         // read_sprout / read_skill / run_history: owner only — step instructions and skill bodies are theirs.
         const readTools = isOwner && work && deps.routines
-          ? makeSproutReadTools({ routines: deps.routines.load, skills, stateFile: work.stateFile, dbFile: work.file })
+          ? makeSproutReadTools({ routines: deps.routines.load, skills: deps.loadSkills, stateFile: work.stateFile, dbFile: work.file })
           : [];
         const actions = [
           ...(can(role, "notes") ? [noteTool] : []), ...(can(role, "systemControl") ? [systemTool] : []),

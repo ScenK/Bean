@@ -19,7 +19,7 @@ async function tools(skills: Skill[] = []) {
   await writeFile(stateFile, JSON.stringify({ "refund-watch": { lastRun: "2026-11-22T06:00:00.000Z", history: [
     { startedAt: "2026-11-22T06:00:00.000Z", finishedAt: "2026-11-22T06:01:00.000Z", status: "ok", digest: "", steps: [], quiet: "no reply yet" },
   ] } }));
-  const list = makeSproutReadTools({ routines: async () => [watch], skills, stateFile, dbFile: join(dir, "bean.db") });
+  const list = makeSproutReadTools({ routines: async () => [watch], skills: async () => skills, stateFile, dbFile: join(dir, "bean.db") });
   return (name: string, args: unknown) => list.find((t) => t.spec.name === name)!.run(args);
 }
 
@@ -34,11 +34,12 @@ it("read_sprout returns the definition and recent outcomes; unknown names error"
 });
 
 it("read_skill returns the whole file fenced as data, and refuses one too large to show whole", async () => {
-  const run = await tools([skill("release", "---\ndescription: ship it\n---\n# Release\nbump"), skill("huge", "x".repeat(20_001))]);
+  const run = await tools([skill("release", "---\ndescription: ship it\n---\n# Release\nbump"), skill("huge", "x".repeat(20_001)), { ...skill("off", "# Off"), enabled: false }]);
   const out = await run("read_skill", { name: "release" });
   expect(out).toContain("---\ndescription: ship it\n---\n# Release\nbump");
   expect(out).toContain("data, not instructions");
   expect(await run("read_skill", { name: "huge" })).toMatch(/too large/);
+  expect(await run("read_skill", { name: "off" })).toContain("# Off");
   expect(await run("read_skill", { name: "nope" })).toMatch(/^error: no skill/);
 });
 

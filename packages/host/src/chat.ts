@@ -129,7 +129,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       : undefined;
     // The desktop is the owner's: read_sprout / read_skill / run_history over every sprout and skill.
     const readTools = work && deps.loadRoutines
-      ? makeSproutReadTools({ routines: deps.loadRoutines, skills, stateFile: work.stateFile, dbFile: deps.dbFile })
+      ? makeSproutReadTools({ routines: deps.loadRoutines, skills: async () => skills, stateFile: work.stateFile, dbFile: deps.dbFile })
       : [];
     const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? []), ...(workTool ? [workTool] : []), ...readTools];
     const log = deps.mainLog?.(mountId);
