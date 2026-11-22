@@ -103,9 +103,11 @@ describe("install.sh", { timeout: 30_000 }, () => {
     expect(r.stdout).toContain("bean-core on: 1.0.0");
     const unit = readFileSync(join(sys, "etc/systemd/system/bean-core.service"), "utf8");
     const escaped = "o'brien & <co> %%x$$y";
-    expect(unit).toContain(`WorkingDirectory=${home.replace("%", "%%")}\n`);
+    expect(unit).toContain(`WorkingDirectory=${home.replaceAll("%", "%%")}\n`);
     expect(unit).toContain('Environment="TZ=Europe/Berlin"');
-    expect(unit).toMatch(new RegExp(`ExecStart=".+/node" ".+${escaped.replace(/\$/g, "\\$")}/\\.local/share/bean-core/current/packages/host/dist/bean-core\\.js"`));
+    const execStart = unit.split("\n").find((l) => l.startsWith("ExecStart=")) ?? "";
+    expect(execStart).toMatch(/^ExecStart=".+\/node" "/);
+    expect(execStart.endsWith(`${escaped}/.local/share/bean-core/current/packages/host/dist/bean-core.js"`)).toBe(true);
     expect(unit).toContain("Restart=always");
     expect(readFileSync(join(t, "calls"), "utf8")).toContain("systemctl daemon-reload\nsystemctl enable --quiet bean-core\nsystemctl restart bean-core");
 
