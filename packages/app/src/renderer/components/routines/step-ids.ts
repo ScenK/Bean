@@ -130,11 +130,15 @@ export function remapStepMissing<M extends { field: string }>(missing: M[], befo
   });
 }
 
-/** Enable-time check: one line per delegate step whose pinned harness/model can't run here,
- * so an unattended 03:00 run isn't the first to find out. */
-export function stepProblemsText(steps: RoutineStep[], clis: CliName[], models: AvailableModel[]): string {
+/** Enable-time check: one line per delegate step whose pinned harness/model can't run here, or
+ * any step whose skill is switched off (`disabledSkills`), so an unattended 03:00 run isn't the
+ * first to find out. */
+export function stepProblemsText(
+  steps: RoutineStep[], clis: CliName[], models: AvailableModel[], disabledSkills: ReadonlySet<string> = new Set(),
+): string {
   return steps.flatMap((s, i) => {
-    const problem = s.kind === "delegate" ? stepAvailabilityProblem(s, clis, models) : undefined;
+    const problem = (s.kind === "delegate" ? stepAvailabilityProblem(s, clis, models) : undefined)
+      ?? (s.skill && disabledSkills.has(s.skill) ? `skill ${s.skill} is switched off` : undefined);
     return problem ? [`step ${i + 1}: ${problem}`] : [];
   }).join("; ");
 }

@@ -24,6 +24,10 @@ describe("withStepIds", () => {
     ];
     expect(stepProblemsText(steps, ["claude"], [])).toBe("step 1: codex is not enabled");
     expect(stepProblemsText(steps, ["codex"], [])).toBe("");
+    // #1035: a switched-off step skill, on any step kind; an availability problem still wins.
+    const skilled: RoutineStep[] = [{ kind: "chat", skill: "off", instruction: "x" }, { kind: "delegate", skill: "off", instruction: "y" }];
+    expect(stepProblemsText(skilled, ["claude"], [], new Set(["off"]))).toBe("step 1: skill off is switched off; step 2: skill off is switched off");
+    expect(stepProblemsText(skilled, ["claude"], [])).toBe("");
   });
 });
 

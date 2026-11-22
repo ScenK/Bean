@@ -283,8 +283,14 @@ export function RoutinesPanel() {
 
   useEffect(() => { void refresh(); void reloadDestinations(); }, []);
   useEffect(() => {
-    void Promise.all([window.bean.listSkills(), window.bean.listProjects()])
-      .then(([sk, pr]) => { setSkills(sk); setProjects(pr); });
+    // Re-read on focus: a skill switched off in the Skills window must show here before a resume.
+    const load = (): void => {
+      void Promise.all([window.bean.listSkills(), window.bean.listProjects()])
+        .then(([sk, pr]) => { setSkills(sk); setProjects(pr); });
+    };
+    load();
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
   }, []);
   useEffect(() => {
     // Piggyback on the same 5s poll so "running now" chips update live while a todo-driven
@@ -719,7 +725,7 @@ export function RoutinesPanel() {
   const buildView = selectedBuild ? builds.find((b) => b.name === selectedBuild) : undefined;
   const notifyOnly = Boolean(draft.watch) && draft.steps.length === 0;
   // Enable warns: a pinned harness/model this Mac can't run fails the unattended run.
-  const stepProblems = stepProblemsText(draft.steps, clis, models);
+  const stepProblems = stepProblemsText(draft.steps, clis, models, new Set(skills.filter((s) => s.enabled === false).map((s) => s.name)));
   const status = draft.watch ? watchStatusLine(savedRoutine?.watch ? savedRoutine : draft, selectedState, new Date()) : undefined;
   // Slots come from the saved definition — that's what the scheduler runs.
   const slots = savedRoutine?.todoDriven ? savedRoutine.maxParallel ?? 1 : 1;
