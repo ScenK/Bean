@@ -41,7 +41,9 @@ function trim(text: string, start: number, end: number): [number, number] {
 export function rootedPaths(text: string): LinkToken[] {
   const out: LinkToken[] = [];
   for (const m of text.matchAll(/\S+/g)) {
-    const [start, end] = trim(text, m.index, m.index + m[0].length);
+    // `key=/path` or `--flag=~/path` (CLI logs): the path starts after the `=`.
+    const eq = /^[^=/~]+=(?=["']?~?\/)/.exec(m[0])?.[0].length ?? 0;
+    const [start, end] = trim(text, m.index + eq, m.index + m[0].length);
     const value = text.slice(start, end);
     if (/^~?\//.test(value) && classifyLink(value) === "path") out.push({ start, end, kind: "path", value });
   }
