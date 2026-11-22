@@ -489,6 +489,8 @@ export function ReviewPane(props: {
   clis: CliName[];
   models: AvailableModel[];
   projects: Project[];
+  /** The catalog's switched-off skills, so the enable warning names a step that would fail. */
+  disabledSkills: ReadonlySet<string>;
   onDiscard: () => void;
   onOpenEditor: () => void;
   onEnabled: (note: string) => void;
@@ -530,7 +532,7 @@ export function ReviewPane(props: {
   const every = watch.everyMinutes ?? 15;
   const items = preview.items ?? [];
   const dest = destinations(routine.sinks, recipients, beanName);
-  const stepProblems = stepProblemsText(routine.steps, props.clis, props.models);
+  const stepProblems = stepProblemsText(routine.steps, props.clis, props.models, props.disabledSkills);
 
   return (
     <div class="bean-rb">

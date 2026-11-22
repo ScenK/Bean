@@ -378,12 +378,12 @@ export function RoutinesPanel() {
   // `listSkills` omits hidden skills, so a step naming one reads as missing here (as in the steps editor).
   // Archived is the core's call (core time), so a remote shell lists exactly what the core does.
   const archivedKey = Object.keys(states).filter((n) => states[n]?.ended?.archived).sort().join("\n");
+  const disabledSkills = useMemo(() => new Set(skills.filter((s) => s.enabled === false).map((s) => s.name)), [skills]);
   const sections = useMemo(
     () => sproutSections(
-      filtered, projects, new Set(skills.map((s) => s.name)), new Set(archivedKey ? archivedKey.split("\n") : []),
-      new Set(skills.filter((s) => s.enabled === false).map((s) => s.name)),
+      filtered, projects, new Set(skills.map((s) => s.name)), new Set(archivedKey ? archivedKey.split("\n") : []), disabledSkills,
     ),
-    [filtered, projects, skills, archivedKey],
+    [filtered, projects, skills, archivedKey, disabledSkills],
   );
   const setSectionFolded = (key: string, folded: boolean): void => {
     setFoldedSections((prev) => {
@@ -725,7 +725,7 @@ export function RoutinesPanel() {
   const buildView = selectedBuild ? builds.find((b) => b.name === selectedBuild) : undefined;
   const notifyOnly = Boolean(draft.watch) && draft.steps.length === 0;
   // Enable warns: a pinned harness/model this Mac can't run fails the unattended run.
-  const stepProblems = stepProblemsText(draft.steps, clis, models, new Set(skills.filter((s) => s.enabled === false).map((s) => s.name)));
+  const stepProblems = stepProblemsText(draft.steps, clis, models, disabledSkills);
   const status = draft.watch ? watchStatusLine(savedRoutine?.watch ? savedRoutine : draft, selectedState, new Date()) : undefined;
   // Slots come from the saved definition — that's what the scheduler runs.
   const slots = savedRoutine?.todoDriven ? savedRoutine.maxParallel ?? 1 : 1;
@@ -842,6 +842,7 @@ export function RoutinesPanel() {
             clis={clis}
             models={models}
             projects={projects}
+            disabledSkills={disabledSkills}
             onDiscard={() => void remove()}
             onOpenEditor={() => setEditorFor(savedRoutine.name)}
             onEnabled={(note) => { void refresh().then(() => { setEditorFor(savedRoutine.name); setNotice(note); }); }}
