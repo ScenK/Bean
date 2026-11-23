@@ -495,6 +495,7 @@ export async function createHost(deps: HostDeps) {
     enableWatch: (name, until) => routineScheduler.enableWatch(name, false, until),
     cliModels: () => cliModels, destinations: () => listDestinations(db), newId: randomUUID,
     personaName: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
+    homeDms: () => runtime.getHomeDms(),
   });
   // The running turn per chat (mount id), so image progress can find its bubble.
   const chatTurnIds = new Map<string, string>();
@@ -529,6 +530,7 @@ export async function createHost(deps: HostDeps) {
     runAvailable: (clientId) => !attachments.isClient(clientId),
     loadRoutines: () => loadRoutines(routinesPath),
     sproutFacts: (r) => sproutRunFacts(db, r),
+    homeDms: () => runtime.getHomeDms(),
     todoAhead: (r) => pendingTodoCount(db, r),
     backgroundWork: { stateFile: routineStateFile(dir), running: liveSprouts, threadsOf: (k) => threadsOfChat?.(k) ?? [] },
     proposeSend: sends.propose,

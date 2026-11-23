@@ -1,7 +1,7 @@
 import {
   converse, checkPdfAttachment, isArchived, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, makeBackgroundWorkTool, makeSproutReadTools, threadDispatches, type SproutRunBlock,
-  type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
+  checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, homeDestination, makeBackgroundWorkTool, makeSproutReadTools, threadDispatches, type SproutRunBlock,
+  type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona, type HomeDms,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
   DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, DEFAULT_PERSONA, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
@@ -43,6 +43,8 @@ export interface ChatHandlerDeps {
   loadRoutines?: () => Promise<Routine[]>;
   /** A sprout's pending todos and whether its watch is seeded — enables propose_sprout_run. */
   sproutFacts?: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
+  /** The run card names the owner DMs a Home post is copied to (#1069); absent = none. */
+  homeDms?: () => HomeDms;
   /** Enables background_work (#924): the sprouts' state file, the live run counts, and the chat
    * threads this chat (mount) dispatched from. */
   backgroundWork?: {
@@ -195,7 +197,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       result.routineDraft = await drafts.propose(result.proposedRoutine);
       delete result.proposedRoutine;
     }
-    if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts);
+    if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts, homeDestination(persona.name, deps.homeDms?.()));
     if (result.proposedTodo && deps.todoAhead) {
       try { result.proposedTodo = { ...result.proposedTodo, ahead: deps.todoAhead(result.proposedTodo.routine) }; } catch { /* the card just omits it */ }
     }
@@ -233,14 +235,14 @@ const SPROUT_BLOCKED: Record<SproutRunBlock, (name: string) => string> = {
 
 /** Freezes the run-vs-check decision onto the card, or swaps the card for a fixed reply. */
 async function planSproutCard(
-  result: ConverseResult, routines: Routine[], facts: NonNullable<ChatHandlerDeps["sproutFacts"]>,
+  result: ConverseResult, routines: Routine[], facts: NonNullable<ChatHandlerDeps["sproutFacts"]>, home: string,
 ): Promise<void> {
   const name = result.proposedSproutRun!.routine;
   delete result.proposedSproutRun;
   const routine = routines.find((r) => r.name === name);
   if (!routine) return; // converse already refused names outside the catalog
   const { pending, seeded } = await facts(routine);
-  const out = planSproutRun(routine, pending, seeded);
+  const out = planSproutRun(routine, pending, seeded, home);
   if ("plan" in out) result.sproutRun = out.plan;
   else result.reply = SPROUT_BLOCKED[out.blocked](name);
 }

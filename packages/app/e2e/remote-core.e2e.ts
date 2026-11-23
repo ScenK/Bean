@@ -199,13 +199,17 @@ test("remote core: capability-gated chat and key-preserving Settings", async () 
     for (const gone of ["System controls", "Terminal", "Editor"]) {
       await expect(settings.locator(".bean-settings-row-label", { hasText: new RegExp(`^${gone}$`) })).toHaveCount(0);
     }
+    // #1069: the bot groups' DM toggles show; no reachability hint over SSH (not a remote op).
+    await expect(settings.locator(".bean-settings-home-dm")).toHaveCount(2);
+    await expect(settings.locator(".bean-settings-home-dm-hint")).toHaveCount(0);
     await settings.getByRole("button", { name: "Save" }).click();
     await expect(settings.getByRole("button", { name: "Saved ✓" })).toBeVisible();
     const calls = (await readFile(`${log}.calls`, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { op: string; args: unknown[] });
     const saves = calls.filter((c) => c.op === "saveConfig");
     expect(saves).toHaveLength(1);
     expect(saves[0]!.args[0]).toMatchObject({ model: "gpt-remote" });
-    for (const k of ["openaiApiKey", "terminalApp", "editorApp", "systemControls"]) expect(saves[0]!.args[0]).not.toHaveProperty(k);
+    // Untouched Home DM toggles aren't sent either (#1069): a save never turns the migration's off.
+    for (const k of ["openaiApiKey", "terminalApp", "editorApp", "systemControls", "homeDiscordDm", "homeTeamsDm"]) expect(saves[0]!.args[0]).not.toHaveProperty(k);
   } finally {
     await app.close().catch(() => {});
     await Promise.allSettled([homeDir, userDataDir, bin].map((d) => rm(d, { recursive: true, force: true })));
