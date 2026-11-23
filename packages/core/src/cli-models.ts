@@ -92,21 +92,22 @@ export async function loadCliModels(defaultFile: string, userFile: string): Prom
 }
 
 /** loadCliModels, kept live: the user file is stat-polled and, when it changes, the returned
- * array is refilled in place — every holder of it sees the new list without a restart. Only
- * the user file is watched; the repo default changes only with an update (= a restart). */
+ * array is refilled in place — every holder of it sees the new list without a restart. `reload`
+ * re-reads now (a picker asking for the list mustn't wait out the poll). Only the user file is
+ * watched; the repo default changes only with an update (= a restart). */
 export async function watchCliModels(
   defaultFile: string, userFile: string, intervalMs = 2000,
-): Promise<{ cliModels: CliModels[]; stop: () => void }> {
+): Promise<{ cliModels: CliModels[]; reload: () => Promise<void>; stop: () => void }> {
   const cliModels = await loadCliModels(defaultFile, userFile);
   let seq = 0;
-  const reload = (): void => {
+  const reload = async (): Promise<void> => {
     const mine = ++seq;
-    void loadCliModels(defaultFile, userFile).then((fresh) => {
-      if (mine === seq) cliModels.splice(0, cliModels.length, ...fresh); // a later reload wins
-    });
+    const fresh = await loadCliModels(defaultFile, userFile);
+    if (mine === seq) cliModels.splice(0, cliModels.length, ...fresh); // a later reload wins
   };
-  watchFile(userFile, { interval: intervalMs, persistent: false }, reload);
-  return { cliModels, stop: () => unwatchFile(userFile, reload) };
+  const onChange = (): void => { void reload(); };
+  watchFile(userFile, { interval: intervalMs, persistent: false }, onChange);
+  return { cliModels, reload, stop: () => unwatchFile(userFile, onChange) };
 }
 
 /** The one membership rule for a picked model: `cli`'s clis.json list offers it verbatim. A

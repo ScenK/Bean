@@ -613,7 +613,7 @@ export async function createHost(deps: HostDeps) {
     deleteSkill: buildDeleteSkillHandler(paths),
     listProjects: buildListProjectsHandler(paths),
     saveProjects: buildSaveProjectsHandler(paths),
-    models: buildModelsHandler({ getAvailableClis: enabledClis, getCliModels: () => cliModels }),
+    models: buildModelsHandler({ getAvailableClis: enabledClis, getCliModels: () => cliModels, reload: clisWatch.reload }),
     modelMemory: buildModelMemoryHandlers({ loadModelMemory, saveModelMemory, modelMemoryFile: modelMemoryFile(dir) }),
     sends,
     routineDrafts,
