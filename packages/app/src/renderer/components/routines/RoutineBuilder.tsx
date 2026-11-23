@@ -8,6 +8,7 @@ import { StepsEditor } from "./StepsEditor.js";
 import { remapStepMissing, stepProblemsText, withStepIds } from "./step-ids.js";
 import { intervalText, WATCH_MINUTES } from "./watch-status.js";
 import { destinations } from "./chat-sinks.js";
+import type { HomeDms } from "@bean/core/sprout-trigger";
 import { usePersonaName } from "../../shared/persona-name.js";
 
 // The describe-it builder: 2a (sentence → editable brief), 2b (building, cancellable), 2c
@@ -491,6 +492,8 @@ export function ReviewPane(props: {
   projects: Project[];
   /** The catalog's switched-off skills, so the enable warning names a step that would fail. */
   disabledSkills: ReadonlySet<string>;
+  /** Settings' per-bot Home DM copies (#1067), so Sends to names them. */
+  homeDms?: HomeDms;
   onDiscard: () => void;
   onOpenEditor: () => void;
   onEnabled: (note: string) => void;
@@ -531,7 +534,7 @@ export function ReviewPane(props: {
 
   const every = watch.everyMinutes ?? 15;
   const items = preview.items ?? [];
-  const dest = destinations(routine.sinks, recipients, beanName);
+  const dest = destinations(routine.sinks, recipients, beanName, props.homeDms);
   const stepProblems = stepProblemsText(routine.steps, props.clis, props.models, props.disabledSkills);
 
   return (

@@ -18,7 +18,7 @@ import { destinationLabel, matchDestination, type Destination, type DestinationK
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
 import type { SproutTriggerClient } from "./sprout-bridge.js";
-import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
+import { homeDestination, planSproutRun, sproutCheckText, type HomeDms, type SproutRunBlock } from "../sprout-trigger.js";
 import { CARD_LEAD, cardRecord, type CardRecordKind, type CardRecordState } from "../card-record.js";
 import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
 import type { SendProposalStore } from "./send-proposals.js";
@@ -308,6 +308,8 @@ export interface TeamsBotDeps {
       trigger: SproutTriggerClient;
       /** A sprout's pending todos and whether its watch is seeded, for planSproutRun. */
       facts: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
+      /** The run card names the owner DMs a Home post is copied to (#1069), read live; absent = none. */
+      homeDms?: () => Promise<HomeDms | undefined>;
       proposals: SproutRunProposalStore;
       /** Live run slots per sprout, from the scheduler host (`parentSproutRunning`); undefined = unknown. */
       running?: () => Promise<{ name: string; runs: number }[] | undefined>;
@@ -2439,7 +2441,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           const routine = sproutRoutines.find((r) => r.name === name);
           if (!routine) return; // converse already refused names outside the catalog
           const { pending, seeded } = await sprouts.facts(routine);
-          const out = planSproutRun(routine, pending, seeded);
+          const out = planSproutRun(routine, pending, seeded, homeDestination(persona.name, await sprouts.homeDms?.()));
           if ("blocked" in out) {
             await fx.post(SPROUT_BLOCKED[out.blocked](name));
             return;

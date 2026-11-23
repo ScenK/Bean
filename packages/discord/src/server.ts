@@ -10,7 +10,7 @@ import {
   MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeTurnCap, makeChunkGroups,
   localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand,
   parseRoutineCommand, parseChatterCommand, parseAwayCommand, SproutRunProposalStore, type Role, parentSproutTrigger, parentSproutRunning, processParentPort,
-  sproutRunFacts, recordDestination, forgetDestination, sharedBotDeps,
+  sproutRunFacts, readHomeDms, recordDestination, forgetDestination, sharedBotDeps,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -102,7 +102,7 @@ const bot = buildTeamsBot({
       id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
     }))),
     ...(appSprouts ? {
-      sprouts: { trigger: appSprouts, facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore(), running: parentSproutRunning() },
+      sprouts: { trigger: appSprouts, facts: (r) => sproutRunFacts(dbFile(dir), r), homeDms: () => readHomeDms(dir), proposals: new SproutRunProposalStore(), running: parentSproutRunning() },
     } : {}),
   },
 });

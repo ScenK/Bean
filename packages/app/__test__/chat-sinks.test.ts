@@ -77,6 +77,16 @@ describe("destinations", () => {
   it("names the main conversation after the persona", () => {
     expect(destinations({ home: { ttlMinutes: 30 } }, undefined).on).toEqual(["Posted to your chat with Bean"]);
   });
+
+  it("names Home's enabled DM copies and flags one that can't be reached (#1069)", () => {
+    const dms = { discord: true, teams: true };
+    expect(destinations({ home: {} }, { discord: 1, teams: 0 }, "Mr. Bean", dms).on).toEqual([
+      "Posted to your chat with Mr. Bean and your Discord and Teams DMs",
+      "Teams DM copy — dropped: no ownerId in teams.json, or you haven't DMed the bot yet",
+    ]);
+    // Over SSH there are no recipients: the wording stays, no reachability line.
+    expect(destinations({ home: {} }, undefined, "Bean", { discord: true, teams: false }).on).toEqual(["Posted to your chat with Bean and your Discord DM"]);
+  });
 });
 
 describe("alias sinks", () => {

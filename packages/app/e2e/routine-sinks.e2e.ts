@@ -5,11 +5,12 @@ import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
-const QUIET = "Only post when a run needs me";
+const QUIET = "Only message Discord and Teams when a run needs me";
 const BRIEF = "Sum up as a short brief";
 
-/** "Only post when a run needs me": shown with a chat sink, round-trips through save, dropped when
- * the last chat sink is unticked, and hidden on a notify-only watch (its fires are always ok). */
+/** Only-on-problems: shown with a chat sink, round-trips through save, dropped when the last chat
+ * sink is unticked, and hidden on a notify-only watch (its fires are always ok). A DM-only sprout
+ * folded into Home (#1068) keeps it through an editor save: it mutes Home's DM copy (#1069). */
 test("routines: only-on-problems chat rule round-trips and hides for notify-only watches", async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
@@ -22,6 +23,11 @@ test("routines: only-on-problems chat rule round-trips and hides for notify-only
   await writeFile(join(dir, "feed-watch.json"), JSON.stringify({
     name: "feed-watch", enabled: false, watch: { kind: "feed", url: `${stub.url}/feed.xml` },
     sinks: { chatops: [{ transport: "discord", channel: "111" }] }, steps: [],
+  }), "utf8");
+  const dmOnly = join(dir, "dm-only.json");
+  await writeFile(dmOnly, JSON.stringify({
+    name: "dm-only", enabled: false, cron: "0 7 * * *", sinks: { chatops: [{ transport: "discord" }], chatopsOnlyOnProblems: true },
+    steps: [{ kind: "chat", instruction: "check the build" }],
   }), "utf8");
   const saved = async (): Promise<{ chatops?: unknown[]; chatopsOnlyOnProblems?: boolean }> =>
     (JSON.parse(await readFile(file, "utf8")) as { sinks: { chatops?: unknown[]; chatopsOnlyOnProblems?: boolean } }).sinks;
@@ -61,6 +67,15 @@ test("routines: only-on-problems chat rule round-trips and hides for notify-only
       const s = await saved();
       return s.chatops === undefined && s.chatopsOnlyOnProblems === undefined;
     }).toBe(true);
+
+    await win.locator(".bean-routines-row", { hasText: "dm-only" }).click();
+    await expect(win.getByLabel("Post to your chat with Bean", { exact: true })).toBeChecked();
+    await expect(win.getByLabel(QUIET)).toBeChecked();
+    await expect(win.getByText("Post to Discord (DM)")).toHaveCount(0); // owner DMs are Settings' toggle now
+    await win.getByLabel("Drop the post to your chat with Bean if unread after this many minutes").fill("60");
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(async () => (JSON.parse(await readFile(dmOnly, "utf8")) as { sinks: unknown }).sinks)
+      .toEqual({ home: { ttlMinutes: 60 }, chatopsOnlyOnProblems: true });
 
     await win.locator(".bean-routines-row", { hasText: "feed-watch" }).click();
     await win.getByRole("button", { name: "Open in editor" }).click(); // never run → review view first
@@ -207,6 +222,8 @@ test("routines: Post to Home chat round-trips sinks.home and its unread timeout"
 
   const app = await launchBean({ HOME: home.homeDir });
   try {
+    // The fixture's review-queue DMs the owner: the #1068 migration turns on the Discord DM copy.
+    await expect.poll(async () => (JSON.parse(await readFile(join(home.homeDir, ".bean", "config.json"), "utf8")) as { homeDiscordDm?: boolean }).homeDiscordDm).toBe(true);
     const avatar = await app.firstWindow();
     const [win] = await Promise.all([
       app.waitForEvent("window"),
@@ -215,7 +232,8 @@ test("routines: Post to Home chat round-trips sinks.home and its unread timeout"
     await win.locator(".bean-routines-row", { hasText: "homey" }).click();
     await expect(win.getByLabel(ttl)).toHaveCount(0);
     await win.getByLabel("Post to your chat with Bean", { exact: true }).check();
-    await expect(win.locator(".bean-routines-digest-line")).toContainText("Posts a brief to your chat with Bean and a digest to your Daily Dashboard");
+    await expect(win.locator(".bean-routines-home-dms")).toHaveText("Also sent to your Discord DM (Settings › Chat bots)");
+    await expect(win.locator(".bean-routines-digest-line")).toContainText("Posts a brief to your chat with Bean and your Discord DM and a digest to your Daily Dashboard");
     await win.getByRole("button", { name: "Save sprout" }).click();
     await expect.poll(saved).toEqual({ note: true, home: {} });
     // Edit only once the save has settled, or its late "Saved ✓" lands on the edited draft.

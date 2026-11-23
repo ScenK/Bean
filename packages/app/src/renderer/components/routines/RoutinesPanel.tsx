@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import type { Routine, RoutineBrief, RoutineChatopsSink, RoutineWatch, Skill, Project, TodoItem, WatchWindow } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
 import { watchWindowText } from "@bean/core/watch-window";
-import { sproutTriggerAction } from "@bean/core/sprout-trigger";
+import { homeDestination, homeDmNames, sproutTriggerAction, type HomeDms } from "@bean/core/sprout-trigger";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
@@ -241,6 +241,8 @@ export function RoutinesPanel() {
   const [projects, setProjects] = useState<Project[]>([]);
   // Named chat destinations for the sink pickers (Settings → ChatOps owns naming them).
   const [chatDestinations, setChatDestinations] = useState<DestinationView[]>([]);
+  // Settings' per-bot "DM me sprout posts" (#1067); undefined = unknown, so the hint stays out.
+  const [homeDms, setHomeDms] = useState<HomeDms | undefined>(undefined);
   const reloadDestinations = async (): Promise<void> => {
     setChatDestinations(await window.bean.destinationsList().catch(() => []));
   };
@@ -287,6 +289,9 @@ export function RoutinesPanel() {
     const load = (): void => {
       void Promise.all([window.bean.listSkills(), window.bean.listProjects()])
         .then(([sk, pr]) => { setSkills(sk); setProjects(pr); });
+      // Also re-read on focus: a toggle flipped in Settings shows here straight away.
+      void window.bean.getConfig()
+        .then((c) => setHomeDms({ discord: c.homeDiscordDm === true, teams: c.homeTeamsDm === true }), () => {});
     };
     load();
     window.addEventListener("focus", load);
@@ -611,11 +616,13 @@ export function RoutinesPanel() {
   if (draft.sinks.note) sinkTargets.push("your Daily Dashboard");
   const chatTargetList = chatTargets(draft.sinks.chatops);
   const stepless = draft.steps.length === 0;
+  // Home's owner-DM copies (#1067) obey only-on-problems like the chat sinks; Home itself gets every run.
+  const dmCopies = draft.sinks.home ? homeDmNames(homeDms) : "";
   // Inert on a notify-only watch (deliverDigest ignores it there), so the footer doesn't claim it.
-  const quiet = chatTargetList.length > 0 && draft.sinks.chatopsOnlyOnProblems === true && !(draft.watch && stepless);
+  const quiet = (chatTargetList.length > 0 || dmCopies !== "") && draft.sinks.chatopsOnlyOnProblems === true && !(draft.watch && stepless);
   // The chat brief sums up only ok runs with steps: never under only-on-problems, never stepless.
   const brief = chatTargetList.length > 0 && !draft.sinks.chatopsVerbatim && !quiet && !stepless;
-  if (quiet) sinkTargets.push(`${chatTargetList.join(" and ")} only when a run needs you`);
+  if (quiet) sinkTargets.push(`${[...chatTargetList, ...(dmCopies ? [dmCopies] : [])].join(" and ")} only when a run needs you`);
   else if (!brief) sinkTargets.push(...chatTargetList);
   // No chat sink left = the only-on-problems and verbatim rules have nothing to govern; drop them
   // (kept while Home is set: they govern its owner-DM copy, #1068).
@@ -625,10 +632,10 @@ export function RoutinesPanel() {
     setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : draft.sinks.home ? kept : rest });
   };
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
-  // Home always gets the brief (chatopsVerbatim and only-on-problems are chatops-only), except a
+  // Home always gets the brief (chatopsVerbatim and only-on-problems govern only its DM copies), except a
   // stepless run, which has nothing to brief and posts the digest.
   const briefTargets = brief ? [...chatTargetList] : [];
-  if (draft.sinks.home) (stepless ? sinkTargets : briefTargets).push(`your chat with ${beanName}`);
+  if (draft.sinks.home) (stepless ? sinkTargets : briefTargets).push(homeDestination(beanName, quiet ? undefined : homeDms));
 
   const routineRow = (sectionKey: string, { routine: r, also, problems }: SproutRow) => sectionKey === ARCHIVED ? (
     <div
@@ -845,6 +852,7 @@ export function RoutinesPanel() {
             models={models}
             projects={projects}
             disabledSkills={disabledSkills}
+            homeDms={homeDms}
             onDiscard={() => void remove()}
             onOpenEditor={() => setEditorFor(savedRoutine.name)}
             onEnabled={(note) => { void refresh().then(() => { setEditorFor(savedRoutine.name); setNotice(note); }); }}
@@ -1362,6 +1370,13 @@ export function RoutinesPanel() {
             />
             <span class="bean-routines-sink-name">Post to your chat with {beanName}</span>
           </label>
+          {draft.sinks.home && homeDms ? (
+            <div class="bean-routines-sink-row bean-routines-sink-suboption bean-routines-sink-hint bean-routines-home-dms">
+              {dmCopies
+                ? `Also sent to ${dmCopies}${quiet ? " when a run needs you" : ""} (Settings › Chat bots)`
+                : "To get these on your phone too, turn on a DM copy in Settings › Chat bots"}
+            </div>
+          ) : null}
           {draft.sinks.home ? (
             <label class="bean-routines-sink-row bean-routines-sink-suboption bean-routines-home-ttl">
               Drop if unread after
@@ -1394,19 +1409,9 @@ export function RoutinesPanel() {
             // Rows index the full list, so each row edits/removes only its own entry.
             const all = draft.sinks.chatops ?? [];
             const rows = all.map((c, i) => ({ c, i })).filter(({ c }) => c.transport === transport);
-            const dm = rows.some(({ c }) => isDmSink(c));
             return (
               <div key={transport} class="bean-routines-sink-group">
-                <label class="bean-routines-sink-row">
-                  <input
-                    type="checkbox"
-                    checked={dm}
-                    onChange={(e) => setChatops((e.target as HTMLInputElement).checked
-                      ? [...all, { transport }]
-                      : all.filter((c) => !(c.transport === transport && isDmSink(c))))}
-                  />
-                  Post to {label} (DM)
-                </label>
+                {/* Owner DMs are Home's DM copy now (#1068), set per bot in Settings. */}
                 {rows.map(({ c, i }) => isDmSink(c) ? null : c.user !== undefined ? (
                   <div key={i} class="bean-routines-sink-row bean-routines-sink-suboption">
                     <span>DM to user {c.user}</span>
@@ -1450,15 +1455,16 @@ export function RoutinesPanel() {
               A new Teams conversation needs one @mention of the bot before Bean can post there. A bad id shows up as a DM notice to you after retries.
             </div>
           ) : null}
-          {/* Hidden for notify-only watches: their fires are always "ok", so the rule would mute them. */}
-          {(draft.sinks.chatops?.length ?? 0) > 0 && !notifyOnly ? (
+          {/* Hidden for notify-only watches: their fires are always "ok", so the rule would mute them.
+              Shown with Home too: it mutes Home's DM copies (#1068), never the post in the chat. */}
+          {((draft.sinks.chatops?.length ?? 0) > 0 || draft.sinks.home) && !notifyOnly ? (
             <label class="bean-routines-sink-row bean-routines-only-on-problems">
               <input
                 type="checkbox"
                 checked={draft.sinks.chatopsOnlyOnProblems === true}
                 onChange={(e) => setDraft({ ...draft, sinks: { ...draft.sinks, chatopsOnlyOnProblems: (e.target as HTMLInputElement).checked || undefined } })}
               />
-              Only post when a run needs me
+              Only message Discord and Teams when a run needs me
             </label>
           ) : null}
           {(draft.sinks.chatops?.length ?? 0) > 0 && !notifyOnly ? (

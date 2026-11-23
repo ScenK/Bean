@@ -22,7 +22,7 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
 ## Owner-DM copy (#1067)
 
 - Config `homeDiscordDm` / `homeTeamsDm` (default off, read live via runtime config, both config
-  guards; no Settings UI yet): each Home post also goes to the owner's DM on that bot. Only when the
+  guards; Settings › Chat bots toggles, #1069 — sent in the save patch only once edited): each Home post also goes to the owner's DM on that bot. Only when the
   post was inserted, the transport is reachable (`sinkRecipients` > 0 — else nothing is enqueued),
   and like any chat sink: muted by `chatopsOnlyOnProblems` (an ending still goes), skipped when the
   run was dispatched from that DM. An owner-DM chatops sink on that transport is dropped for the run
@@ -43,7 +43,7 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   in the host's `startScheduler`: marker `memory_meta` `homeDmSinksMigratedAt` present → nothing.
   Else it reads the **raw** files synchronously (load already folded them; a scheduler tick could
   re-save one), turns on `homeDiscordDm`/`homeTeamsDm` for each surface found via `runtime.apply`
-  (a patch, so an open Settings window's later save keeps them), then writes the marker. A failed
+  (a patch; Settings sends the toggles only once edited, so an open window's later save keeps them), then writes the marker. A failed
   config write = no marker, retried at the next lease take; a toggle turned off later stays off.
   The failure also shows the owner the exact keys to set by hand — a sticky `sprouts:home-dm` error
   bubble (kind `bot`: a `routine` bubble navigates instead of expanding; kept until clicked away) plus a notification, which may be unavailable or fail: the retry is best-effort,
@@ -52,6 +52,14 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
 - Known gap (deferred P2): a standby host started before the holder migrated keeps `false` toggles in
   its runtime config after taking the lease (runtime config isn't re-read across hosts sharing a data
   dir, and `apply` would write its other stale fields over the file). Restart that host.
+
+## Desktop wording (#1069)
+
+- `homeDestination(beanName, dms)` / `homeDmNames` (`@bean/core/sprout-trigger`) is the one wording
+  for where a Home post lands — run card (`planSproutRun`'s `home` arg; desktop and bots pass the
+  persona name and the live toggles), Sprouts footer, builder review. The editor has no owner-DM
+  boxes; only-on-problems shows with Home too (it mutes the DM copies, never the chat post).
+  Settings' reachability hint comes from `routinesSinkRecipients` — not a remote op, so none over SSH.
 
 ## Home thread (#960, continuous since #976)
 
