@@ -798,9 +798,10 @@ client.once("clientReady", async () => {
 // whole pile. Fire-and-forget, same as bot.ts's call.
 // `ownerDm` = the delivery's id when it provably went to the owner's own 1:1 DM: once the cutover is
 // done it joins the main conversation instead (#998), so a member's digest never does.
-const appendDelivered = (conversationId: string, body: string, ownerDm?: string): void =>
+// `mainTurnKey` = a Home post's copy (#1067): its main-log row is the post's own (`post:<id>`).
+const appendDelivered = (conversationId: string, body: string, ownerDm?: string, mainTurnKey?: string): void =>
   appendDelivery(conversations, conversationId, body, { chat: converseChat, model: beanConfig.model },
-    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined);
+    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined, mainTurnKey);
 
 const OUTBOX_POLL_MS = 5_000;
 // One owner notice for a given-up message. A failed owner DM gets none — that's the channel the
@@ -835,7 +836,7 @@ setInterval(() => {
       }
       // No userId, or the owner's own = the owner's DM; any other user's DM never maps.
       const toOwner = !!discordConfig.ownerId && (!msg.userId || msg.userId === discordConfig.ownerId);
-      if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body, toOwner ? msg.id : undefined);
+      if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body, toOwner ? msg.id : undefined, msg.mainTurnKey);
       return;
     }
     const channel = await client.channels.fetch(msg.channel);
@@ -844,7 +845,7 @@ setInterval(() => {
     destinations.seen(channel);
     // A named destination can be the owner's own DM channel: that one maps too (#998).
     const ownerDm = channel.type === ChannelType.DM && !!discordConfig.ownerId && channel.recipientId === discordConfig.ownerId;
-    if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body, ownerDm ? msg.id : undefined);
+    if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body, ownerDm ? msg.id : undefined, msg.mainTurnKey);
   }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed:", outboxErrorLine(err)));
 }, OUTBOX_POLL_MS);
 

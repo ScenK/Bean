@@ -42,6 +42,11 @@ export interface OutboxMessage {
   // digests always; the memory digest never); an interrupted-run notice appends
   // unconditionally via `displayBody` instead.
   context?: boolean;
+  // A Home post's owner-DM copy (#1067): the post's main-log turn key (`post:<id>`). `body` is
+  // then the post's history turn (`postTurn`, user role) and, delivered to the owner's own 1:1
+  // after the cutover, joins the main log under this key instead of `delivery:<id>` — so it and
+  // the Home drain's copy, whichever lands first, leave one row.
+  mainTurnKey?: string;
   createdAt: string; // ISO
   // Retry bookkeeping, written by nackOutbox: failed send attempts so far, and the ISO time
   // before which claimOutbox skips the file.

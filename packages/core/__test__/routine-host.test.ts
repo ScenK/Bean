@@ -1,5 +1,5 @@
 // packages/core/__test__/routine-host.test.ts
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,7 @@ import { saveSkillProposals } from "../src/retro.js";
 import { addTodo, claimTodo, listTodos } from "../src/todo-store.js";
 import { openDispatch } from "../src/dispatch-store.js";
 import { listPendingHomePosts } from "../src/home-posts.js";
+import { postTurn } from "../src/prompt.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bean-host-")); });
@@ -445,6 +446,65 @@ describe("createRoutineHost", () => {
       await expect(h.deliverDigest(r, { ...res, record: { ...res.record, status: "failed" } }, true)).resolves.toBe(res.digest);
       await expect(h.deliverDigest(r, res)).resolves.toBeUndefined();
       expect(calls).toHaveLength(1);
+    });
+
+    describe("Home posts to the owner's DM (#1067)", () => {
+      const reachable = (teams: boolean): void => {
+        writeFileSync(join(dir, "discord.json"), JSON.stringify({ ownerId: "o1" }));
+        writeFileSync(join(dir, "teams.json"), JSON.stringify({ ownerId: "o2" }));
+        writeFileSync(join(dir, "teams-conversations.json"), JSON.stringify(
+          teams ? { a: { conversation: { conversationType: "personal" }, user: { id: "o2" } } } : {}));
+      };
+      const latestPost = () => listPendingHomePosts(dbFile(dir)).at(-1)!;
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks: { home: {} } });
+
+      it("off = no phone message; on = one per reachable transport, the post's turn under its key; an owner-DM sink isn't repeated", async () => {
+        let dms = { discord: false, teams: false };
+        const { h } = briefHost({ homeDms: () => dms });
+        const res = await h.runOneRoutine(r);
+        reachable(false);
+        await h.deliverDigest(r, res);
+        expect(await posted()).toEqual([]);
+        dms = { discord: true, teams: true };
+        await h.deliverDigest(r, res);
+        const sent = await posted();
+        expect(sent.map((m) => m.transport)).toEqual(["discord"]); // the owner's Teams chat isn't known: none enqueued
+        expect(sent[0]).toMatchObject({
+          body: postTurn({ sprout: "r", text: BRIEF }), displayBody: `**Sprout: r**\n\n${BRIEF}`, context: true, mainTurnKey: `post:${latestPost().id}`,
+        });
+        expect(sent[0]).not.toHaveProperty("channel");
+        expect(sent[0]).not.toHaveProperty("userId");
+        reachable(true);
+        // An owner-DM chat sink on a transport the copy went to is dropped; a channel sink isn't.
+        const withSinks = routine(r.steps, { sinks: { home: {}, chatops: [{ transport: "discord" }, { transport: "discord", channel: "c1" }] } });
+        await h.deliverDigest(withSinks, res);
+        expect((await posted()).map((m) => [m.transport, m.channel, m.mainTurnKey])).toEqual(expect.arrayContaining([
+          ["discord", undefined, `post:${latestPost().id}`], ["teams", undefined, `post:${latestPost().id}`], ["discord", "c1", undefined],
+        ]));
+        expect(listPendingHomePosts(dbFile(dir))).toHaveLength(3); // every post stays unread
+      });
+
+      it("chatopsVerbatim shows the full digest; the main-log body stays the post's brief", async () => {
+        const { h } = briefHost({ homeDms: () => ({ discord: true, teams: false }) });
+        reachable(false);
+        const v = routine(r.steps, { sinks: { home: {}, chatopsVerbatim: true } });
+        await h.deliverDigest(v, await h.runOneRoutine(v));
+        expect((await posted()).map((m) => [m.body, m.displayBody])).toEqual([[postTurn({ sprout: "r", text: BRIEF }), `**Sprout: r**\n\n${REPORT}`]]);
+      });
+
+      it("a quiet run and a run dispatched from that DM skip the phone leg; an ending is still asked there", async () => {
+        const { h } = briefHost({ homeDms: () => ({ discord: true, teams: true }) });
+        reachable(true);
+        const q = routine(r.steps, { sinks: { home: {}, chatopsOnlyOnProblems: true } });
+        const res = await h.runOneRoutine(q);
+        await h.deliverDigest(q, res);
+        expect(await posted()).toEqual([]);
+        expect(listPendingHomePosts(dbFile(dir))).toHaveLength(1); // Home is never muted
+        await h.deliverDigest(r, res, false, { transport: "discord" });
+        expect((await posted()).map((m) => m.transport)).toEqual(["teams"]);
+        await h.deliverDigest(q, { ...res, ending: "done" }, false, { transport: "discord" });
+        expect((await posted()).map((m) => m.transport).sort()).toEqual(["discord", "teams"]);
+      });
     });
   });
 

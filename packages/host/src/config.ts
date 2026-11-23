@@ -10,6 +10,8 @@ export interface ConfigView {
   disabledClis: string[];
   webSearch: boolean;
   autoMemory: boolean;
+  homeDiscordDm: boolean;
+  homeTeamsDm: boolean;
   gitName: string;
   gitEmail: string;
   /** Whether a key is saved — a remote shell gets `openaiApiKey: ""` (#812), never the key itself. */
@@ -28,6 +30,8 @@ export interface ConfigFields {
   disabledClis: string[];
   webSearch: boolean;
   autoMemory: boolean;
+  homeDiscordDm: boolean;
+  homeTeamsDm: boolean;
   gitName: string;
   gitEmail: string;
 }

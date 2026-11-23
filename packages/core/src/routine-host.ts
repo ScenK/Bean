@@ -18,7 +18,10 @@ import { claimTodo, listTodos, updateTodoStatus, type TodoItem, type TodoStatus 
 import { DEFAULT_GATE_ROUNDS, loadRoutines, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine, type RoutineChatopsSink } from "./routine-store.js";
 import { listDestinations } from "./destinations.js";
 import { todoDispatchOrigins } from "./dispatch-store.js";
-import { insertHomePost } from "./home-posts.js";
+import { homePostBody, insertHomePost } from "./home-posts.js";
+import { postTurnKey } from "./main-conversation.js";
+import { postTurn } from "./prompt.js";
+import { sinkRecipients } from "./watch-io.js";
 import type { RunOrigin } from "./routine-scheduler.js";
 import { namedStepId, stepGroups } from "./routine-graph.js";
 import {
@@ -71,6 +74,9 @@ export interface RoutineHostDeps {
   holdsLease?: () => boolean;
   /** A `sinks.home` post was just inserted (#961): the host recounts its bubble. */
   onHomePost?: () => void;
+  /** Config `homeDiscordDm` / `homeTeamsDm` (#1067), read per delivery: each Home post also goes
+   * to the owner's DM on that bot. Absent = never. */
+  homeDms?: () => { discord: boolean; teams: boolean };
 }
 
 export interface RoutineHost {
@@ -273,27 +279,45 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       // Unresolved: sinkProblems already marked the run; never fall back to the owner's DM.
       return "error" in resolved ? [] : [{ sink, channel: resolved.channel }];
     });
-    // An ending's "keep watching?" goes to every chat sink, the asking chat's too: its dispatch
-    // notice carries only the result, and only the scheduler's elected owner delivers an ending.
-    const asked = targets.length > 0 && result.ending === undefined ? askedFrom(result, origin) : [];
-    const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
     const holds = (): boolean => deps.holdsLease?.() ?? true;
     const home = routine.sinks.home !== undefined && holds() ? routine.sinks.home : undefined;
-    let posted = false;
+    // The Home post's owner-DM copies (#1067): a chat sink like the others — muted when quiet,
+    // skipped where the run was dispatched from, an ending still asked there.
+    const dms = home && !quiet ? deps.homeDms?.() : undefined;
+    const phone = (["discord", "teams"] as const).filter((t) => dms?.[t]);
+    // An ending's "keep watching?" goes to every chat sink, the asking chat's too: its dispatch
+    // notice carries only the result, and only the scheduler's elected owner delivers an ending.
+    const asked = (targets.length > 0 || phone.length > 0) && result.ending === undefined ? askedFrom(result, origin) : [];
+    const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
+    let posted: string | undefined;
+    const phoneSent = new Set<"discord" | "teams">();
     const chatBody = kept.length > 0 || brief ? await chatSinkBody(routine, result) : result.digest;
     if (home) {
       // chatopsVerbatim is chatops' rule: Home still gets the brief (a second call only then).
       const homeBody = (kept.length > 0 || brief) && routine.sinks.chatopsVerbatim !== true ? chatBody : await chatSinkBody(routine, result, false);
       // Re-checked after the brief's await: a lease lost meanwhile belongs to the new holder.
       if (holds()) {
-        insertHomePost(dbFile(dir), {
+        posted = insertHomePost(dbFile(dir), {
           sprout: routine.name, body: homeBody, ...(home.ttlMinutes !== undefined ? { ttlMinutes: home.ttlMinutes } : {}),
         }, newId);
-        posted = true;
         deps.onHomePost?.();
+        const reach = phone.length > 0 ? await sinkRecipients(dir) : {};
+        for (const transport of phone) {
+          // Unreachable (no owner set / owner's chat unknown) = nothing enqueued, never a retry pile.
+          if (!reach[transport] || asked.some((o) => sameChatTarget(o, { sink: { transport }, channel: undefined }))) continue;
+          await enqueueOutbox(outboxDir(dir), {
+            transport, title: `Sprout: ${routine.name}`,
+            body: postTurn({ sprout: routine.name, text: homePostBody(homeBody) }),
+            displayBody: `**Sprout: ${routine.name}**\n\n${routine.sinks.chatopsVerbatim === true ? result.digest : homeBody}`,
+            context: true, mainTurnKey: postTurnKey(posted),
+          }, newId);
+          phoneSent.add(transport);
+        }
       }
     }
     for (const { sink, channel } of kept) {
+      // The phone copy already went to this owner DM: an owner-DM chat sink would repeat it.
+      if (channel === undefined && phoneSent.has(sink.transport) && (sink.transport === "teams" || sink.user === undefined)) continue;
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel, userId: sink.user,
         title: `Sprout: ${routine.name}`,

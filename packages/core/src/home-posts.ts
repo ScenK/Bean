@@ -36,6 +36,11 @@ const toPost = (r: HomePostRow): HomePost => ({
 
 const PENDING = "drained_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
 
+/** A post's stored body: capped at HOME_POST_MAX_CHARS with a Dashboard tail. The owner-DM copy
+ * (#1067) uses it too, so its main-log turn matches the drain's byte for byte. */
+export const homePostBody = (body: string): string =>
+  body.length > HOME_POST_MAX_CHARS ? body.slice(0, HOME_POST_MAX_CHARS - CUT_TAIL.length) + CUT_TAIL : body;
+
 /** Adds one pending post (`ttlMinutes` = expires that long after now) and drops the oldest
  * undrained rows past HOME_PENDING_CAP. Returns the post id. */
 export function insertHomePost(
@@ -44,7 +49,7 @@ export function insertHomePost(
 ): string {
   const id = newId();
   const at = now();
-  const body = p.body.length > HOME_POST_MAX_CHARS ? p.body.slice(0, HOME_POST_MAX_CHARS - CUT_TAIL.length) + CUT_TAIL : p.body;
+  const body = homePostBody(p.body);
   const expires = p.ttlMinutes !== undefined ? new Date(at.getTime() + p.ttlMinutes * 60_000).toISOString() : null;
   const db = openDb(file);
   db.exec("BEGIN IMMEDIATE");

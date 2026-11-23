@@ -22,6 +22,8 @@ export interface RuntimeConfig {
   getDisabledClis: () => string[];
   getWebSearch: () => boolean;
   getAutoMemory: () => boolean;
+  /** Home posts also go to the owner's DM on that bot (#1067), read per delivery. */
+  getHomeDms: () => { discord: boolean; teams: boolean };
   getGitName: () => string;
   getGitEmail: () => string;
   /** A patch: omitted (undefined) fields keep their current value. */
@@ -45,6 +47,8 @@ export function createRuntimeConfig(
   let disabledClis = initial.disabledClis;
   let webSearch = initial.webSearch;
   let autoMemory = initial.autoMemory;
+  let homeDiscordDm = initial.homeDiscordDm;
+  let homeTeamsDm = initial.homeTeamsDm;
   let gitName = initial.gitName;
   let gitEmail = initial.gitEmail;
   setBeanGitIdentity(gitName, gitEmail);
@@ -73,6 +77,7 @@ export function createRuntimeConfig(
     getDisabledClis: () => disabledClis,
     getWebSearch: () => webSearch,
     getAutoMemory: () => autoMemory,
+    getHomeDms: () => ({ discord: homeDiscordDm, teams: homeTeamsDm }),
     getGitName: () => gitName,
     getGitEmail: () => gitEmail,
     apply: (patch) => {
@@ -85,7 +90,7 @@ export function createRuntimeConfig(
   async function applyNow(patch: ConfigUpdate): Promise<void> {
     const update: ConfigFields = {
       openaiApiKey: apiKey, model, terminalApp, editorApp, delegateCli, systemControls, reasoningEffort,
-      disabledClis, webSearch, autoMemory, gitName, gitEmail,
+      disabledClis, webSearch, autoMemory, homeDiscordDm, homeTeamsDm, gitName, gitEmail,
     };
     for (const [k, v] of Object.entries(patch)) if (v !== undefined && Object.hasOwn(update, k)) (update as unknown as Record<string, unknown>)[k] = v;
     const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
@@ -101,6 +106,8 @@ export function createRuntimeConfig(
     disabledClis = update.disabledClis;
     webSearch = update.webSearch;
     autoMemory = update.autoMemory;
+    homeDiscordDm = update.homeDiscordDm;
+    homeTeamsDm = update.homeTeamsDm;
     gitName = update.gitName;
     gitEmail = update.gitEmail;
     setBeanGitIdentity(gitName, gitEmail);
