@@ -66,7 +66,6 @@ export function SettingsWindow() {
   const [delegateCli, setDelegateCli] = useState("");
   const [systemControls, setSystemControls] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState("");
-  const [routineDigestContext, setRoutineDigestContext] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [autoMemory, setAutoMemory] = useState(true);
   const [gitName, setGitName] = useState("");
@@ -111,7 +110,6 @@ export function SettingsWindow() {
       setDelegateCli(c.delegateCli);
       setSystemControls(c.systemControls);
       setReasoningEffort(c.reasoningEffort);
-      setRoutineDigestContext(c.routineDigestContext);
       setWebSearch(c.webSearch);
       setAutoMemory(c.autoMemory);
       // An older remote core has no identity fields.
@@ -146,7 +144,7 @@ export function SettingsWindow() {
     try {
       // Only what this window shows: a hidden field (and an untouched key) keeps its saved value.
       const patch: ConfigUpdate = {
-        model: model.trim(), delegateCli, reasoningEffort, routineDigestContext, disabledClis, webSearch, autoMemory,
+        model: model.trim(), delegateCli, reasoningEffort, disabledClis, webSearch, autoMemory,
         gitName: gitName.trim(), gitEmail: gitEmail.trim(),
         ...(apiKeyEdited ? { openaiApiKey: apiKey.trim() } : {}),
         ...(handoff ? { terminalApp: terminalApp.trim(), editorApp: editorApp.trim() } : {}),
@@ -394,19 +392,6 @@ export function SettingsWindow() {
               s.running && s.endpoint ? <EndpointRow key={`${key}-endpoint`} endpoint={s.endpoint} /> : null,
             ];
           })}
-          <div class="bean-settings-row">
-            <span class="bean-settings-row-label">Sprout digests</span>
-            <div class="bean-settings-row-control">
-              <label class="bean-chatops-row" title="Keeps each sprout digest in the conversation it was posted to, so you can ask follow-up questions about it. Off by default — digests nobody asks about still cost tokens on every later turn. Teams channel digests are always kept in their own post's thread, so replies there can follow up either way.">
-                <input
-                  type="checkbox"
-                  checked={routineDigestContext}
-                  onChange={(e) => { setRoutineDigestContext((e.target as HTMLInputElement).checked); setSave("idle"); }}
-                />
-                <span class="bean-chatops-label">Keep digests as chat context for follow-ups</span>
-              </label>
-            </div>
-          </div>
         </section>
 
         <section id="destinations" class="bean-settings-card">

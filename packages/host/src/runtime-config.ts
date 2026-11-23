@@ -19,7 +19,6 @@ export interface RuntimeConfig {
   getDelegateCli: () => string;
   getSystemControls: () => boolean;
   getReasoningEffort: () => string;
-  getRoutineDigestContext: () => boolean;
   getDisabledClis: () => string[];
   getWebSearch: () => boolean;
   getAutoMemory: () => boolean;
@@ -43,7 +42,6 @@ export function createRuntimeConfig(
   let delegateCli = initial.delegateCli;
   let systemControls = initial.systemControls;
   let reasoningEffort = initial.reasoningEffort;
-  let routineDigestContext = initial.routineDigestContext;
   let disabledClis = initial.disabledClis;
   let webSearch = initial.webSearch;
   let autoMemory = initial.autoMemory;
@@ -72,7 +70,6 @@ export function createRuntimeConfig(
     getDelegateCli: () => delegateCli,
     getSystemControls: () => systemControls,
     getReasoningEffort: () => reasoningEffort,
-    getRoutineDigestContext: () => routineDigestContext,
     getDisabledClis: () => disabledClis,
     getWebSearch: () => webSearch,
     getAutoMemory: () => autoMemory,
@@ -88,7 +85,7 @@ export function createRuntimeConfig(
   async function applyNow(patch: ConfigUpdate): Promise<void> {
     const update: ConfigFields = {
       openaiApiKey: apiKey, model, terminalApp, editorApp, delegateCli, systemControls, reasoningEffort,
-      routineDigestContext, disabledClis, webSearch, autoMemory, gitName, gitEmail,
+      disabledClis, webSearch, autoMemory, gitName, gitEmail,
     };
     for (const [k, v] of Object.entries(patch)) if (v !== undefined && Object.hasOwn(update, k)) (update as unknown as Record<string, unknown>)[k] = v;
     const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
@@ -101,7 +98,6 @@ export function createRuntimeConfig(
     delegateCli = update.delegateCli;
     systemControls = update.systemControls;
     reasoningEffort = update.reasoningEffort;
-    routineDigestContext = update.routineDigestContext;
     disabledClis = update.disabledClis;
     webSearch = update.webSearch;
     autoMemory = update.autoMemory;

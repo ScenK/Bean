@@ -291,7 +291,7 @@ describe("routine host stop", () => {
       const host = createRoutineHost({
         dir, converse: async () => ({ content: "", toolCalls: [] }), getModel: () => "m",
         delegateStep: (req) => untilStopped(req.signal), commandStep: async () => ({ exitCode: 0, output: "" }),
-        tools: [], loadSkills: async () => [], memories: async () => [], getRoutineDigestContext: () => false,
+        tools: [], loadSkills: async () => [], memories: async () => [],
         onStatus: (e) => events.push(e),
       });
       for (const text of ["a", "b", "c"]) await addTodo(dbFile(dir), "r", text);

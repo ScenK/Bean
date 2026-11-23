@@ -278,7 +278,7 @@ describe("maxParallel workers", () => {
       const { deliverDigest } = createRoutineHost({
         dir, converse: async () => ({ content: "", toolCalls: [] }), getModel: () => "m",
         delegateStep: async () => ({ output: "", cli: "claude" }), commandStep: async () => ({ exitCode: 0, output: "" }),
-        tools: [], loadSkills: async () => [], memories: async () => [], getRoutineDigestContext: () => false,
+        tools: [], loadSkills: async () => [], memories: async () => [],
         newId: () => `id-${n++}`,
       });
       const runRoutineFn = vi.fn(async (_r: Routine, t?: TodoItem): Promise<RoutineRunResult> => {

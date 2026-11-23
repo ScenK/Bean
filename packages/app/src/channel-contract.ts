@@ -35,7 +35,7 @@ const persona = shape({ name: str, tags: arr(str) });
 // A patch (#812): each field optional, an omitted one keeps its value — `{}` changes nothing.
 const configUpdate = shape({
   openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
-  systemControls: opt(bool), reasoningEffort: opt(str), routineDigestContext: opt(bool), disabledClis: opt(arr(str)),
+  systemControls: opt(bool), reasoningEffort: opt(str), disabledClis: opt(arr(str)),
   webSearch: opt(bool), autoMemory: opt(bool), gitName: opt(str), gitEmail: opt(str),
 });
 const noteDraft = shape({ title: str, body: str, project: opt(str), source: opt(oneOf("chat", "manual")), slug: opt(str) });

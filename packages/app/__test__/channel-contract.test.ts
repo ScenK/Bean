@@ -77,13 +77,14 @@ describe("service contract (#807)", () => {
     expect(fn).not.toHaveBeenCalled();
     const config = {
       openaiApiKey: "k", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false,
-      reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "",
+      reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "",
     };
     call(IPC.saveConfig, config)();
+    call(IPC.saveConfig, { routineDigestContext: true })(); // retired key from an older peer (#1066): passes, ignored
     call(IPC.saveConfig, {})(); // a patch (#812): changes nothing, keeps the key
     call(IPC.saveProjects, [{ name: "bean", path: "/p", skills: ["a"] }])();
     call(IPC.chat, { history: [{ role: "user", content: "x" }], message: "hi" }, "m")();
-    expect(fn).toHaveBeenCalledTimes(4);
+    expect(fn).toHaveBeenCalledTimes(5);
     // Events too.
     const all = ["systemControls", "terminalHandoff", "pty", "pathOpen"] as const;
     expect(contractRefusal(IPC.memoryUpdated, [{ saved: 42, mountId: "m" }], all)).toMatch(/malformed/);

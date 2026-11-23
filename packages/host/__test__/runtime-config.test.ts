@@ -49,7 +49,7 @@ test("recall by meaning: keyword-only (no throw) with an empty key; a key set in
 test("apply is a patch (#812): an omitted key — or any omitted field — keeps its value", async () => {
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-keep", model: "gpt-4o-mini", terminalApp: "/T.app", editorApp: "", delegateCli: "", systemControls: true, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" },
+    { openaiApiKey: "sk-keep", model: "gpt-4o-mini", terminalApp: "/T.app", editorApp: "", delegateCli: "", systemControls: true, reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" },
     { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async (u) => { saved.push(u); } },
   );
   await rt.apply({ model: "gpt-5" });
@@ -62,13 +62,16 @@ test("apply is a patch (#812): an omitted key — or any omitted field — keeps
   await rt.apply(JSON.parse('{"__proto__": {"polluted": true}, "webSearch": true}'));
   expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   expect(rt.getWebSearch()).toBe(true);
+  // An older shell's retired key (#1066) is ignored, never written back.
+  await rt.apply({ routineDigestContext: true } as never);
+  expect(saved.at(-1)).not.toHaveProperty("routineDigestContext");
 });
 
 test("gitName/gitEmail set Bean's commit identity at start and on apply", async () => {
   const saved = { ...BEAN_GIT_IDENTITY };
   try {
     const rt = createRuntimeConfig(
-      { openaiApiKey: "", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "Sprout", gitEmail: "s@x" },
+      { openaiApiKey: "", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, gitName: "Sprout", gitEmail: "s@x" },
       { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async () => {} },
     );
     expect(BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME).toBe("Sprout");
@@ -83,7 +86,7 @@ test("overlapping patches apply in order, each onto the one before (#812)", asyn
   let release: () => void = () => {};
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-old", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" },
+    { openaiApiKey: "sk-old", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" },
     {
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async (u) => { saved.push(u); if (saved.length === 1) await new Promise<void>((r) => { release = r; }); },
@@ -229,7 +232,7 @@ test("reasoning effort reaches the converse client and is rebuilt on save", asyn
       delegateCli: "",
       systemControls: false,
       reasoningEffort: "low",
-      routineDigestContext: false,
+     
       disabledClis: [],
       webSearch: false,
       gitName: "",
@@ -252,7 +255,7 @@ test("reasoning effort reaches the converse client and is rebuilt on save", asyn
     delegateCli: "",
     systemControls: false,
     reasoningEffort: "high",
-    routineDigestContext: false,
+   
     disabledClis: [],
     webSearch: false,
   });

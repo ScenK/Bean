@@ -193,7 +193,7 @@ describe("continues on the host", () => {
   const host = (delegateStep: RoutineHostDeps["delegateStep"]) => createRoutineHost({
     dir, converse: async () => ({ content: "the digest", toolCalls: [] }), getModel: () => "gpt-test", delegateStep,
     commandStep: async () => ({ exitCode: 0, output: "ok" }), tools: [], loadSkills: async () => [], memories: async () => [],
-    getRoutineDigestContext: () => false, newId: () => "id-1",
+    newId: () => "id-1",
   });
 
   it("holds the scratch across steps, and removes it at the end", async () => {
