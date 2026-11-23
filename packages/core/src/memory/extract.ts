@@ -11,7 +11,8 @@ const EPISODE_INSTRUCTIONS =
   "the \"new\" marker were reviewed before: they are context only. Keep what an attentive human " +
   "assistant would write in their notebook to know your owner better and serve them better " +
   "later: how your owner wants things done (kind preference); what your owner decided, with the " +
-  "reason, so you can say \"last time you decided…\" (kind decision); something that happened " +
+  "reason (kind decision) — when the conversation reports a decision made earlier and says when, " +
+  "write that date into the text, and never invent one; something that happened " +
   "and mattered to your owner, with how they felt about it — a milestone, a win, a frustration " +
   "(kind moment); plans, commitments and deadlines with their date (kind plan); and durable " +
   "facts about people and projects (no kind). Read the whole exchange before judging a line: a bare \"OK\" matters only " +

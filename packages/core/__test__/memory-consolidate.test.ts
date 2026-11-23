@@ -57,3 +57,20 @@ test("a single-id merge is a rewrite (e.g. relative → absolute date), and fact
   expect(prompt).toContain("[a] (saved 2026-01-01) trip is next week");
   expect(result.merges).toEqual([{ ids: ["a"], mergedText: "trip is the week of 2026-01-08" }]);
 });
+
+test("a decision whose text states an earlier date keeps it through a dream rewrite", async () => {
+  const decision: Memory = { id: "a", text: "On 2026-10-02 Scen chose a 24-hour veto for triage", createdAt: "2026-11-20T00:00:00.000Z", kind: "decision" };
+  let system = "";
+  let user = "";
+  const toolCalls: ToolCall[] = [{ name: "merge_memories", args: { ids: ["a"], mergedText: "On 2026-10-02 Scen chose a 24-hour veto for Bean triage" } }];
+  const result = await proposeMemoryConsolidation([decision], {
+    chat: async ({ messages }) => { system = String(messages[0]!.content); user = String(messages[1]!.content); return { content: "", toolCalls }; },
+    model: "m",
+  });
+  expect(user).toContain("[a] (saved 2026-11-20) {decision} On 2026-10-02 Scen chose");
+  expect(system).toContain("Keep an explicit date the text states (when something was decided or happened) through every merge and rewrite");
+  expect(system).toContain("only when the text is about the day it was saved");
+  expect(system).toContain("settled as of its saved date — the date it was recorded, not when it was decided");
+  expect(system).not.toContain("settled on its saved date");
+  expect(result.merges[0]!.mergedText).toContain("2026-10-02");
+});
