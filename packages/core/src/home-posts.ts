@@ -8,6 +8,7 @@ import { saveDesktopChat, type DesktopChatInput } from "./desktop-chats.js";
 import { insertTurn } from "./chatops/conversation.js";
 import { MAIN_CONVERSATION_ID, postTurnKey } from "./main-conversation.js";
 import { postTurn } from "./prompt.js";
+import { ownerDmSinkTransports, type RoutineChatopsSink } from "./routine-store.js";
 
 export interface HomePost {
   id: string;
@@ -36,6 +37,11 @@ const toPost = (r: HomePostRow): HomePost => ({
 
 const PENDING = "drained_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
 
+/** A post's stored body: capped at HOME_POST_MAX_CHARS with a Dashboard tail. The owner-DM copy
+ * (#1067) uses it too, so its main-log turn matches the drain's byte for byte. */
+export const homePostBody = (body: string): string =>
+  body.length > HOME_POST_MAX_CHARS ? body.slice(0, HOME_POST_MAX_CHARS - CUT_TAIL.length) + CUT_TAIL : body;
+
 /** Adds one pending post (`ttlMinutes` = expires that long after now) and drops the oldest
  * undrained rows past HOME_PENDING_CAP. Returns the post id. */
 export function insertHomePost(
@@ -44,7 +50,7 @@ export function insertHomePost(
 ): string {
   const id = newId();
   const at = now();
-  const body = p.body.length > HOME_POST_MAX_CHARS ? p.body.slice(0, HOME_POST_MAX_CHARS - CUT_TAIL.length) + CUT_TAIL : p.body;
+  const body = homePostBody(p.body);
   const expires = p.ttlMinutes !== undefined ? new Date(at.getTime() + p.ttlMinutes * 60_000).toISOString() : null;
   const db = openDb(file);
   db.exec("BEGIN IMMEDIATE");
@@ -120,4 +126,25 @@ export function saveDesktopChatDraining(
     db.exec("ROLLBACK");
     throw err;
   }
+}
+
+/** memory_meta marker of the owner-DM sink migration (#1068); its value is when it ran. */
+export const HOME_DM_MIGRATION_KEY = "homeDmSinksMigratedAt";
+
+/** Once per data dir, by the scheduler-lease holder: the surfaces whose owner DM a sprout still
+ * named (raw files — load folds those sinks into Home) get their "Home posts also go to this DM"
+ * toggle turned on through `enable`, then the marker is written. A failed `enable` throws and writes
+ * no marker (the next lease take retries); with the marker present nothing runs again, so a toggle
+ * the owner turns off later stays off. The files are read before the first await. */
+export async function migrateOwnerDmSinks(
+  routinesDir: string, file: string,
+  enable: (transports: RoutineChatopsSink["transport"][]) => Promise<void>,
+  now: () => Date = () => new Date(),
+): Promise<"done" | "already"> {
+  const db = openDb(file);
+  if (db.prepare("SELECT 1 FROM memory_meta WHERE key = ?").get(HOME_DM_MIGRATION_KEY) !== undefined) return "already";
+  const transports = ownerDmSinkTransports(routinesDir);
+  if (transports.length > 0) await enable(transports);
+  db.prepare("INSERT OR IGNORE INTO memory_meta (key, value) VALUES (?, ?)").run(HOME_DM_MIGRATION_KEY, now().toISOString());
+  return "done";
 }

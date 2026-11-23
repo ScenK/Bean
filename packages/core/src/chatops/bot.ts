@@ -13,12 +13,14 @@ import { makeTodoTools } from "./todo-tools.js";
 import { makeBackgroundWorkTool } from "../background-work.js";
 import { makeSproutReadTools } from "../sprout-read-tools.js";
 import type { Dispatch } from "../dispatch-store.js";
-import { chatRoutineProblem, draftNames, hasEnded, isArchived, isExpired, todoRunHint, untilLabel, type Routine } from "../routine-store.js";
+import {
+  chatRoutineProblem, draftNames, foldOwnerDmSinks, hasEnded, isArchived, isExpired, isOwnerDmSink, todoRunHint, untilLabel, type Routine,
+} from "../routine-store.js";
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
 import type { SproutTriggerClient } from "./sprout-bridge.js";
-import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
+import { homeDestination, planSproutRun, sproutCheckText, type HomeDms, type SproutRunBlock } from "../sprout-trigger.js";
 import { CARD_LEAD, cardRecord, type CardRecordKind, type CardRecordState } from "../card-record.js";
 import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
 import type { SendProposalStore } from "./send-proposals.js";
@@ -298,6 +300,8 @@ export interface TeamsBotDeps {
     /** Named chat destinations, so a draft's alias sink is checked as the conversation it names.
      * Absent = an alias sink is refused as unknown. */
     destinations?: () => Destination[];
+    /** Cards name the owner DMs a Home post is copied to (#1069), read live; absent = none. */
+    homeDms?: () => Promise<HomeDms | undefined>;
     proposals: RoutineProposalStore;
     /** Run or check a sprout now (#636) — where this process owns the scheduler (headless
      * Discord) or asks the app that spawned it over IPC (#637, `parentSproutTrigger`). `trigger`
@@ -313,6 +317,16 @@ export interface TeamsBotDeps {
       running?: () => Promise<{ name: string; runs: number }[] | undefined>;
     };
   };
+}
+
+/** Home is the owner's own chat with Bean: only the owner's draft in their 1:1 (`ownerDm`) may set
+ * it, and its owner-DM chat sinks become Home (#1070). Elsewhere a draft loses `home` and any
+ * owner-DM chat sink, which would fold into Home on save (#1068). */
+export function draftHome(r: Routine, ownerDm: boolean): Routine {
+  if (ownerDm) return { ...r, sinks: foldOwnerDmSinks(r.sinks) };
+  const { home: _home, chatops, ...rest } = r.sinks;
+  const kept = chatops?.filter((c) => !isOwnerDmSink(c));
+  return { ...r, sinks: { ...rest, ...(kept && kept.length > 0 ? { chatops: kept } : {}) } };
 }
 
 const SPROUT_BLOCKED: Record<SproutRunBlock, (name: string) => string> = {
@@ -1468,7 +1482,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     // A non-owner's Save always lands switched off, whatever the draft (or a forged toggle) says.
-    const routine = isOwner ? pending.proposal.routine : { ...pending.proposal.routine, enabled: false };
+    // Home only from the owner's own draft, saved in their 1:1 (the card is bound to its conversation).
+    const drafted = pending.proposal.problem
+      ? pending.proposal.routine : draftHome(pending.proposal.routine, isOwner && pending.byOwner && action.direct === true);
+    const routine = isOwner ? drafted : { ...drafted, enabled: false };
     const name = String(routine.name);
     const resultCard = (outcome: "saved" | "cancelled" | "failed", problem?: string): object | undefined =>
       deps.cards.routineResultCard?.({ name, by: action.fromName, outcome, enabled: routine.enabled, ...(problem ? { problem } : {}) });
@@ -1507,11 +1524,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     try {
       if (createOnly) await r.create(routine);
       else {
-        // Replacing a sprout keeps its display-only "Listed under", and its Home sink is always the
-        // saved one: Home is set only on the desktop, whatever the draft carries.
+        // Replacing a sprout keeps its display-only "Listed under", and a draft without Home keeps the
+        // saved Home sink.
         const next = saved?.projects && routine.projects === undefined ? { ...routine, projects: saved.projects } : routine;
-        const { home: _draftHome, ...sinks } = next.sinks;
-        await r.save({ ...next, sinks: saved?.sinks.home ? { ...sinks, home: saved.sinks.home } : sinks });
+        const home = next.sinks.home ?? saved?.sinks.home;
+        await r.save(home ? { ...next, sinks: { ...next.sinks, home } } : next);
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") await fail(nameTaken(name));
@@ -2161,6 +2178,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               ...(draftable ? { listed: { live: draftable.live, archived: draftable.archived } } : {}),
               recipients: await deps.routines.recipients(),
               ...(msg.direct || !msg.scopeId ? {} : { channelId: msg.scopeId }),
+              ...(isOwner && msg.direct === true ? { home: true } : {}),
               cliModels: deps.cliModels,
               ...(deps.routines.destinations ? { destinations: deps.routines.destinations() } : {}),
             }
@@ -2439,7 +2457,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           const routine = sproutRoutines.find((r) => r.name === name);
           if (!routine) return; // converse already refused names outside the catalog
           const { pending, seeded } = await sprouts.facts(routine);
-          const out = planSproutRun(routine, pending, seeded);
+          const out = planSproutRun(routine, pending, seeded, homeDestination(persona.name, await deps.routines?.homeDms?.()));
           if ("blocked" in out) {
             await fx.post(SPROUT_BLOCKED[out.blocked](name));
             return;
@@ -2477,13 +2495,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           if (!(await permitted("routineDrafts", "set up sprouts"))) return;
           if (!deps.routines || !deps.cards.routineProposalCard) return;
           let proposal = result.proposedRoutine;
-          // Home is the desktop's: a chat draft never carries a Home sink, whoever drafts it (the
-          // owner's replacement keeps the saved one at Save).
-          const draftSinks = proposal.routine.sinks as unknown;
-          if (typeof draftSinks === "object" && draftSinks !== null && "home" in draftSinks) {
-            const { home: _home, ...sinks } = draftSinks as Routine["sinks"];
-            proposal = { ...proposal, routine: { ...proposal.routine, sinks } };
-          }
+          // An invalid draft can be any shape; its card offers no Save.
+          if (!proposal.problem) proposal = { ...proposal, routine: draftHome(proposal.routine, isOwner && msg.direct === true) };
           if (!isOwner && !proposal.problem) {
             // An admin's draft starts off, and a name clash is shown up front ("Can't save").
             const name = String(proposal.routine.name);
@@ -2495,6 +2508,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             ...(target ? { prior: JSON.stringify(target) } : {}),
             proposal, conversationId: msg.conversationId, proposedBy: msg.fromName,
             proposedById: msg.fromId, byOwner: isOwner, ...(msg.channelName ? { where: msg.channelName } : {}),
+            home: homeDestination(persona.name, await deps.routines.homeDms?.()),
             ...(routineAuthoring?.channelId ? { channelId: routineAuthoring.channelId } : {}),
           });
           const activityId = await fx.postCard(deps.cards.routineProposalCard(

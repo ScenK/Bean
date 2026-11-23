@@ -415,9 +415,10 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 // whole pile. Fire-and-forget, same as bot.ts's call.
 // `ownerDm` = the delivery's id when it provably went to the owner's own 1:1 DM: once the cutover is
 // done it joins the main conversation instead (#998), so a member's digest never does.
-const appendDelivered = (conversationId: string, body: string, ownerDm?: string): void =>
+// `mainTurnKey` = a Home post's copy (#1067): its main-log row is the post's own (`post:<id>`).
+const appendDelivered = (conversationId: string, body: string, ownerDm?: string, mainTurnKey?: string): void =>
   appendDelivery(conversations, conversationId, body, { chat: converseChat, model: beanConfig.model },
-    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined);
+    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined, mainTurnKey);
 
 const OUTBOX_POLL_MS = 5_000;
 // One owner-DM notice for a given-up channel message. A failed owner DM gets none — the notice
@@ -470,7 +471,7 @@ setInterval(() => {
         const save = ref.conversation?.id ? deliveredAppend(msg, ref.conversation, text, posted.id) : null;
         if (save === "missing-id") console.error(`outbox: teams post to ${ref.conversation?.id} returned no id; digest not saved`);
         // The owner's own 1:1 (by the ref's user, `29:` or AAD id) — never a member's or a shared chat.
-        else if (save) appendDelivered(save.key, save.body, ownerDmRefs({ ref }, teamsConfig.ownerId).length > 0 ? msg.id : undefined);
+        else if (save) appendDelivered(save.key, save.body, ownerDmRefs({ ref }, teamsConfig.ownerId).length > 0 ? msg.id : undefined, msg.mainTurnKey);
       } catch (err) {
         console.error("outbox: teams send failed:", outboxErrorLine(err));
         lastErr = err;

@@ -81,10 +81,11 @@ describe("service contract (#807)", () => {
     };
     call(IPC.saveConfig, config)();
     call(IPC.saveConfig, { routineDigestContext: true })(); // retired key from an older peer (#1066): passes, ignored
+    call(IPC.saveConfig, { homeDiscordDm: true, homeTeamsDm: false })(); // #1067
     call(IPC.saveConfig, {})(); // a patch (#812): changes nothing, keeps the key
     call(IPC.saveProjects, [{ name: "bean", path: "/p", skills: ["a"] }])();
     call(IPC.chat, { history: [{ role: "user", content: "x" }], message: "hi" }, "m")();
-    expect(fn).toHaveBeenCalledTimes(5);
+    expect(fn).toHaveBeenCalledTimes(6);
     // Events too.
     const all = ["systemControls", "terminalHandoff", "pty", "pathOpen"] as const;
     expect(contractRefusal(IPC.memoryUpdated, [{ saved: 42, mountId: "m" }], all)).toMatch(/malformed/);

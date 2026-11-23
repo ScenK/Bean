@@ -7,7 +7,8 @@
 import { randomUUID } from "node:crypto";
 import type { Routine } from "../routine-store.js";
 import type { TriggerResult, WatchCheckResult } from "../routine-scheduler.js";
-import { planSproutRun, type SproutOrigin, type SproutTrigger } from "../sprout-trigger.js";
+import { planSproutRun, type HomeDms, type SproutOrigin, type SproutTrigger } from "../sprout-trigger.js";
+import { configFile, loadConfig } from "../config.js";
 import { getDispatch } from "../dispatch-store.js";
 import { listTodos } from "../todo-store.js";
 import { isWatchSeeded } from "../watch-store.js";
@@ -85,6 +86,11 @@ export async function sproutRunFacts(dbPath: string, r: Routine): Promise<{ pend
     seeded: r.watch ? isWatchSeeded(dbPath, r.name, watchSourceKey(r.watch)) : true,
   };
 }
+
+/** Bot side: the per-bot Home DM settings for the run card's wording (#1069), read live from
+ * config.json (the app's Settings writes them); unreadable = none named. */
+export const readHomeDms = (dir: string): Promise<HomeDms | undefined> =>
+  loadConfig(configFile(dir), dir).then((c) => ({ discord: c.homeDiscordDm, teams: c.homeTeamsDm }), () => undefined);
 
 /** App side: answers a bot's trigger. The card was planned in the bot, so the name is re-resolved
  * here (renamed or deleted = `missing`) and the frozen action re-planned: a sprout whose plan

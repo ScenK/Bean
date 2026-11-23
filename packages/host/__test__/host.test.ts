@@ -1,7 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { HOME_DM_MIGRATION_KEY } from "@bean/core";
 import { DISCONNECT_GRACE_MS, HEARTBEAT_TIMEOUT_MS } from "../src/attachments.js";
 import { createHost } from "../src/host.js";
 
@@ -48,9 +50,10 @@ test("a headless host rebases missed sprouts with a notice", async () => {
   const lastRun = "2020-01-01T00:00:00.000Z";
   writeFileSync(join(dir, "routines", ".state.json"), JSON.stringify({ daily: { lastRun, history: [] } }));
   const quit: (() => void)[] = [];
-  const send = vi.fn();
+  const send = vi.fn(async () => { throw new Error("notifications down"); });
+  const onJobs = vi.fn();
   const host = await createHost({
-    dir, builtinDir: dir, push: vi.fn(), onJobs: vi.fn(),
+    dir, builtinDir: dir, push: vi.fn(), onJobs,
     notification: { name: "owner", available: () => true, send },
     isChatClient: () => false, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
     bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
@@ -130,6 +133,68 @@ test("a closed update latch refuses new chat turns, delegates, live sessions and
     expect(await host.handlers.routines.runNow("any")).toMatchObject({ started: false, reason: expect.stringMatching(msg) });
     host.coreUpdate.open();
     expect(chats.liveStart(1, L, {})).not.toEqual({ error: expect.stringMatching(msg) }); // its own validation answers now
+  } finally {
+    for (const fn of quit) fn();
+  }
+});
+
+// #1068: taking the lease turns on the toggle of each surface an owner-DM sink named, once.
+test("the lease holder migrates owner-DM sinks into the per-bot Home toggles", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-host-"));
+  mkdirSync(join(dir, "routines"));
+  writeFileSync(join(dir, "routines", "brief.json"), JSON.stringify({
+    name: "brief", enabled: false, cron: "0 9 * * *", steps: [{ kind: "command", command: "true" }],
+    sinks: { chatops: [{ transport: "teams" }, { transport: "discord", channel: "c1" }] },
+  }));
+  const quit: (() => void)[] = [];
+  const host = await createHost({
+    dir, builtinDir: dir, push: vi.fn(), onJobs: vi.fn(),
+    notification: { name: "owner", available: () => false, send: vi.fn() },
+    isChatClient: () => false, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
+    headless: { onLeaseLost: vi.fn() },
+  });
+  try {
+    await vi.waitFor(() => {
+      const cfg = JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+      expect(cfg).toMatchObject({ homeTeamsDm: true, homeDiscordDm: false });
+    });
+    expect(host.handlers.getConfig()).toMatchObject({ homeTeamsDm: true, homeDiscordDm: false });
+  } finally {
+    for (const fn of quit) fn();
+  }
+});
+
+// #1068: a failed config write tells the owner which keys to set, and leaves no marker.
+test("a failed owner-DM toggle migration shows the keys to set by hand, even without notifications", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-host-"));
+  mkdirSync(join(dir, "routines"));
+  writeFileSync(join(dir, "routines", "brief.json"), JSON.stringify({
+    name: "brief", enabled: false, cron: "0 9 * * *", steps: [{ kind: "command", command: "true" }],
+    sinks: { chatops: [{ transport: "teams" }] },
+  }));
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ openaiApiKey: "", model: "m" }));
+  chmodSync(join(dir, "config.json"), 0o444); // the migration's config write fails
+  const quit: (() => void)[] = [];
+  const send = vi.fn(async () => { throw new Error("notifications down"); });
+  const onJobs = vi.fn();
+  const host = await createHost({
+    dir, builtinDir: dir, push: vi.fn(), onJobs,
+    notification: { name: "owner", available: () => true, send },
+    isChatClient: () => false, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
+    headless: { onLeaseLost: vi.fn() },
+  });
+  try {
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.stringContaining('Set "homeTeamsDm": true in config.json'),
+    })));
+    // The bubble stays (state failed = sticky) whatever the notification did.
+    expect(onJobs).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({
+      id: "sprouts:home-dm", state: "failed", detail: expect.stringContaining('Set "homeTeamsDm": true in config.json'),
+    })]));
+    expect(host.handlers.getConfig()).toMatchObject({ homeTeamsDm: false });
+    expect(new DatabaseSync(join(dir, "bean.db")).prepare("SELECT 1 FROM memory_meta WHERE key = ?").get(HOME_DM_MIGRATION_KEY)).toBeUndefined();
   } finally {
     for (const fn of quit) fn();
   }

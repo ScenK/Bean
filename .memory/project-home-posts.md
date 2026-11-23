@@ -19,6 +19,48 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   no transaction of its own, so the host can run it inside the transcript save's transaction.
 - Not `sprout_dispatches`: posts have no origin conversation and never enter the chatops outbox.
 
+## Owner-DM copy (#1067)
+
+- Config `homeDiscordDm` / `homeTeamsDm` (default off, read live via runtime config, both config
+  guards; Settings › Chat bots toggles, #1069 — sent in the save patch only once edited): each Home post also goes to the owner's DM on that bot. Only when the
+  post was inserted, the transport is reachable (`sinkRecipients` > 0 — else nothing is enqueued),
+  and like any chat sink: muted by `chatopsOnlyOnProblems` (an ending still goes), skipped when the
+  run was dispatched from that DM. An owner-DM chatops sink on that transport is dropped for the run
+  (no second copy).
+- Outbox `body` = `postTurn` of the capped post body (`homePostBody`), `displayBody` = the brief (the
+  full digest under `chatopsVerbatim`), `mainTurnKey` = `post:<id>`. The bot's `appendDelivery`
+  writes it after the cutover as the drain does (user role, surface `desktop`, that key), so phone
+  and Home drain — either order — leave **one** main-log row. The Home post stays unread.
+
+## Owner-DM sinks fold into Home (#1068)
+
+- `loadRoutines`/`saveRoutine` normalize (`normalizeRoutine` → `foldOwnerDmSinks`): a chat sink
+  with no `channel`/`user`/`alias` is dropped and `home: {}` added if absent; TTL, flags and other
+  sinks kept. `chatopsOnlyOnProblems`/`chatopsVerbatim` survive while `home` is set (they govern the
+  phone copy) — the renderer's `cleanChatSinks` and the panel's `setChatops` keep them then too. A file is rewritten only on its
+  next normal save.
+- One-shot toggle migration (`migrateOwnerDmSinks`, home-posts.ts) at every lease take, first thing
+  in the host's `startScheduler`: marker `memory_meta` `homeDmSinksMigratedAt` present → nothing.
+  Else it reads the **raw** files synchronously (load already folded them; a scheduler tick could
+  re-save one), turns on `homeDiscordDm`/`homeTeamsDm` for each surface found via `runtime.apply`
+  (a patch; Settings sends the toggles only once edited, so an open window's later save keeps them), then writes the marker. A failed
+  config write = no marker, retried at the next lease take; a toggle turned off later stays off.
+  The failure also shows the owner the exact keys to set by hand — a sticky `sprouts:home-dm` error
+  bubble (kind `bot`: a `routine` bubble navigates instead of expanding; kept until clicked away) plus a notification, which may be unavailable or fail: the retry is best-effort,
+  since a sprout saved meanwhile no longer names its owner DM on disk. Don't gate the scheduler or
+  sprout saves on it — a missing phone copy is the owner's to fix, no sprouts at all is worse.
+- Known gap (deferred P2): a standby host started before the holder migrated keeps `false` toggles in
+  its runtime config after taking the lease (runtime config isn't re-read across hosts sharing a data
+  dir, and `apply` would write its other stale fields over the file). Restart that host.
+
+## Desktop wording (#1069)
+
+- `homeDestination(beanName, dms)` / `homeDmNames` (`@bean/core/sprout-trigger`) is the one wording
+  for where a Home post lands — run card (`planSproutRun`'s `home` arg; desktop and bots pass the
+  persona name and the live toggles), Sprouts footer, builder review. The editor has no owner-DM
+  boxes; only-on-problems shows with Home too (it mutes the DM copies, never the chat post).
+  Settings' reachability hint comes from `routinesSinkRecipients` — not a remote op, so none over SSH.
+
 ## Home thread (#960, continuous since #976)
 
 - Home is **one continuous thread**: `HOME_THREAD_ID` (core `desktop-chats.ts`) is a fixed UUID-shaped
@@ -100,7 +142,9 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   `describeRoutineError` refuses the save with its message — no renderer-side copy of the rule.
   Malformed text ("-") reads as `""` with `validity.badInput`: it's stored as NaN, never as blank.
 - Every sink rewrite keeps `home`: `cleanChatSinks` and the panel's spreads, and an owner's chat
-  replacement of a sprout always takes it from the saved file, ignoring any `home` in the draft
-  (`bot.ts`; `propose_routine` parses JSON, so a draft can carry one). The builder brief can't set Home (`cleanSinks` drops it); turn it on in the editor.
+  replacement without `home` keeps the saved one. Only the owner's draft in their own 1:1 may set
+  `home` (#1070, `draftHome` in `bot.ts`, checked at proposal and again at Save via the tap's
+  `direct`); every other chat draft loses `home` *and* any owner-DM chat sink, since that folds into
+  Home on save (#1068). `propose_routine` parses JSON, so a draft can carry either. The builder brief can't set Home (`cleanSinks` drops it); turn it on in the editor.
 - Named in the builder review (`destinations()`), the run card's "results go to"
   (`sprout-trigger.ts`) and the editor footer (as a brief target unless the sprout is stepless). e2e: `routine-sinks.e2e.ts`.

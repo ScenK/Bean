@@ -47,6 +47,7 @@ export interface RoutineWiringDeps {
   onStatus?: RoutineHostDeps["onStatus"];
   notify?: RoutineHostDeps["notify"];
   onHomePost?: RoutineHostDeps["onHomePost"];
+  homeDms?: RoutineHostDeps["homeDms"];
   /** The scheduler lease (safety-one-scheduler-per-data-dir): gates every automatic fire. */
   canSchedule: () => boolean;
   alarm: NonNullable<RoutineSchedulerDeps["alarm"]>;
@@ -102,6 +103,7 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     ...(deps.onStatus ? { onStatus: deps.onStatus } : {}),
     ...(deps.notify ? { notify: deps.notify } : {}),
     ...(deps.onHomePost ? { onHomePost: deps.onHomePost } : {}),
+    ...(deps.homeDms ? { homeDms: deps.homeDms } : {}),
   });
   const watchPoll = { fetchText, exec: execWatchCommand(deps.path) };
   const poll = (w: RoutineWatch): Promise<WatchItem[]> => pollWatch(w, watchPoll);

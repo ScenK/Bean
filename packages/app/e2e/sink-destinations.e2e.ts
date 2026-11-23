@@ -25,8 +25,8 @@ test("sink destinations: pick by name, save, reopen shows the name; an unknown n
   const beanDir = join(home.homeDir, ".bean");
   recordDestination(dbFile(beanDir), { surface: "discord", conversationId: "c1", kind: "channel", platformName: "general", parentName: "Guild" });
   const file = join(beanDir, "routines", "pick.json");
-  await writeFile(file, sprout("pick", [{ transport: "discord" }]), "utf8");
-  await writeFile(join(beanDir, "routines", "ghost.json"), sprout("ghost", [{ transport: "discord" }, { transport: "discord", alias: "Gone" }]), "utf8");
+  await writeFile(file, sprout("pick", []), "utf8");
+  await writeFile(join(beanDir, "routines", "ghost.json"), sprout("ghost", [{ transport: "discord", alias: "Gone" }]), "utf8");
   const chatops = async (): Promise<unknown> =>
     (JSON.parse(await readFile(file, "utf8")) as { sinks: { chatops?: unknown } }).sinks.chatops;
 
@@ -45,7 +45,7 @@ test("sink destinations: pick by name, save, reopen shows the name; an unknown n
     // An uncommitted edit doesn't rename on Save's blur: the sprout and the destination agree.
     await name.fill("Not committed");
     await win.getByRole("button", { name: "Save sprout" }).click();
-    await expect.poll(chatops).toEqual([{ transport: "discord" }, { transport: "discord", alias: "Team chat" }]);
+    await expect.poll(chatops).toEqual([{ transport: "discord", alias: "Team chat" }]);
     expect(listDestinations(dbFile(beanDir)).find((d) => d.conversationId === "c1")?.alias).toBe("Team chat");
     // Naming state stays with its sprout: another sprout's row shows no name field.
     await win.locator(".bean-routines-row", { hasText: "ghost" }).click();
@@ -72,7 +72,7 @@ test("sink destinations: Name it on a raw id names the conversation and rewrites
   recordDestination(dbFile(beanDir), { surface: "discord", conversationId: "c1", kind: "channel", platformName: "builds", parentName: "Guild" });
   const dir = join(beanDir, "routines");
   await writeFile(join(dir, "one.json"), sprout("one", [{ transport: "discord", channel: "c1" }]), "utf8");
-  await writeFile(join(dir, "two.json"), sprout("two", [{ transport: "discord" }, { transport: "discord", channel: "c1" }]), "utf8");
+  await writeFile(join(dir, "two.json"), sprout("two", [{ transport: "discord", channel: "c2" }, { transport: "discord", channel: "c1" }]), "utf8");
   await writeFile(join(dir, "other.json"), sprout("other", [{ transport: "discord", channel: "c9" }]), "utf8");
   const chatops = async (n: string): Promise<unknown> =>
     (JSON.parse(await readFile(join(dir, `${n}.json`), "utf8")) as { sinks: { chatops?: unknown } }).sinks.chatops;
@@ -90,7 +90,7 @@ test("sink destinations: Name it on a raw id names the conversation and rewrites
 
     await expect(win.getByLabel("Discord destination")).toHaveValue("alias:Build room");
     await expect.poll(() => chatops("one")).toEqual([{ transport: "discord", alias: "Build room" }]);
-    await expect.poll(() => chatops("two")).toEqual([{ transport: "discord" }, { transport: "discord", alias: "Build room" }]);
+    await expect.poll(() => chatops("two")).toEqual([{ transport: "discord", channel: "c2" }, { transport: "discord", alias: "Build room" }]);
     expect(await chatops("other")).toEqual([{ transport: "discord", channel: "c9" }]);
 
     // An id Bean has never seen still works, with no Name it.

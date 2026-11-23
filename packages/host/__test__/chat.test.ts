@@ -447,12 +447,12 @@ describe("chat handler sprout runs", () => {
     steps: [{ kind: "chat", instruction: "x" }], sinks: { note: true },
   };
   const daily: Routine = { name: "daily", description: "Morning brief", enabled: false, cron: "0 8 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
-  const handlerFor = (routines: Routine[], name: string, facts = { pending: 0, seeded: true }) => {
+  const handlerFor = (routines: Routine[], name: string, facts = { pending: 0, seeded: true }, persona = "Bean") => {
     let seenTools: string[] = [];
     const handler = buildChatHandler({
       loadSkills: async () => [] as Skill[],
       loadProjects: async () => [] as Project[],
-      loadPersona: async () => ({ name: "Bean", tags: [] }) as unknown as Persona,
+      loadPersona: async () => ({ name: persona, tags: [] }) as unknown as Persona,
       converse: async ({ tools }) => {
         seenTools = tools.map((t) => t.name);
         return { content: "Here you go", toolCalls: tools.some((t) => t.name === "propose_sprout_run") ? [{ name: "propose_sprout_run", args: { routine: name } }] : [] };
@@ -462,9 +462,15 @@ describe("chat handler sprout runs", () => {
       loadMemories: async () => [], dbFile: "/b/bean.db",
       loadRoutines: async () => routines,
       sproutFacts: async () => facts,
+      homeDms: () => ({ discord: false, teams: true }),
     });
     return { run: () => handler({ history: [], message: "run it" }), tools: () => seenTools };
   };
+
+  it("names Home after the persona plus its DM copies on the card (#1069)", async () => {
+    const res = await handlerFor([{ ...daily, enabled: true, sinks: { home: {} } }], "daily", undefined, "Mr. Bean").run();
+    expect(res.sproutRun).toMatchObject({ resultsTo: "this chat, your chat with Mr. Bean and your Teams DM" });
+  });
 
   it("freezes the action onto a card", async () => {
     const res = await handlerFor([daily, watch], "daily").run();

@@ -75,7 +75,7 @@ test("saveConfig writes only persisted config fields (no beanDir)", async () => 
   const file = join(dir, "config.json");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "" });
   const parsed = JSON.parse(await readFile(file, "utf8"));
-  expect(Object.keys(parsed).sort()).toEqual(["autoMemory", "delegateCli", "disabledClis", "editorApp", "gitEmail", "gitName", "imageModel", "model", "openaiApiKey", "reasoningEffort", "systemControls", "terminalApp", "webSearch"]);
+  expect(Object.keys(parsed).sort()).toEqual(["autoMemory", "delegateCli", "disabledClis", "editorApp", "gitEmail", "gitName", "homeDiscordDm", "homeTeamsDm", "imageModel", "model", "openaiApiKey", "reasoningEffort", "systemControls", "terminalApp", "webSearch"]);
 });
 
 test("loads config and defaults terminalApp to empty string", async () => {
@@ -160,6 +160,15 @@ test("a retired routineDigestContext key (#1066) still loads and is gone after t
   expect((await loadConfig(file, "/b")).model).toBe("m");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
   expect(JSON.parse(await readFile(file, "utf8"))).not.toHaveProperty("routineDigestContext");
+});
+
+test("homeDiscordDm/homeTeamsDm (#1067) default off, round-trip, and survive a save that omits them", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect(await loadConfig(file, "/b")).toMatchObject({ homeDiscordDm: false, homeTeamsDm: false });
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m", homeTeamsDm: true });
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect(await loadConfig(file, "/b")).toMatchObject({ homeDiscordDm: false, homeTeamsDm: true });
 });
 
 test("webSearch defaults off, round-trips, and survives a save that omits it", async () => {

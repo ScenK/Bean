@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   appendRunRecord, createRoutine, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines,
-  loadRoutineStates, resolveTodoRoutine, todoRunHint, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
+  loadRoutineStates, ownerDmSinkTransports, resolveTodoRoutine, todoRunHint, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
 } from "../src/routine-store.js";
 
 const routine = (over: Partial<Routine> = {}): Routine => ({
@@ -61,6 +61,41 @@ describe("save/load/delete routines", () => {
     await expect(saveRoutine(dir, routine({ name: "../evil" }))).rejects.toThrow();
     await expect(saveRoutine(dir, routine({ cron: "not cron" }))).rejects.toThrow();
     await expect(deleteRoutine(dir, "../evil")).rejects.toThrow();
+  });
+});
+
+describe("owner-DM sinks fold into Home (#1068)", () => {
+  const raw = async (dir: string, r: Routine): Promise<void> => writeFile(join(dir, `${r.name}.json`), JSON.stringify(r), "utf8");
+  it("drops owner-DM sinks, adds home, keeps TTL, flags and every other chat sink; idempotent", async () => {
+    const dir = await tmp();
+    await raw(dir, routine({ name: "mixed", sinks: {
+      chatops: [{ transport: "discord" }, { transport: "discord", channel: "c1" }, { transport: "teams" }, { transport: "discord", user: "u1" }, { transport: "teams", alias: "ops" }],
+      chatopsOnlyOnProblems: true, chatopsVerbatim: true, note: true, home: { ttlMinutes: 30 },
+    } }));
+    await raw(dir, routine({ name: "only-dm", sinks: { chatops: [{ transport: "teams" }], chatopsOnlyOnProblems: true } }));
+    await raw(dir, routine({ name: "untouched", sinks: { chatops: [{ transport: "discord", channel: "c1" }], chatopsVerbatim: true } }));
+    const [mixed, onlyDm, untouched] = await loadRoutines(dir);
+    expect(mixed!.sinks).toEqual({
+      chatops: [{ transport: "discord", channel: "c1" }, { transport: "discord", user: "u1" }, { transport: "teams", alias: "ops" }],
+      chatopsOnlyOnProblems: true, chatopsVerbatim: true, note: true, home: { ttlMinutes: 30 },
+    });
+    expect(onlyDm!.sinks).toEqual({ chatopsOnlyOnProblems: true, home: {} });
+    expect(untouched!.sinks).toEqual({ chatops: [{ transport: "discord", channel: "c1" }], chatopsVerbatim: true });
+    // Persisted on the next save; loading that again changes nothing.
+    for (const r of [mixed!, onlyDm!, untouched!]) await saveRoutine(dir, r);
+    expect(await loadRoutines(dir)).toEqual([mixed, onlyDm, untouched]);
+    expect(JSON.parse(await readFile(join(dir, "only-dm.json"), "utf8")).sinks).toEqual({ chatopsOnlyOnProblems: true, home: {} });
+  });
+  it("ownerDmSinkTransports reads the raw files: each surface once, valid routines only", async () => {
+    expect(ownerDmSinkTransports("/nonexistent/nowhere")).toEqual([]);
+    const dir = await tmp();
+    await raw(dir, routine({ name: "a", sinks: { chatops: [{ transport: "teams" }, { transport: "discord", channel: "c" }] } }));
+    await raw(dir, routine({ name: "b", sinks: { chatops: [{ transport: "teams" }] } }));
+    await raw(dir, routine({ name: "c", sinks: { chatops: [{ transport: "discord", user: "u1" }] } }));
+    await writeFile(join(dir, "bad.json"), JSON.stringify({ name: "bad", sinks: { chatops: [{ transport: "discord" }] } }), "utf8");
+    expect(ownerDmSinkTransports(dir)).toEqual(["teams"]);
+    await raw(dir, routine({ name: "d", sinks: { chatops: [{ transport: "discord" }] } }));
+    expect(ownerDmSinkTransports(dir)).toEqual(["discord", "teams"]);
   });
 });
 

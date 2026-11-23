@@ -53,7 +53,8 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
   are refused `main-conversation`.
 - **Outbox:** `appendDelivery` (core) maps a delivery only when it provably went to the owner's 1:1
   (Discord: no `userId` or the owner's, or a named destination that is the owner's DM channel; Teams: `ownerDmRefs` on the ref), under the existing
-  `context` rule, keyed `delivery:<outbox id>` so a Teams fan-out to several owner DMs appends once.
+  `context` rule, keyed `delivery:<outbox id>` so a Teams fan-out to several owner DMs appends once. A Home post's phone copy
+  (#1067, `OutboxMessage.mainTurnKey`) is keyed `post:<id>` instead, so it and the drain dedupe.
 
 ## Cutover (#999)
 

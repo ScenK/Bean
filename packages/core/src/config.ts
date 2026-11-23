@@ -85,6 +85,8 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
       : [],
     webSearch: parsed.webSearch ?? false,
     autoMemory: parsed.autoMemory ?? true,
+    homeDiscordDm: parsed.homeDiscordDm === true,
+    homeTeamsDm: parsed.homeTeamsDm === true,
     ...(typeof parsed.briefModel === "string" && parsed.briefModel.trim() ? { briefModel: parsed.briefModel.trim() } : {}),
     beanDir: beanDirPath,
   };
@@ -92,7 +94,7 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; gitName?: string; gitEmail?: string; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean; briefModel?: string },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; gitName?: string; gitEmail?: string; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean; homeDiscordDm?: boolean; homeTeamsDm?: boolean; briefModel?: string },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   // Settings has no toggle for some fields (e.g. reasoningEffort, imageModel), so a desktop
@@ -116,6 +118,8 @@ export async function saveConfig(
     disabledClis: config.disabledClis ?? existing.disabledClis ?? [],
     webSearch: config.webSearch ?? existing.webSearch ?? false,
     autoMemory: config.autoMemory ?? existing.autoMemory ?? true,
+    homeDiscordDm: config.homeDiscordDm ?? existing.homeDiscordDm ?? false,
+    homeTeamsDm: config.homeTeamsDm ?? existing.homeTeamsDm ?? false,
     briefModel: config.briefModel ?? existing.briefModel, // absent stays absent (JSON drops undefined)
   };
   await writeFile(file, JSON.stringify(out, null, 2) + "\n", "utf8");

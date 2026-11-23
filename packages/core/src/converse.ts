@@ -127,6 +127,9 @@ export interface RoutineAuthoring {
   listed?: { live: string[]; archived: string[] };
   recipients: { id: string; name: string }[];
   channelId?: string;
+  /** Chatops: the owner drafting in their own 1:1, so a draft may post to their chat with Bean
+   * (`home`, #1070). Implied on the desktop. */
+  home?: boolean;
   cliModels?: CliModels[];
   /** Named chat destinations: an alias sink is checked as the conversation it names. */
   destinations?: Destination[];
@@ -490,12 +493,13 @@ function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
   const discord = a.transport === "discord";
   const live = a.listed?.live ?? a.existing;
   const archived = a.listed?.archived ?? [];
+  // "home" = the owner's one chat with Bean (desktop + their DMs, #1068): the owner-DM destination.
+  const home = '"home"?: {} (posts each result to the owner\'s chat with you, which also reaches the DMs they turned on), ';
   const sinks = desktop
-    ? '"sinks": {"home"?: {} (posts each result to the owner\'s Home chat), "note"?: true, "notify"?: true (desktop ' +
-      'notification), "chatops"?: [{"transport": "discord" or "teams"}] (DMs the owner there)}}. Deliver to Home unless the ' +
-      "owner asks for somewhere else. "
-    : `"sinks": {"chatops"?: [{"transport": "${a.transport}", ` + (discord ? '"user"?: id, ' : "") + '"channel"?: id}], ' +
-      '"note"?: true}}. A chatops sink with ' + (discord ? "neither user nor channel" : "no channel") + " DMs the owner; " +
+    ? `"sinks": {${home}"note"?: true, "notify"?: true (desktop notification)}}. Deliver to home unless the owner ` +
+      "asks for somewhere else. "
+    : `"sinks": {${a.home ? home : ""}"chatops"?: [{"transport": "${a.transport}", ` + (discord ? '"user": id or ' : "") +
+      '"channel": id}], "note"?: true}}. ' + (a.home ? 'For "send it to me", use home. ' : "") +
       (discord ? `"user" DMs one of: ${people || "nobody else"}; ` : "") + '"channel" posts in a channel' +
       (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". ";
   return {

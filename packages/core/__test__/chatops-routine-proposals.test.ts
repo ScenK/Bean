@@ -3,6 +3,7 @@ import {
   describeSchedule, describeStep, draftReplaces, parseRoutineCommand, routineCardInput, routineDraftCard, RoutineProposalStore, routineListText,
 } from "../src/chatops/routine-proposals.js";
 import { draftNames } from "../src/routine-store.js";
+import { homeDestination } from "../src/sprout-trigger.js";
 import type { Routine } from "../src/routine-store.js";
 import type { Project } from "../src/types.js";
 
@@ -159,7 +160,7 @@ describe("desktop drafts (#982)", () => {
   };
 
   test("the card says what it watches for, how, where it tells you and when it stops", () => {
-    const card = routineDraftCard("d1", { routine: draft, updating: false }, undefined, "Pip");
+    const card = routineDraftCard("d1", { routine: draft, updating: false }, undefined, homeDestination("Pip"));
     expect(card).toMatchObject({
       id: "d1", name: "album", ask: "tell me when it's out", commitment: true, tellYou: ["Your chat with Pip"],
       stops: "Dec 20, 2026, or sooner if found",
@@ -167,6 +168,9 @@ describe("desktop drafts (#982)", () => {
     expect(card.how[0]).toMatch(/^Every day at 9:00 AM/);
     expect(card.how).toContain("Searches the public web");
     expect(card.replaces).toBeUndefined();
+    // The same Home wording as the run card and the Sprouts footer (#1069, #1070).
+    expect(routineDraftCard("d3", { routine: draft, updating: false }, undefined, homeDestination("Pip", { discord: true, teams: false })).tellYou)
+      .toEqual(["Your chat with Pip and your Discord DM"]);
     expect(routineDraftCard("d2", { routine: draft, updating: true, problem: "bad" }, "live")).toMatchObject({ problem: "bad", how: [], replaces: "live" });
   });
 

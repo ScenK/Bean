@@ -2,11 +2,13 @@ import { useEffect, useState } from "preact/hooks";
 import type { CliName } from "@bean/core";
 import type { ConfigUpdate, ConfigView } from "../../../channels.js";
 import type { Theme } from "../../../channels.js";
-import type { ChatopsBot, ChatopsState } from "@bean/host";
+import type { ChatopsBot, ChatopsState, SinkRecipients } from "@bean/host";
 import { PanelHeader } from "../../shared/Panel.js";
 import { DestinationsList } from "./DestinationsList.js";
 import { useCapabilities } from "../../shared/capabilities.js";
 import { useCoreStatus } from "../../shared/core-status.js";
+import { usePersonaName } from "../../shared/persona-name.js";
+import { dmProblem } from "../routines/chat-sinks.js";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -68,6 +70,14 @@ export function SettingsWindow() {
   const [reasoningEffort, setReasoningEffort] = useState("");
   const [webSearch, setWebSearch] = useState(false);
   const [autoMemory, setAutoMemory] = useState(true);
+  // Per bot (#1067): posts to the chat with Bean also go to the owner's DM there.
+  const [homeDms, setHomeDms] = useState<Record<ChatopsBot, boolean>>({ discord: false, teams: false });
+  // Sent only once edited, like the key: the once-per-data-dir migration (#1068) may turn them on
+  // after this window loaded, and an untouched form must not save them back off.
+  const [homeDmsEdited, setHomeDmsEdited] = useState(false);
+  // Whether those DMs can be reached; undefined over SSH (not a remote op), so no hint there.
+  const [recipients, setRecipients] = useState<SinkRecipients | undefined>(undefined);
+  const beanName = usePersonaName();
   const [gitName, setGitName] = useState("");
   const [gitEmail, setGitEmail] = useState("");
   const [detectedClis, setDetectedClis] = useState<CliName[]>([]);
@@ -100,6 +110,7 @@ export function SettingsWindow() {
     if (loaded) return;
     let live = true;
     window.bean.detectedClis().then((d) => { if (live) setDetectedClis(d); }, () => {});
+    window.bean.routinesSinkRecipients().then((r) => { if (live) setRecipients(r); }, () => {});
     window.bean.getConfig().then((c: ConfigView) => {
       if (!live) return;
       setApiKey(c.openaiApiKey);
@@ -112,6 +123,8 @@ export function SettingsWindow() {
       setReasoningEffort(c.reasoningEffort);
       setWebSearch(c.webSearch);
       setAutoMemory(c.autoMemory);
+      // An older core has no Home DM fields.
+      setHomeDms({ discord: c.homeDiscordDm === true, teams: c.homeTeamsDm === true });
       // An older remote core has no identity fields.
       setGitName(c.gitName ?? "");
       setGitEmail(c.gitEmail ?? "");
@@ -145,6 +158,7 @@ export function SettingsWindow() {
       // Only what this window shows: a hidden field (and an untouched key) keeps its saved value.
       const patch: ConfigUpdate = {
         model: model.trim(), delegateCli, reasoningEffort, disabledClis, webSearch, autoMemory,
+        ...(homeDmsEdited ? { homeDiscordDm: homeDms.discord, homeTeamsDm: homeDms.teams } : {}),
         gitName: gitName.trim(), gitEmail: gitEmail.trim(),
         ...(apiKeyEdited ? { openaiApiKey: apiKey.trim() } : {}),
         ...(handoff ? { terminalApp: terminalApp.trim(), editorApp: editorApp.trim() } : {}),
@@ -152,6 +166,7 @@ export function SettingsWindow() {
       };
       await window.bean.saveConfig(patch);
       if (apiKeyEdited) { setApiKeySet(apiKey.trim() !== ""); setApiKeyEdited(false); }
+      setHomeDmsEdited(false);
       setSave("saved");
     } catch (err) {
       setSave("error");
@@ -390,6 +405,19 @@ export function SettingsWindow() {
                 </button>
               </div>,
               s.running && s.endpoint ? <EndpointRow key={`${key}-endpoint`} endpoint={s.endpoint} /> : null,
+              <div key={`${key}-home-dm`} class="bean-settings-row bean-settings-home-dm">
+                <label class="bean-chatops-row" title={`Each sprout post in your chat with ${beanName} is also sent to your ${label} DM, so it reaches your phone.`}>
+                  <input
+                    type="checkbox"
+                    checked={homeDms[key]}
+                    onChange={(e) => { setHomeDms({ ...homeDms, [key]: (e.target as HTMLInputElement).checked }); setHomeDmsEdited(true); setSave("idle"); }}
+                  />
+                  <span class="bean-chatops-label">Also DM me sprout posts from my chat with {beanName}</span>
+                </label>
+                {recipients && dmProblem(key, recipients)
+                  ? <span class="bean-routines-sink-hint bean-settings-home-dm-hint">Can't reach your {label} DM yet: {dmProblem(key, recipients)}</span>
+                  : null}
+              </div>,
             ];
           })}
         </section>

@@ -91,6 +91,10 @@ export interface BeanConfig {
   /** Default on: facts are remembered automatically at desktop chat close (undoable), and
    * dream consolidation runs. Off = explicit remember/forget only — no confirm-card fallback. */
   autoMemory: boolean;
+  /** Per bot, default off (#1067): each Home post (`sinks.home`) also goes to the owner's DM on
+   * that surface, one copy in the main log. Read live; no Settings UI yet — edit config.json. */
+  homeDiscordDm: boolean;
+  homeTeamsDm: boolean;
   /** Model for the first-person sprout chat brief; absent = the brain model. No Settings UI —
    * edit config.json; applies after a core restart. */
   briefModel?: string;

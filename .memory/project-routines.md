@@ -23,8 +23,8 @@ is **optional** — absent/empty = DM the **owner** only (`ownerId` in `discord.
 and logged — never fan out to every allow-listed user / personal chat, coworkers would get the
 owner's digests, #253); present = a specific discord channel id or teams conversation id instead. The
 `save_note` act-now tool is routine-only; the chat window keeps confirm-first `propose_note`.
-`sinks.chatopsOnlyOnProblems` (#561, panel "Only post when a run needs me") skips the chatops
-sinks for an `ok` run in `deliverDigest` — the one choke point for single, per-todo and watch
+`sinks.chatopsOnlyOnProblems` (#561, panel "Only message Discord and Teams when a run needs me") skips the chatops
+sinks (and Home's owner-DM copies, #1067) for an `ok` run in `deliverDigest` — the one choke point for single, per-todo and watch
 deliveries; note/notify/history still get every run. Ignored on notify-only watches (`steps: []`):
 `fireNotify` always records `ok`, so the rule would mute them entirely.
 `sinks.chatops` may hold several entries per transport (a DM plus channels, Discord `user` DMs);
@@ -122,7 +122,8 @@ feed watches, `webSearch`, `until` and the found→`done` / nothing→`quiet` ro
 sorted live names + the 10 most recently archived (`draftNames`) so the spec stays byte-stable —
 never the clock. `updating` matches every name, archived too. A draft routing to `done` with no
 `until` gets `COMMITMENT_DAYS` (30) from converse's clock (`withDefaultUntil`); plain schedules get
-none. Chatops strips any draft `sinks.home` before the card (Home is desktop-only). Desktop card
+none. Chatops strips any draft `sinks.home` (and owner-DM chat sinks) before the card unless the
+owner drafts in their own 1:1 (#1070, see project-home-posts). Desktop card
 authority = the send-card pattern: the host keeps the draft, the renderer returns only the id.
 Save re-checks `chatRoutineProblem(…, "desktop")`, the replace target (`draftReplaces` state AND the
 saved definition's JSON snapshot taken at card time — any edit in Sprouts meanwhile refuses) and
