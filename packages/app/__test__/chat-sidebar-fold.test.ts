@@ -403,3 +403,43 @@ test("⌘-click groups several chats by id: survives reorders and folds, drops v
   expect(q('.bean-chat-sidebar-bar [role="alert"]')!.textContent).toBe("Group at most 100 chats at a time.");
   root.remove();
 });
+
+test("search filters every listed chat (title, starred group, synced chip), opens folds while typing, Escape clears", async () => {
+  const day = (d: number) => new Date(2020, 0, d).toISOString();
+  const threads = [
+    { id: "a", title: "Deploy notes", updatedAt: day(9), agents: [] as string[], starred: true, groupName: "Work" },
+    { id: "b", title: "Lunch", updatedAt: day(8), agents: [] as string[], starred: true, groupName: "Work" },
+    { id: "c", title: "Old deploy", updatedAt: day(1), agents: [] as string[], starred: false, groupName: null },
+    { id: "d", title: "Recipes", updatedAt: day(2), agents: [] as string[], starred: false, groupName: null },
+  ];
+  const synced = [{ surface: "discord" as const, conversationId: "x", kind: "channel" as const, title: "deploys", updatedAt: day(3), live: false, resumable: false, archived: false }];
+  const none = new Set<string>();
+  const noop = () => {};
+  localStorage.setItem("bean.chat.foldedGroups", JSON.stringify(["Work"]));
+  await act(async () => {
+    render(h(ChatSidebar, { threads, synced, activeId: undefined, busy: false, working: none, unread: none, live: none, terminal: none, overlay: false, homeActive: false, onNew: noop, onOpen: noop, onDelete: noop, onStar: async () => {}, onRename: async () => {}, onGroup: async () => undefined, onRenameGroup: async () => {} }), root);
+  });
+  const titles = () => [...root.querySelectorAll(".bean-chat-sidebar-title")].map((e) => e.textContent);
+  const input = root.querySelector<HTMLInputElement>('input[aria-label="Search chats"]')!;
+  const type = async (v: string) => { await act(async () => { input.value = v; input.dispatchEvent(new Event("input", { bubbles: true })); }); };
+  // Work is folded and Earlier (past the two latest days) starts folded: their rows don't show.
+  expect(titles()).toEqual(["#deploys", "Recipes"]);
+  // A query opens the folds it hits, in every section — starred, dated and synced.
+  await type(" DEPLOY ");
+  expect(titles()).toEqual(["Deploy notes", "#deploys", "Old deploy"]);
+  const fold = root.querySelector<HTMLButtonElement>(".bean-chat-sidebar-group--fold")!;
+  expect(fold.disabled).toBe(true);
+  // A group's name hits all its members.
+  await type("work");
+  expect(titles()).toEqual(["Deploy notes", "Lunch"]);
+  await type("zzz");
+  expect(root.querySelector(".bean-chat-sidebar-empty")!.textContent).toBe('No chats match "zzz".');
+  // Escape clears (default-prevented); the stored folds come back.
+  const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  await act(async () => { input.dispatchEvent(esc); });
+  expect(esc.defaultPrevented).toBe(true);
+  expect(input.value).toBe("");
+  expect(titles()).toEqual(["#deploys", "Recipes"]);
+  expect(JSON.parse(localStorage.getItem("bean.chat.foldedGroups")!)).toEqual(["Work"]);
+  localStorage.removeItem("bean.chat.foldedGroups");
+});

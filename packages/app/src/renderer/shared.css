@@ -180,6 +180,12 @@ button, input, textarea, select, a {
   align-items: baseline;
   justify-content: space-between;
 }
+.bean-chat-sidebar-search {
+  flex: none;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  -webkit-app-region: no-drag;
+}
 .bean-chat-sidebar-new {
   flex: none;
   width: 100%;
