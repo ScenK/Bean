@@ -65,7 +65,12 @@ see `db.ts`'s `migrateFromFiles`.
   counts as typed at close (`chatTurns` maps `live` → `typed`, a composed `/skill` prompt →
   `skill`; agent finals ride as ≤1k context).
 - **Recall:** `converse()` ranks via `selectRelevantMemories()` — up to 40 memories inject all;
-  above, an FTS5 bm25 top-30 against the latest user message.
+  above, an FTS5 bm25 top-30 against the latest user message. Meaning recall (#1055): optional
+  `scores` from `meaningScores()` (cosine over vectors cached in `memory_vectors`, keyed by a
+  model+text+context hash; a delete trigger drops them) are RRF-fused (k=60) with bm25, each list
+  cut to its own top-K first — fusing full lists lets weak keyword hits bury the meaning-only row.
+  The scorer fails soft to `undefined` (= bm25 as before) and never blocks past ~3 s; candidate
+  rules live once in `recallCandidates()`.
 - **"You" is the only reserved category (#650, `OWNER_CATEGORY`):** on owner paths only — desktop
   `buildChatHandler` and the owner's chatops DM (`pinOwnerMemories`) — the newest 15 rows with
   category exactly `You` are pinned ahead of the top-30 (outside it). Channels, member DMs,

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { makeOpenAIConverseWithClient, makeOpenAIImageGenWithClient, makeOpenAISpeakWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
+import { makeOpenAIConverseWithClient, makeOpenAIEmbedWithClient, makeOpenAIImageGenWithClient, makeOpenAISpeakWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
 
 // A fake /v1/responses client that records the request and replays a canned output[].
 function fakeResponses(output: unknown[] = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]) {
@@ -268,4 +268,16 @@ test("responses.create and images.generate receive the abort signal in request o
   });
   await generate({ model: "gpt-image-2", prompt: "p", signal });
   expect(opts).toEqual([{ signal }, { signal }]);
+});
+
+test("makeOpenAIEmbedWithClient returns one Float32Array per input in input order and exposes its model", async () => {
+  const calls: unknown[] = [];
+  const embed = makeOpenAIEmbedWithClient({
+    embeddings: { create: async (a) => { calls.push(a); return { data: [{ index: 1, embedding: [3, 4] }, { index: 0, embedding: [1, 2] }] }; } },
+  });
+  expect(embed.model).toBe("text-embedding-3-small");
+  expect(await embed(["a", "b"])).toEqual([Float32Array.from([1, 2]), Float32Array.from([3, 4])]);
+  expect(calls).toEqual([{ model: "text-embedding-3-small", input: ["a", "b"] }]);
+  expect(await embed([])).toEqual([]);
+  expect(calls).toHaveLength(1);
 });

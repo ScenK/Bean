@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import { cjkBigrams, ftsMatchQuery } from "../fts-text.js";
+import type { Embed } from "../openai-chat.js";
 import { OWNER_PIN_LIMIT, asMemoryKind, isLive, sanitizeCategory, sanitizeContext, type Memory, type MemoryKind } from "./memory.js";
 
 interface MemoryRow {
@@ -335,32 +336,46 @@ export async function dreamDetails(file: string, runId: string): Promise<{ befor
   }));
 }
 
+export interface RecallOptions { skipThreshold?: number; pinCategory?: string; pinLimit?: number }
+
+/** The one place recall's candidate rules live (selectRelevantMemories and meaningScores both use
+ * it): drop expired rows, and at or below `skipThreshold` live rows leave `ranked` unset (inject
+ * everything, no ranking). Above it, split off the newest `pinLimit` rows of `pinCategory` —
+ * included first, never ranked — from the `pool` that is ranked. */
+function recallCandidates(
+  memories: Memory[], { skipThreshold = 40, pinCategory, pinLimit = OWNER_PIN_LIMIT }: RecallOptions, now = Date.now(),
+): { live: Memory[]; ranked?: { pinned: Memory[]; pool: Memory[] } } {
+  // Expired plans and deadlines never reach the model (the desktop read doesn't filter in SQL).
+  const live = memories.filter((m) => isLive(m, now));
+  if (live.length <= skipThreshold) return { live };
+  // loadMemories orders by created_at, so the tail is the newest.
+  const owned = pinCategory ? live.filter((m) => m.category === pinCategory) : [];
+  const pinned = owned.slice(Math.max(0, owned.length - pinLimit));
+  const pinnedIds = new Set(pinned.map((m) => m.id));
+  return { live, ranked: { pinned, pool: live.filter((m) => !pinnedIds.has(m.id)) } };
+}
+
 /** Pure top-K relevance ranking for memoriesBlock(): small memory sets are still injected
  * wholesale (today's behavior); above `skipThreshold` an FTS5 bm25 rank against `latestUserText`
  * picks the top `limit`, always force-including memories scoped to `currentProjectPath`.
  * `pinCategory` (owner paths only, #650): the newest `pinLimit` rows in exactly that category are
- * included first and kept out of the ranked pool, so they don't count against `limit`. */
+ * included first and kept out of the ranked pool, so they don't count against `limit`.
+ * `scores` (meaningScores' cosine per id): fused with the bm25 rank by reciprocal-rank fusion, so
+ * a same-meaning row with no shared word can still make the cut. */
 export function selectRelevantMemories(
   memories: Memory[],
   latestUserText: string,
   currentProjectPath?: string,
-  { limit = 30, skipThreshold = 40, pinCategory, pinLimit = OWNER_PIN_LIMIT }: {
-    limit?: number; skipThreshold?: number; pinCategory?: string; pinLimit?: number;
-  } = {},
+  { limit = 30, scores, ...opts }: RecallOptions & { limit?: number; scores?: Map<string, number> } = {},
 ): Memory[] {
-  // Expired plans and deadlines never reach the model (the desktop read doesn't filter in SQL).
-  const now = Date.now();
-  memories = memories.filter((m) => isLive(m, now));
-  if (memories.length <= skipThreshold) return memories;
-
-  // loadMemories orders by created_at, so the tail is the newest.
-  const owned = pinCategory ? memories.filter((m) => m.category === pinCategory) : [];
-  const pinned = owned.slice(Math.max(0, owned.length - pinLimit));
-  const pinnedIds = new Set(pinned.map((m) => m.id));
-  return [...pinned, ...rankRelevant(memories.filter((m) => !pinnedIds.has(m.id)), latestUserText, currentProjectPath, limit)];
+  const { live, ranked } = recallCandidates(memories, opts);
+  if (!ranked) return live;
+  return [...ranked.pinned, ...rankRelevant(ranked.pool, latestUserText, currentProjectPath, limit, scores)];
 }
 
-function rankRelevant(memories: Memory[], latestUserText: string, currentProjectPath: string | undefined, limit: number): Memory[] {
+function rankRelevant(
+  memories: Memory[], latestUserText: string, currentProjectPath: string | undefined, limit: number, scores?: Map<string, number>,
+): Memory[] {
   const forced = currentProjectPath
     ? memories.filter((m) => m.projectPath === currentProjectPath)
     : [];
@@ -370,22 +385,33 @@ function rankRelevant(memories: Memory[], latestUserText: string, currentProject
   if (remaining === 0 || rest.length === 0) return forced;
 
   const matchQuery = ftsMatchQuery(latestUserText);
-  if (!matchQuery) return [...forced, ...rest.slice(0, remaining)];
+  if (!matchQuery && !scores) return [...forced, ...rest.slice(0, remaining)];
 
-  // ponytail: a throwaway :memory: db per call — sub-millisecond at this scale (verified
-  // locally), simpler than threading a second persistent handle through converse()'s DI chain.
-  const scratch = new DatabaseSync(":memory:");
-  scratch.exec("CREATE VIRTUAL TABLE t USING fts5(id UNINDEXED, text)");
-  const insert = scratch.prepare("INSERT INTO t (id, text) VALUES (?, ?)");
-  // The context label is searchable too: "that tool someone mentioned" can match a fact whose
-  // referent lives only in its label.
-  for (const m of rest) insert.run(m.id, cjkBigrams(m.context ? `${m.text} ${m.context}` : m.text));
-  const ranked = scratch.prepare(
-    "SELECT id FROM t WHERE t MATCH ? ORDER BY bm25(t) LIMIT ?",
-  ).all(matchQuery, remaining) as unknown as { id: string }[];
-  scratch.close();
+  let ids: string[] = [];
+  if (matchQuery) {
+    // ponytail: a throwaway :memory: db per call — sub-millisecond at this scale (verified
+    // locally), simpler than threading a second persistent handle through converse()'s DI chain.
+    const scratch = new DatabaseSync(":memory:");
+    scratch.exec("CREATE VIRTUAL TABLE t USING fts5(id UNINDEXED, text)");
+    const insert = scratch.prepare("INSERT INTO t (id, text) VALUES (?, ?)");
+    // The context label is searchable too: "that tool someone mentioned" can match a fact whose
+    // referent lives only in its label.
+    for (const m of rest) insert.run(m.id, cjkBigrams(m.context ? `${m.text} ${m.context}` : m.text));
+    const ranked = scratch.prepare(
+      "SELECT id FROM t WHERE t MATCH ? ORDER BY bm25(t) LIMIT ?",
+    ).all(matchQuery, remaining) as unknown as { id: string }[];
+    scratch.close();
+    ids = ranked.map((r) => r.id);
+  }
+  // Each ranking nominates its own top `remaining`, then RRF merges them: fusing the full lists
+  // would let every weak keyword hit that is also mid-pack by meaning outrank a row that is first
+  // by meaning but shares no word — the very row this exists to find.
+  if (scores) {
+    const byMeaning = rest.filter((m) => scores.has(m.id)).sort((a, b) => scores.get(b.id)! - scores.get(a.id)!);
+    ids = fuseRanks(ids, byMeaning.slice(0, remaining).map((m) => m.id)).slice(0, remaining);
+  }
   const byId = new Map(rest.map((m) => [m.id, m]));
-  const top = ranked.map((r) => byId.get(r.id)).filter((m): m is Memory => m !== undefined);
+  const top = ids.map((id) => byId.get(id)).filter((m): m is Memory => m !== undefined);
   // Backfill with the most recent remaining memories if FTS matched fewer than `remaining`.
   if (top.length < remaining) {
     const topIds = new Set(top.map((m) => m.id));
@@ -393,4 +419,107 @@ function rankRelevant(memories: Memory[], latestUserText: string, currentProject
     return [...forced, ...top, ...backfill];
   }
   return [...forced, ...top];
+}
+
+/** Reciprocal-rank fusion (k = 60) of two best-first id lists; an id in only one list gets only
+ * that list's term. Best first; ties keep bm25's order. */
+function fuseRanks(bm25: string[], meaning: string[]): string[] {
+  const fused = new Map<string, number>();
+  for (const list of [bm25, meaning]) list.forEach((id, i) => fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + i + 1)));
+  return [...fused.keys()].sort((a, b) => fused.get(b)! - fused.get(a)!);
+}
+const RRF_K = 60;
+
+// --- meaning scores (cached embeddings) ---
+
+/** text-embedding-3-small's width; the one encoding `memory_vectors.vec` holds. */
+const EMBED_DIMS = 1536;
+const EMBED_BATCH = 256;
+const EMBED_INPUT_CHARS = 2000;
+const EMBED_WAIT_MS = 3000;
+
+const embedInput = (m: Memory): string => (m.context ? `${m.text}\n${m.context}` : m.text).slice(0, EMBED_INPUT_CHARS);
+const vectorHash = (model: string, m: Memory): string =>
+  createHash("sha256").update(`${model}\0${m.text}\0${m.context ?? ""}`).digest("hex");
+
+function norm(v: Float32Array): number {
+  let sum = 0;
+  for (const x of v) sum += x * x;
+  return Math.sqrt(sum);
+}
+/** A vector we can use: the fixed width, every value finite, not all zero. */
+const usable = (v: Float32Array | undefined): v is Float32Array =>
+  v !== undefined && v.length === EMBED_DIMS && v.every(Number.isFinite) && norm(v) > 0;
+
+function encodeVec(v: Float32Array): Uint8Array {
+  const buf = Buffer.alloc(v.length * 4);
+  v.forEach((x, i) => buf.writeFloatLE(x, i * 4));
+  return buf;
+}
+function decodeVec(blob: Uint8Array): Float32Array | undefined {
+  if (blob.byteLength !== EMBED_DIMS * 4) return undefined;
+  const buf = Buffer.from(blob.buffer, blob.byteOffset, blob.byteLength);
+  return Float32Array.from({ length: EMBED_DIMS }, (_, i) => buf.readFloatLE(i * 4));
+}
+function cosine(a: Float32Array, b: Float32Array): number {
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) dot += a[i]! * b[i]!;
+  return dot / (norm(a) * norm(b));
+}
+
+/** Cosine similarity of `query` to each ranked candidate (recallCandidates' pool — pinned and
+ * expired rows are never sent), for selectRelevantMemories' `scores`. Vectors are cached in
+ * `memory_vectors`; one embed call carries the query plus up to 256 missing or stale rows (newest
+ * first), and rows left over rank by bm25 alone this time. `undefined` = rank as today: too few
+ * candidates (no call made), a throw, a malformed vector, abort, or no answer within `waitMs` — in
+ * the last two the request still finishes in the background and caches its vectors. */
+export async function meaningScores(
+  file: string, embed: Embed, memories: Memory[], query: string,
+  { signal, waitMs = EMBED_WAIT_MS, ...opts }: RecallOptions & { signal?: AbortSignal; waitMs?: number } = {},
+): Promise<Map<string, number> | undefined> {
+  const pool = recallCandidates(memories, opts).ranked?.pool ?? [];
+  if (pool.length <= (opts.skipThreshold ?? 40) || !query.trim() || signal?.aborted) return undefined;
+
+  const get = openDb(file).prepare("SELECT hash, vec FROM memory_vectors WHERE id = ?");
+  const vectors = new Map<string, Float32Array>();
+  const missing: Memory[] = [];
+  for (const m of pool) {
+    const row = get.get(m.id) as { hash: string; vec: Uint8Array } | undefined;
+    const vec = row?.hash === vectorHash(embed.model, m) ? decodeVec(row.vec) : undefined;
+    if (usable(vec)) vectors.set(m.id, vec);
+    else missing.push(m);
+  }
+  const batch = missing.slice(-EMBED_BATCH);
+
+  const work = (async (): Promise<Float32Array> => {
+    const out = await embed([query.slice(-EMBED_INPUT_CHARS), ...batch.map(embedInput)]);
+    if (out.length !== batch.length + 1 || !out.every(usable)) throw new TypeError("malformed embedding");
+    // Re-opened, not the handle above: this may land after the caller has stopped waiting. A row
+    // deleted mid-call gets no vector.
+    const put = openDb(file).prepare(
+      "INSERT OR REPLACE INTO memory_vectors (id, hash, vec) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM memories WHERE id = ?)",
+    );
+    batch.forEach((m, i) => {
+      const vec = out[i + 1]!;
+      put.run(m.id, vectorHash(embed.model, m), encodeVec(vec), m.id);
+      vectors.set(m.id, vec);
+    });
+    return out[0]!;
+  })().catch((err: unknown) => {
+    console.warn(`[memory] meaning scores failed (${err instanceof Error ? err.name : typeof err}), ${batch.length} rows`);
+    return undefined;
+  });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort = (): void => {};
+  const gaveUp = new Promise<undefined>((resolve) => {
+    timer = setTimeout(resolve, waitMs, undefined);
+    onAbort = () => resolve(undefined);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  const queryVec = await Promise.race([work, gaveUp]);
+  clearTimeout(timer);
+  signal?.removeEventListener("abort", onAbort);
+  if (!queryVec) return undefined;
+  return new Map([...vectors].map(([id, v]) => [id, cosine(queryVec, v)]));
 }
