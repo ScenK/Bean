@@ -1,5 +1,6 @@
 // packages/core/src/routine-store.ts
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import { link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isValidCron, nextRun } from "./cron.js";
@@ -541,11 +542,44 @@ export function todoRunHint(r: Routine, now: Date): string {
   return r.watch ? "It runs within a minute or so." : "";
 }
 
-/** `projects: []` is stored as absent. */
+/** No channel, user or destination name: the owner's DM on that surface. */
+export const isOwnerDmSink = (c: RoutineChatopsSink): boolean => c.channel === undefined && c.user === undefined && c.alias === undefined;
+
+/** Owner-DM chat sinks fold into Home (#1068): the phone copy is the per-bot `homeDiscordDm` /
+ * `homeTeamsDm` setting now. Other chat sinks, TTL and flags are kept (`chatopsOnlyOnProblems` mutes
+ * the phone leg, `chatopsVerbatim` its display); idempotent. */
+function foldOwnerDmSinks(s: RoutineSinks): RoutineSinks {
+  const chatops = s.chatops?.filter((c) => !isOwnerDmSink(c));
+  if (!chatops || chatops.length === s.chatops?.length) return s;
+  const { chatops: _, ...rest } = s;
+  return { ...rest, ...(chatops.length > 0 ? { chatops } : {}), home: s.home ?? {} };
+}
+
+/** `projects: []` is stored as absent; owner-DM sinks become Home (persisted on the next save). */
 function normalizeRoutine(r: Routine): Routine {
-  if (r.projects?.length !== 0) return r;
-  const { projects: _, ...rest } = r;
+  const sinks = foldOwnerDmSinks(r.sinks);
+  const out = sinks === r.sinks ? r : { ...r, sinks };
+  if (out.projects?.length !== 0) return out;
+  const { projects: _, ...rest } = out;
   return rest;
+}
+
+/** The surfaces whose owner DM any routine file still names, read raw (before load folds them).
+ * Sync, so a caller reads the files before a scheduler tick can re-save one already folded. */
+export function ownerDmSinkTransports(dir: string): RoutineChatopsSink["transport"][] {
+  const found = new Set<RoutineChatopsSink["transport"]>();
+  let entries: string[];
+  try { entries = readdirSync(dir); } catch { return []; }
+  for (const file of entries.filter((f) => f.endsWith(".json") && !f.startsWith("."))) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(join(dir, file), "utf8"));
+      if (!isValidRoutine(parsed)) continue;
+      for (const c of parsed.sinks.chatops ?? []) if (isOwnerDmSink(c)) found.add(c.transport);
+    } catch {
+      // unreadable/invalid file — skipped, as loadRoutines does
+    }
+  }
+  return [...found].sort();
 }
 
 /** `strict`: a routines dir that exists but can't be read throws instead of reading as "no

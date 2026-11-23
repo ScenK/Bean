@@ -45,6 +45,11 @@ describe("cleanChatSinks", () => {
     expect(cleanChatSinks({ chatops: [{ transport: "teams", channel: " " }], chatopsVerbatim: true, home }).home).toBe(home);
     expect(cleanChatSinks({ chatops: [{ transport: "teams" }], home }).home).toBe(home);
   });
+
+  it("keeps the only-on-problems and verbatim rules while Home is set (#1068: they govern its DM copy)", () => {
+    expect(cleanChatSinks({ chatops: [{ transport: "teams", channel: " " }], chatopsOnlyOnProblems: true, chatopsVerbatim: true, home: {} }))
+      .toEqual({ chatopsOnlyOnProblems: true, chatopsVerbatim: true, home: {} });
+  });
 });
 
 describe("chatTargets", () => {

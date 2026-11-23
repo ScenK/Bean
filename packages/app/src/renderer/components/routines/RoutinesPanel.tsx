@@ -617,10 +617,12 @@ export function RoutinesPanel() {
   const brief = chatTargetList.length > 0 && !draft.sinks.chatopsVerbatim && !quiet && !stepless;
   if (quiet) sinkTargets.push(`${chatTargetList.join(" and ")} only when a run needs you`);
   else if (!brief) sinkTargets.push(...chatTargetList);
-  // No chat sink left = the only-on-problems and verbatim rules have nothing to govern; drop them.
+  // No chat sink left = the only-on-problems and verbatim rules have nothing to govern; drop them
+  // (kept while Home is set: they govern its owner-DM copy, #1068).
   const setChatops = (chatops: RoutineChatopsSink[]): void => {
-    const { chatops: _c, chatopsOnlyOnProblems: _q, chatopsVerbatim: _v, ...rest } = draft.sinks;
-    setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : rest });
+    const { chatops: _c, ...kept } = draft.sinks;
+    const { chatopsOnlyOnProblems: _q, chatopsVerbatim: _v, ...rest } = kept;
+    setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : draft.sinks.home ? kept : rest });
   };
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
   // Home always gets the brief (chatopsVerbatim and only-on-problems are chatops-only), except a

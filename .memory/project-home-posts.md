@@ -32,6 +32,20 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   writes it after the cutover as the drain does (user role, surface `desktop`, that key), so phone
   and Home drain — either order — leave **one** main-log row. The Home post stays unread.
 
+## Owner-DM sinks fold into Home (#1068)
+
+- `loadRoutines`/`saveRoutine` normalize (`normalizeRoutine` → `foldOwnerDmSinks`): a chat sink
+  with no `channel`/`user`/`alias` is dropped and `home: {}` added if absent; TTL, flags and other
+  sinks kept. `chatopsOnlyOnProblems`/`chatopsVerbatim` survive while `home` is set (they govern the
+  phone copy) — the renderer's `cleanChatSinks` and the panel's `setChatops` keep them then too. A file is rewritten only on its
+  next normal save.
+- One-shot toggle migration (`migrateOwnerDmSinks`, home-posts.ts) at every lease take, first thing
+  in the host's `startScheduler`: marker `memory_meta` `homeDmSinksMigratedAt` present → nothing.
+  Else it reads the **raw** files synchronously (load already folded them; a scheduler tick could
+  re-save one), turns on `homeDiscordDm`/`homeTeamsDm` for each surface found via `runtime.apply`
+  (a patch, so an open Settings window's later save keeps them), then writes the marker. A failed
+  config write = no marker, retried at the next lease take; a toggle turned off later stays off.
+
 ## Home thread (#960, continuous since #976)
 
 - Home is **one continuous thread**: `HOME_THREAD_ID` (core `desktop-chats.ts`) is a fixed UUID-shaped

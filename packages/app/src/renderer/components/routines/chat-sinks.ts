@@ -10,7 +10,7 @@ export const isDmSink = (c: RoutineChatopsSink): boolean => c.channel === undefi
 
 /** Save-time cleanup of the chat sinks: trim ids, drop blank channel rows and exact duplicates
  * (same transport + target, a destination name included — a duplicate would double-post). Untouched entries keep their exact
- * shape. No chat sink left → the only-on-problems and verbatim rules have nothing to govern, so they go too. */
+ * shape. No chat sink and no Home left → the only-on-problems and verbatim rules have nothing to govern, so they go too. */
 export function cleanChatSinks(sinks: RoutineSinks): RoutineSinks {
   const seen = new Set<string>();
   const chatops: RoutineChatopsSink[] = [];
@@ -23,7 +23,10 @@ export function cleanChatSinks(sinks: RoutineSinks): RoutineSinks {
     chatops.push(entry);
   }
   if (chatops.length > 0) return { ...sinks, chatops };
-  const { chatops: _c, chatopsOnlyOnProblems: _q, chatopsVerbatim: _v, ...rest } = sinks;
+  const { chatops: _c, ...kept } = sinks;
+  // Home's owner-DM copy (#1068) still obeys them.
+  if (sinks.home) return kept;
+  const { chatopsOnlyOnProblems: _q, chatopsVerbatim: _v, ...rest } = kept;
   return rest;
 }
 

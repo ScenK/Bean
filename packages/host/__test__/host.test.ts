@@ -134,3 +134,30 @@ test("a closed update latch refuses new chat turns, delegates, live sessions and
     for (const fn of quit) fn();
   }
 });
+
+// #1068: taking the lease turns on the toggle of each surface an owner-DM sink named, once.
+test("the lease holder migrates owner-DM sinks into the per-bot Home toggles", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-host-"));
+  mkdirSync(join(dir, "routines"));
+  writeFileSync(join(dir, "routines", "brief.json"), JSON.stringify({
+    name: "brief", enabled: false, cron: "0 9 * * *", steps: [{ kind: "command", command: "true" }],
+    sinks: { chatops: [{ transport: "teams" }, { transport: "discord", channel: "c1" }] },
+  }));
+  const quit: (() => void)[] = [];
+  const host = await createHost({
+    dir, builtinDir: dir, push: vi.fn(), onJobs: vi.fn(),
+    notification: { name: "owner", available: () => false, send: vi.fn() },
+    isChatClient: () => false, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
+    headless: { onLeaseLost: vi.fn() },
+  });
+  try {
+    await vi.waitFor(() => {
+      const cfg = JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+      expect(cfg).toMatchObject({ homeTeamsDm: true, homeDiscordDm: false });
+    });
+    expect(host.handlers.getConfig()).toMatchObject({ homeTeamsDm: true, homeDiscordDm: false });
+  } finally {
+    for (const fn of quit) fn();
+  }
+});
