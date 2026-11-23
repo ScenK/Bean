@@ -408,7 +408,7 @@ export async function createHost(deps: HostDeps) {
   // Owner-DM sinks fold into Home on load (#1068); once per data dir the surfaces they named get
   // their "Home posts also go to this DM" toggle. Called first: it reads the raw sprout files
   // synchronously, before a scheduler tick can re-save one already folded.
-  // A failed config write is told to the owner with the keys to set by hand: the retry at the next
+  // A failed config write is shown to the owner with the keys to set by hand: the retry at the next
   // lease take is best-effort (a sprout saved meanwhile no longer names its owner DM on disk).
   const migrateHomeDms = (): void => {
     void migrateOwnerDmSinks(routinesPath, db, (ts) => runtime.apply({
@@ -416,9 +416,15 @@ export async function createHost(deps: HostDeps) {
       ...(ts.includes("teams") ? { homeTeamsDm: true } : {}),
     }).catch((err: unknown) => {
       const keys = ts.map((t) => `"${t === "discord" ? "homeDiscordDm" : "homeTeamsDm"}": true`).join(" and ");
+      const why = err instanceof Error ? err.message : String(err);
+      const fix = `Set ${keys} in config.json to keep getting them in your DM.`;
+      // A sticky bubble (kept until clicked away) plus a notification, which may be unavailable or fail.
+      taskStatus.error("sprouts:home-dm", {
+        kind: "routine", name: "Sprouts", line: "Couldn't turn on DM copies of posts to your chat", detail: `${fix} (${why})`,
+      });
       void deliver({
         title: "Sprouts now post to your chat with Bean",
-        body: `Sprouts that DMed you now post to your chat with Bean, but turning on their phone copy failed (${err instanceof Error ? err.message : String(err)}). Set ${keys} in config.json to keep getting them in your DM.`,
+        body: `Sprouts that DMed you now post to your chat with Bean, but turning on their phone copy failed (${why}). ${fix}`,
       }, [deps.notification]);
       throw err;
     })).catch((err: unknown) => console.error("bean: owner-DM sink migration failed; retried at the next lease take", err));
