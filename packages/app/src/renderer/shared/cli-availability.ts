@@ -28,6 +28,13 @@ export function watchCliAvailability(
 
 export function useCliAvailability(): CliAvailability {
   const [availability, setAvailability] = useState<CliAvailability>({ clis: [], models: [] });
-  useEffect(() => watchCliAvailability(window.bean, setAvailability), []);
+  // Also on window focus: an edit to ~/.bean/clis.json (made in another app) shows up on return.
+  useEffect(() => watchCliAvailability({
+    ...window.bean,
+    onCliAvailabilityChanged: (cb) => {
+      window.bean.onCliAvailabilityChanged(cb);
+      window.addEventListener("focus", cb);
+    },
+  }, setAvailability), []);
   return availability;
 }

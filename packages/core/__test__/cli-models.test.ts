@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { cliOffersModel, loadCliModels } from "../src/cli-models.js";
+import { cliOffersModel, loadCliModels, watchCliModels } from "../src/cli-models.js";
 
 async function dir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "bean-clis-"));
@@ -31,6 +31,21 @@ test("a user entry replaces that provider's default list entirely", async () => 
   expect(result).toEqual([
     { provider: "claude", models: ["haiku"] },
     { provider: "opencode", models: ["github-copilot/gpt-5.5"] },
+  ]);
+});
+
+test("a user entry's add/hide adjust the default list instead of replacing it", async () => {
+  const d = await dir();
+  await writeFile(join(d, "default.json"), DEFAULTS);
+  await writeFile(join(d, "user.json"), JSON.stringify([
+    { provider: "claude", add: ["haiku", "sonnet"], hide: ["opus"] },
+    { provider: "codex", add: ["gpt-6.1-sol"] },
+  ]));
+  const result = await loadCliModels(join(d, "default.json"), join(d, "user.json"));
+  expect(result).toEqual([
+    { provider: "claude", models: ["sonnet", "haiku"] },
+    { provider: "opencode", models: ["github-copilot/gpt-5.5"] },
+    { provider: "codex", models: ["gpt-6.1-sol"] },
   ]);
 });
 
@@ -82,4 +97,18 @@ test("cliOffersModel: only that CLI's listed models, never a dash-led value", ()
   expect(cliOffersModel(cm, "claude", "gpt-5.5")).toBe(false);
   expect(cliOffersModel(cm, "claude", "-x")).toBe(false);
   expect(cliOffersModel(cm, "opencode", "opus")).toBe(false);
+});
+
+test("watchCliModels refills the same array in place when the user file changes", async () => {
+  const d = await dir();
+  await writeFile(join(d, "default.json"), DEFAULTS);
+  const user = join(d, "user.json");
+  const { cliModels, stop } = await watchCliModels(join(d, "default.json"), user, 20);
+  try {
+    expect(cliModels.find((e) => e.provider === "claude")?.models).toEqual(["sonnet", "opus"]);
+    await writeFile(user, JSON.stringify([{ provider: "claude", models: ["haiku"] }]));
+    await expect.poll(() => cliModels.find((e) => e.provider === "claude")?.models, { timeout: 3000 }).toEqual(["haiku"]);
+  } finally {
+    stop();
+  }
 });

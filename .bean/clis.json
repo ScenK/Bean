@@ -1,19 +1,16 @@
 [
-  { "provider": "claude",
-    "models": [
-      "opus",
-      "sonnet",
-      "haiku"
-    ]
-  },
+  { "provider": "claude", "models": ["opus", "sonnet", "haiku", "fable"] },
   {
     "provider": "opencode",
     "models": [
-      "github-copilot/gpt-5.5",
-      "github-copilot/gpt-5.4",
-      "github-copilot/claude-sonnet-5",
-      "github-copilot/claude-opus-4.8"
+      "github-copilot/gpt-6.2-sol",
+      "github-copilot/gpt-6.1-sol",
+      "github-copilot/gpt-6.2-astra",
+      "github-copilot/gpt-6.1-terra",
+      "github-copilot/gpt-6-luna",
+      "github-copilot/claude-opus-5.5",
+      "github-copilot/claude-sonnet-5.5"
     ]
   },
-  { "provider": "codex", "models": ["gpt-6-sol", "gpt-6-luna", "gpt-6-astra"] }
+  { "provider": "codex", "models": ["gpt-6.2-sol", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6-luna"] }
 ]
