@@ -429,6 +429,58 @@ test("pinOwnerMemories recalls the owner's You rows past top-K; the system messa
   expect(runs[0]![0]).toEqual(runs[1]![0]);
 });
 
+describe("recall by meaning", () => {
+  const filler = Array.from({ length: 60 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" }));
+  const memories = [{ id: "dentist", text: "Dr. Zhang does my teeth", createdAt: "2026-07-01T00:00:00.000Z" }, ...filler];
+  const recallOf = (msgs: ConvoMsg[]) => String(msgs[msgs.length - 2]?.content);
+  const run = async (input: Partial<ConverseInput>, rankByMeaning?: ConverseDeps["rankByMeaning"]) => {
+    let seen: ConvoMsg[] = [];
+    const deps: ConverseDeps = { model: "m", rankByMeaning, chat: async ({ messages }) => { seen = messages; return { content: "ok", toolCalls: [] }; } };
+    const res = await conv({ latestUserText: "and the other one?", memories, deps, ...input });
+    return { res, recall: recallOf(seen) };
+  };
+
+  test("scores pull in a row no keyword finds; the query adds the previous user message without its speaker prefix", async () => {
+    const calls: { ids: string[]; query: string; pin?: string }[] = [];
+    const { recall } = await run(
+      { history: [{ role: "user", content: "[Alex]: who fixes my teeth?" }, { role: "assistant", content: "Dr. Zhang." }], pinOwnerMemories: true },
+      async (ms, query, opts) => { calls.push({ ids: ms.map((m) => m.id), query, pin: opts?.pinCategory }); return new Map([["dentist", 1]]); },
+    );
+    expect(calls).toEqual([{ ids: memories.map((m) => m.id), query: "who fixes my teeth?\nand the other one?", pin: "You" }]);
+    expect(recall).toContain("Dr. Zhang does my teeth");
+    expect((await run({})).recall).not.toContain("Dr. Zhang does my teeth"); // keyword-only, as before
+  });
+
+  test("after a gap only the latest message is the query", async () => {
+    let query = "";
+    await run(
+      { history: [{ role: "user", content: "who fixes my teeth?" }], gapMarker: gapMarkerLine(new Date()) },
+      async (_ms, q) => { query = q; return undefined; },
+    );
+    expect(query).toBe("and the other one?");
+  });
+
+  test("a failing ranker falls back to keyword recall", async () => {
+    const plain = await run({});
+    const failed = await run({}, async () => { throw new Error("401"); });
+    expect(failed.res.error).toBeUndefined();
+    expect(failed.recall).toBe(plain.recall);
+  });
+
+  test("Stop during a slow embed ends the turn without waiting for it", async () => {
+    const ac = new AbortController();
+    let chats = 0;
+    const deps: ConverseDeps = {
+      model: "m", chat: async () => { chats++; return { content: "ok", toolCalls: [] }; },
+      rankByMeaning: () => new Promise(() => {}), // never settles
+    };
+    const turn = conv({ latestUserText: "hi", memories, deps, signal: ac.signal });
+    setTimeout(() => ac.abort(), 1);
+    expect(await turn).toEqual({ reply: "", model: "m", stopped: true });
+    expect(chats).toBe(0);
+  });
+});
+
 test("no memory block is added when memories is empty", async () => {
   let captured: ConvoMsg[] = [];
   const deps: ConverseDeps = {

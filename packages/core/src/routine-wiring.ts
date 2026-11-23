@@ -29,6 +29,8 @@ export interface RoutineWiringDeps {
   builtinDir: string;
   converse: RoutineHostDeps["converse"];
   getModel: () => string;
+  /** Recall by meaning for step memories; absent = keyword recall. */
+  rankByMeaning?: RoutineHostDeps["rankByMeaning"];
   /** config.json's `briefModel` (read at boot); absent = getModel(). */
   getBriefModel?: () => string | undefined;
   /** Enabled CLIs, read per step. */
@@ -96,6 +98,7 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     // Household-shared only: routines never see a member's private facts.
     // The owner's own automation: shared rows from every channel, never a private one.
     memories: () => loadMemories(db, null, { allSources: true }),
+    rankByMeaning: deps.rankByMeaning,
     getRoutineDigestContext: deps.getRoutineDigestContext,
     holdsLease: deps.canSchedule,
     ...(deps.onStatus ? { onStatus: deps.onStatus } : {}),

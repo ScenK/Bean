@@ -161,6 +161,8 @@ export interface BotEffects {
 export interface TeamsBotDeps {
   chat: ConverseDeps["chat"];
   model: string;
+  /** Recall by meaning for turns and chime-ins (core makeRankByMeaning); absent = keyword recall. */
+  rankByMeaning?: ConverseDeps["rankByMeaning"];
   loadSkills: () => Promise<Skill[]>;
   loadProjects: () => Promise<Project[]>;
   loadPersona: () => Promise<Persona>;
@@ -410,7 +412,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   ) => Promise<void>;
 } {
   const chimeIn = deps.chatter && makeChimeIn({
-    chatter: deps.chatter, chat: deps.chat, model: deps.model,
+    chatter: deps.chatter, chat: deps.chat, model: deps.model, rankByMeaning: deps.rankByMeaning,
     loadPersona: deps.loadPersona, loadMemories: deps.loadMemories, conversations: deps.conversations,
     liveSession: (conv) => deps.liveSessions.has(conv),
     onError: (err) => console.error(`[chatter] chime-in failed: ${err instanceof Error ? err.message : String(err)}`),
@@ -2262,7 +2264,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ];
         const converseBase = {
           skills, projects, persona, memories,
-          deps: { chat: deps.chat, model: deps.model },
+          deps: { chat: deps.chat, model: deps.model, rankByMeaning: deps.rankByMeaning },
           actions,
           delegateAvailable: canDelegate,
           scratchPath: canDelegate ? deps.scratchPath : undefined,

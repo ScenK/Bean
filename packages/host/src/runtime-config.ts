@@ -1,13 +1,17 @@
-import { setBeanGitIdentity, type ConverseDeps } from "@bean/core";
+import { setBeanGitIdentity, type ConverseDeps, type RankByMeaning } from "@bean/core";
 import type { ConfigFields, ConfigUpdate } from "./config.js";
 
 export interface RuntimeConfigDeps {
   makeConverse: (apiKey: string, reasoningEffort: string) => ConverseDeps["chat"];
+  /** Recall by meaning for a key; absent = keyword recall only. */
+  makeRankByMeaning?: (apiKey: string) => RankByMeaning;
   saveConfigFile: (update: ConfigFields) => Promise<void>;
 }
 
 export interface RuntimeConfig {
   converse: ConverseDeps["chat"];
+  /** Resolves `undefined` (keyword recall) while no key is set. */
+  rankByMeaning: RankByMeaning;
   getModel: () => string;
   getApiKey: () => string;
   getTerminalApp: () => string;
@@ -50,6 +54,7 @@ export function createRuntimeConfig(
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
   // per-call instead; a missing key just surfaces as an auth error from the actual chat call.
   let converseClient = apiKey ? deps.makeConverse(apiKey, reasoningEffort) : null;
+  let rankClient = apiKey ? deps.makeRankByMeaning?.(apiKey) : undefined;
   // One save at a time (#812): each patch merges onto the result of the one before it, or two
   // overlapping saves would both start from the same snapshot and the later one undo the earlier.
   let saving: Promise<unknown> = Promise.resolve();
@@ -59,6 +64,7 @@ export function createRuntimeConfig(
       if (!converseClient) throw new Error("No OpenAI API key configured — add one in Settings.");
       return converseClient(...args);
     }) as ConverseDeps["chat"],
+    rankByMeaning: (...args) => rankClient?.(...args) ?? Promise.resolve(undefined),
     getModel: () => model,
     getApiKey: () => apiKey,
     getTerminalApp: () => terminalApp,
@@ -86,6 +92,7 @@ export function createRuntimeConfig(
     };
     for (const [k, v] of Object.entries(patch)) if (v !== undefined && Object.hasOwn(update, k)) (update as unknown as Record<string, unknown>)[k] = v;
     const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
+    const nextRankClient = update.openaiApiKey ? deps.makeRankByMeaning?.(update.openaiApiKey) : undefined;
     await deps.saveConfigFile(update);
     apiKey = update.openaiApiKey;
     model = update.model;
@@ -102,5 +109,6 @@ export function createRuntimeConfig(
     gitEmail = update.gitEmail;
     setBeanGitIdentity(gitName, gitEmail);
     converseClient = nextConverseClient;
+    rankClient = nextRankClient;
   }
 }
