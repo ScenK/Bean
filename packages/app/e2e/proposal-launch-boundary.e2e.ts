@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { delimiter } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 import { launchBean } from "./fixtures/launch-app.js";
 import { installFakeCli, makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
@@ -9,6 +10,10 @@ test("proposal (terminal target): confirming calls window.bean.launch, never a r
   // keeps a developer's login-shell PATH from changing the expected pair when this runs locally.
   const home = await makeBeanHome({ disabledClis: ["claude", "codex"] });
   const fakeBin = await installFakeCli(home.homeDir, "opencode");
+  // Pin the catalog: the repo default list changes with every model release.
+  await writeFile(join(home.homeDir, ".bean", "clis.json"), JSON.stringify([
+    { provider: "opencode", models: ["github-copilot/gpt-5.5"] },
+  ]), "utf8");
   const stub = await startStubOpenAI();
   // Skill fixture written by makeBeanHome().
   stub.queue({
