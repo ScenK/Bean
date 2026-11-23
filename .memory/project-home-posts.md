@@ -142,7 +142,9 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   `describeRoutineError` refuses the save with its message — no renderer-side copy of the rule.
   Malformed text ("-") reads as `""` with `validity.badInput`: it's stored as NaN, never as blank.
 - Every sink rewrite keeps `home`: `cleanChatSinks` and the panel's spreads, and an owner's chat
-  replacement of a sprout always takes it from the saved file, ignoring any `home` in the draft
-  (`bot.ts`; `propose_routine` parses JSON, so a draft can carry one). The builder brief can't set Home (`cleanSinks` drops it); turn it on in the editor.
+  replacement without `home` keeps the saved one. Only the owner's draft in their own 1:1 may set
+  `home` (#1070, `draftHome` in `bot.ts`, checked at proposal and again at Save via the tap's
+  `direct`); every other chat draft loses `home` *and* any owner-DM chat sink, since that folds into
+  Home on save (#1068). `propose_routine` parses JSON, so a draft can carry either. The builder brief can't set Home (`cleanSinks` drops it); turn it on in the editor.
 - Named in the builder review (`destinations()`), the run card's "results go to"
   (`sprout-trigger.ts`) and the editor footer (as a brief target unless the sprout is stepless). e2e: `routine-sinks.e2e.ts`.
