@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import {
   configFile, projectsFile, skillsDir, personaFile, dbFile, remindersFile, modelMemoryFile, clisFile, routinesDir, routineStateFile, outboxDir,
-  scratchDir, imagesDir, isValidSessionId, resumeCommand, pruneStepAttempts, listStepAttempts, CLI_NAMES, loadCliModels,
+  scratchDir, imagesDir, isValidSessionId, resumeCommand, pruneStepAttempts, listStepAttempts, CLI_NAMES, watchCliModels,
   loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, loadPersonaNameSync, savePersona,
   makeOpenAIConverse, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
   deleteMemories, extractMemories, maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, holdSchedulerLease, enqueueOutbox,
@@ -111,9 +111,11 @@ export async function createHost(deps: HostDeps) {
   // installed after boot is picked up without a relaunch.
   const resolvedPath = resolveCliPath(process.env.PATH ?? "", loginShellPath(), homedir());
   const detectedClis = (): CliName[] => detectClis(resolvedPath);
-  // Same repo-default + ~/.bean override layering as skills/persona; loaded once at boot
-  // (no live reload — restart Bean after editing clis.json).
-  const cliModels: CliModels[] = await loadCliModels(clisFile(projectDir), clisFile(dir));
+  // Same repo-default + ~/.bean override layering as skills/persona. Live: an edit to
+  // ~/.bean/clis.json refills this same array in place, so every holder below sees it.
+  const clisWatch = await watchCliModels(clisFile(projectDir), clisFile(dir));
+  const cliModels: CliModels[] = clisWatch.cliModels;
+  deps.onQuit(clisWatch.stop);
 
   // Chatops reminders (a `target`) go to the outbox for their bot (Discord / Teams) to deliver; untargeted
   // ones stay desktop notifications.
@@ -611,7 +613,7 @@ export async function createHost(deps: HostDeps) {
     deleteSkill: buildDeleteSkillHandler(paths),
     listProjects: buildListProjectsHandler(paths),
     saveProjects: buildSaveProjectsHandler(paths),
-    models: buildModelsHandler({ getAvailableClis: enabledClis, getCliModels: () => cliModels }),
+    models: buildModelsHandler({ getAvailableClis: enabledClis, getCliModels: () => cliModels, reload: clisWatch.reload }),
     modelMemory: buildModelMemoryHandlers({ loadModelMemory, saveModelMemory, modelMemoryFile: modelMemoryFile(dir) }),
     sends,
     routineDrafts,

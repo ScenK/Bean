@@ -3,7 +3,7 @@ import {
   detectClis, type CliName, runDelegate, killAllDelegates, drainOutbox, recoverOutbox, enqueueOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS,
   type OutboxMessage, outboxDir, ownerDmRefs, buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore,
   ConversationStore, appendDelivery, ProposalStore, RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink,
-  parseDeskTurn, parseDeskResume, type DeskAckResult, loadCliModels, clisFile, LiveSessionProposalStore,
+  parseDeskTurn, parseDeskResume, type DeskAckResult, watchCliModels, clisFile, LiveSessionProposalStore,
   LiveSessionRegistry, isLiveCli, findDelegateRun, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, dmAllowed, SproutRunProposalStore, parentSproutTrigger, parentSproutRunning, processParentPort, sproutRunFacts,
   recordDestination, sharedBotDeps, type AmbientLine,
@@ -89,7 +89,8 @@ adapter.onTurnError = async (context, error) => {
 
 // Re-scanned per call so a CLI installed after the bot started is picked up.
 const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
-const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
+// Live: an edit to ~/.bean/clis.json refills this array in place (watchCliModels).
+const { cliModels } = await watchCliModels(clisFile(builtinDir), clisFile(dir));
 const runs = new RunRegistry(runDelegate, { dir, botKind: "teams", onActivity: parentActivitySink, proseOnly: true });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —

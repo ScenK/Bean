@@ -247,10 +247,15 @@ async function planSproutCard(
 export interface ModelsHandlerDeps {
   getAvailableClis: () => CliName[];
   getCliModels: () => CliModels[];
+  /** Re-read clis.json before answering (watchCliModels' reload). */
+  reload?: () => Promise<void>;
 }
 
 export function buildModelsHandler(deps: ModelsHandlerDeps) {
-  return (): AvailableModel[] => availableModels(deps.getCliModels(), deps.getAvailableClis());
+  return async (): Promise<AvailableModel[]> => {
+    await deps.reload?.(); // the picker asks on window focus: re-read clis.json, don't wait out the poll
+    return availableModels(deps.getCliModels(), deps.getAvailableClis());
+  };
 }
 
 export interface ModelMemoryHandlerDeps {

@@ -641,7 +641,7 @@ test("a gap-flagged message goes to Bean under the core's marker once, and it re
   expect(second.filter((m) => String(m.content).includes(marker))).toHaveLength(1);
 });
 
-test("models handler returns only models the enabled CLIs offer", () => {
+test("models handler returns only models the enabled CLIs offer", async () => {
   const handler = buildModelsHandler({
     getAvailableClis: () => ["claude"],
     getCliModels: () => [
@@ -649,9 +649,19 @@ test("models handler returns only models the enabled CLIs offer", () => {
       { provider: "opencode", models: ["gpt-5-5"] },
     ],
   });
-  const models = handler();
+  const models = await handler();
   expect(models.find((m) => m.id === "sonnet")?.availableOn).toEqual(["claude"]);
   expect(models.find((m) => m.id === "gpt-5-5")).toBeUndefined();
+});
+
+test("models handler re-reads clis.json before answering", async () => {
+  const cliModels = [{ provider: "claude" as const, models: ["sonnet"] }];
+  const handler = buildModelsHandler({
+    getAvailableClis: () => ["claude"],
+    getCliModels: () => cliModels,
+    reload: async () => { cliModels.splice(0, 1, { provider: "claude", models: ["sonnet", "fable"] }); },
+  });
+  expect((await handler()).map((m) => m.id)).toEqual(["sonnet", "fable"]);
 });
 
 test("model memory handlers get/set through the injected store fns against the configured file", async () => {

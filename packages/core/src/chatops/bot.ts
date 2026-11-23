@@ -173,7 +173,7 @@ export interface TeamsBotDeps {
   loadModelMemory: () => Promise<Record<string, string>>;
   saveModelMemory: (m: Record<string, string>) => Promise<void>;
   detectClis: () => CliName[];
-  cliModels: CliModels[]; // loaded once at boot from clis.json (repo default + ~/.bean override)
+  cliModels: CliModels[]; // clis.json (repo default + ~/.bean override), refilled in place on edit
   runs: RunRegistry;
   proposals: ProposalStore;
   noteProposals: NoteProposalStore;

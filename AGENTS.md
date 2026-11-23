@@ -243,9 +243,10 @@ helpers live in `core/src/config.ts`.
   `bean-core` exits without one (and without `TZ`). Remote shells read it with the key blanked.
 - `~/.bean/discord.json`, `~/.bean/teams.json` → each bot starts only when its file exists.
 - `~/.bean/core.sock` → `bean-core`'s remote-attach socket (0600; the dir must be 0700).
-- `~/.bean/clis.json` → optional per-provider model lists overriding the repo default
-  `.bean/clis.json`: `[{ "provider": "claude", "models": ["sonnet", ...] }]`. A user entry
-  replaces that provider's default list; model strings are passed verbatim to `--model`.
+- `~/.bean/clis.json` → optional per-provider tweaks to the repo default `.bean/clis.json`:
+  `[{ "provider": "codex", "add": ["gpt-6.1-sol"], "hide": ["gpt-6-luna"] }]` adjusts the
+  default list (so shipped models still arrive); `"models": [...]` replaces it outright. Read
+  live — no restart. Model strings are passed verbatim to `--model`.
   Providers are still code (`opencode`, `claude`, `codex`) — only their model lists are config.
 - `~/.bean/skills/*.md` → one markdown file per skill. `description:` frontmatter is the
   catalog summary the model sees; otherwise the first heading is used. The full body composes the prompt.
