@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ConverseDeps } from "../converse.js";
 import { speakerPrefix, type Memory } from "./memory.js";
-import { borrowsContext } from "./extract.js";
+import { MEMORY_TEXT_MAX, borrowsContext } from "./extract.js";
 import { proposeMemoryConsolidation, type ConsolidationResult } from "./consolidate.js";
 import {
   applyConsolidation, claimDreamLease, countMemoriesSince, getMemoryMeta, loadMemories, purgeExpiredMemories, releaseDreamLease,
@@ -28,6 +28,11 @@ export function planDream(memories: Memory[], result: ConsolidationResult, runId
     const members = [...new Set(merge.ids)].map((id) => byId.get(id)).filter((m): m is Memory => m !== undefined);
     const text = merge.mergedText.trim();
     if (members.length === 0 || !text || members.some((m) => taken.has(m.id))) continue;
+    // One memory is one notebook entry: a merge that outgrows the capture cap is a design
+    // document, hard to recall and quick to go stale.
+    if (text.length > MEMORY_TEXT_MAX) continue;
+    // A decision never folds into a preference or a moment: recall dates each kind differently.
+    if (new Set(members.map((m) => m.kind ?? "")).size > 1) continue;
     if (new Set(members.map((m) => m.projectPath ?? "")).size > 1) continue;
     // One category and one source per merge: the merged row can carry only one of each.
     if (new Set(members.map((m) => m.category ?? "")).size > 1) continue;
@@ -42,8 +47,8 @@ export function planDream(memories: Memory[], result: ConsolidationResult, runId
     if (new Set([...members.map((m) => m.text), text].map(speakerPrefix)).size > 1) continue;
     if (members.length === 1 && members[0]!.text === text) continue;
     members.forEach((m) => taken.add(m.id));
-    const { projectPath, category, sourceId, sourceTitle } = members[0]!;
-    groups.push({ ids: members.map((m) => m.id), text, projectPath, category, sourceId, sourceTitle, context: contexts[0] });
+    const { projectPath, category, sourceId, sourceTitle, kind } = members[0]!;
+    groups.push({ ids: members.map((m) => m.id), text, projectPath, category, sourceId, sourceTitle, context: contexts[0], ...(kind ? { kind } : {}) });
   }
   const dropCap = Math.max(3, Math.floor(memories.length * 0.2));
   let removed = 0;

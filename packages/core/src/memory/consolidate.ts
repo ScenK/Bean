@@ -16,7 +16,11 @@ const CONSOLIDATE_INSTRUCTIONS =
   "relative date (\"next week\", \"yesterday\") into an absolute one using its saved date. " +
   "Call drop_memory for a fact that is stale, contradicted by a newer fact (when two facts " +
   "conflict, the more recently saved one wins), or no longer meaningful — including a follow-up, " +
-  "deadline or plan whose date is more than two weeks before today. Only merge facts about " +
+  "deadline or plan whose date is more than two weeks before today. A line tagged {decision} " +
+  "is what was settled on its saved date: when a later decision settles the same question " +
+  "differently, drop the earlier one — never merge the two, and never drop a decision merely " +
+  "because it is old. Never drop a {moment}: it records something that mattered, not a fact " +
+  "that can go stale. Only merge facts of the same tag, about " +
   "the same project (or both global). A \"[re: …]\" prefix is a topic note, not part of the fact: " +
   "only merge facts whose re: notes are the same or absent, and never copy its words into " +
   "mergedText. Only act when confident — leave everything else alone. " +
@@ -55,7 +59,7 @@ function dropTool(ids: string[]): ToolSpec {
 
 function factsBlock(memories: Memory[]): string {
   return memories
-    .map((m) => `- [${m.id}] (saved ${m.createdAt.slice(0, 10)}) ${m.context ? `[re: ${m.context}] ` : ""}${m.text}${m.projectPath ? ` (project: ${m.projectPath})` : ""}`)
+    .map((m) => `- [${m.id}] (saved ${m.createdAt.slice(0, 10)}) ${m.kind ? `{${m.kind}} ` : ""}${m.context ? `[re: ${m.context}] ` : ""}${m.text}${m.projectPath ? ` (project: ${m.projectPath})` : ""}`)
     .join("\n");
 }
 

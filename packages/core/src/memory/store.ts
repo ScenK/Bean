@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import { cjkBigrams, ftsMatchQuery } from "../fts-text.js";
-import { OWNER_PIN_LIMIT, isLive, sanitizeCategory, sanitizeContext, type Memory } from "./memory.js";
+import { OWNER_PIN_LIMIT, asMemoryKind, isLive, sanitizeCategory, sanitizeContext, type Memory, type MemoryKind } from "./memory.js";
 
 interface MemoryRow {
   id: string; text: string; project_path: string | null; created_at: string; subject_id?: string | null;
   category: string | null; source_id: string | null; source_title: string | null; context: string | null;
-  expires_at?: string | null; evidence?: string | null;
+  expires_at?: string | null; evidence?: string | null; kind?: string | null;
 }
 
 function toMemory(row: MemoryRow): Memory {
@@ -18,6 +18,7 @@ function toMemory(row: MemoryRow): Memory {
     ...(row.source_id ? { sourceId: row.source_id } : {}),
     ...(row.source_title ? { sourceTitle: row.source_title } : {}),
     ...(row.context ? { context: row.context } : {}),
+    ...(asMemoryKind(row.kind) ? { kind: asMemoryKind(row.kind) } : {}),
     ...(row.expires_at ? { expiresAt: row.expires_at } : {}),
     ...(row.evidence ? { evidence: row.evidence } : {}),
   };
@@ -38,7 +39,7 @@ export interface RecallScope { source?: string; allSources?: boolean; now?: numb
  * expired row, and channel-captured rows only as `scope` allows. */
 export async function loadMemories(file: string, subject?: string | string[] | null, scope: RecallScope = {}): Promise<Memory[]> {
   const db = openDb(file);
-  const cols = "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title, context, expires_at, evidence FROM memories";
+  const cols = "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title, context, expires_at, evidence, kind FROM memories";
   if (subject === undefined) return (db.prepare(`${cols} ORDER BY created_at`).all() as unknown as MemoryRow[]).map(toMemory);
   const ids = subject === null ? [] : typeof subject === "string" ? [subject] : [...new Set(subject)];
   const where = [
@@ -68,7 +69,7 @@ export async function purgeExpiredMemories(file: string, nowMs: number): Promise
 export async function appendMemories(file: string, additions: Memory[]): Promise<void> {
   const db = openDb(file);
   const insert = db.prepare(
-    "INSERT INTO memories (id, text, project_path, created_at, subject_id, category, source_id, source_title, context, expires_at, evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO memories (id, text, project_path, created_at, subject_id, category, source_id, source_title, context, expires_at, evidence, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   db.exec("BEGIN");
   try {
@@ -76,7 +77,7 @@ export async function appendMemories(file: string, additions: Memory[]): Promise
       insert.run(
         m.id, m.text, m.projectPath ?? null, m.createdAt, m.subjectId ?? null,
         sanitizeCategory(m.category), m.sourceId ?? null, m.sourceTitle ?? null, sanitizeContext(m.context),
-        m.expiresAt ?? null, m.evidence ?? null,
+        m.expiresAt ?? null, m.evidence ?? null, asMemoryKind(m.kind) ?? null,
       );
     }
     db.exec("COMMIT");
@@ -136,7 +137,7 @@ export interface DreamGroup {
   ids: string[]; text?: string; projectPath?: string;
   /** Carried onto the merged row: planDream only merges within one category and source, and
    * between equal or empty contexts (the one non-empty context is kept). */
-  category?: string; sourceId?: string; sourceTitle?: string; context?: string;
+  category?: string; sourceId?: string; sourceTitle?: string; context?: string; kind?: MemoryKind;
 }
 export interface DreamDigest { runId: string; at: string; merged: number; rewritten: number; removed: number; undone?: boolean }
 export interface DreamPlan {
@@ -175,7 +176,7 @@ export async function memoriesSavedBetween(file: string, since: string, until: s
   const ids = [...new Set(ownerIds)];
   const mine = ids.length ? ` OR subject_id IN (${ids.map(() => "?").join(", ")})` : "";
   const rows = openDb(file).prepare(
-    "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title, context FROM memories " +
+    "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title, context, kind FROM memories " +
       `WHERE created_at > ? AND created_at <= ? AND (subject_id IS NULL${mine}) ORDER BY created_at`,
   ).all(since, until, ...ids) as unknown as MemoryRow[];
   return rows.map(toMemory);
@@ -236,19 +237,19 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
       }
       const at = plan.digest.at;
       const hist = db.prepare(
-        "INSERT INTO memories_history (run_id, grp, phase, memory_id, text, project_path, created_at, at, category, source_id, source_title, context) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories_history (run_id, grp, phase, memory_id, text, project_path, created_at, at, category, source_id, source_title, context, kind) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       const del = db.prepare("DELETE FROM memories WHERE id = ?");
       const ins = db.prepare(
-        "INSERT INTO memories (id, text, project_path, created_at, category, source_id, source_title, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories (id, text, project_path, created_at, category, source_id, source_title, context, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       plan.groups.forEach((g, grp) => {
         const before = g.ids.map((id) => byId.get(id)).filter((m): m is Memory => m !== undefined);
         for (const m of before) {
           hist.run(
             plan.runId, grp, "before", m.id, m.text, m.projectPath ?? null, m.createdAt, at,
-            m.category ?? null, m.sourceId ?? null, m.sourceTitle ?? null, m.context ?? null,
+            m.category ?? null, m.sourceId ?? null, m.sourceTitle ?? null, m.context ?? null, m.kind ?? null,
           );
           del.run(m.id);
         }
@@ -257,7 +258,7 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
         // dream's ≥N-new trigger, and it keeps recall ordering stable.
         const createdAt = before.map((m) => m.createdAt).sort().at(-1) ?? at;
         const id = randomUUID();
-        const extra = [g.category ?? null, g.sourceId ?? null, g.sourceTitle ?? null, sanitizeContext(g.context)] as const;
+        const extra = [g.category ?? null, g.sourceId ?? null, g.sourceTitle ?? null, sanitizeContext(g.context), g.kind ?? null] as const;
         ins.run(id, g.text, g.projectPath ?? null, createdAt, ...extra);
         hist.run(plan.runId, grp, "after", id, g.text, g.projectPath ?? null, createdAt, at, ...extra);
       });
@@ -279,10 +280,11 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
 interface HistoryRow {
   grp: number; phase: "before" | "after"; memory_id: string; text: string; project_path: string | null; created_at: string;
   category: string | null; source_id: string | null; source_title: string | null; context: string | null;
+  kind: string | null;
 }
 function historyGroups(db: DatabaseSync, runId: string): Map<number, HistoryRow[]> {
   const rows = db.prepare(
-    "SELECT grp, phase, memory_id, text, project_path, created_at, category, source_id, source_title, context " +
+    "SELECT grp, phase, memory_id, text, project_path, created_at, category, source_id, source_title, context, kind " +
       "FROM memories_history WHERE run_id = ? ORDER BY grp, rowid",
   ).all(runId) as unknown as HistoryRow[];
   const groups = new Map<number, HistoryRow[]>();
@@ -303,7 +305,7 @@ export async function restoreDreamRun(file: string, runId: string): Promise<{ re
     const get = db.prepare("SELECT text, project_path, category FROM memories WHERE id = ?");
     const del = db.prepare("DELETE FROM memories WHERE id = ?");
     const ins = db.prepare(
-      "INSERT OR IGNORE INTO memories (id, text, project_path, created_at, category, source_id, source_title, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO memories (id, text, project_path, created_at, category, source_id, source_title, context, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     let restored = 0;
     let skipped = 0;
@@ -316,7 +318,7 @@ export async function restoreDreamRun(file: string, runId: string): Promise<{ re
       if (!intact) { skipped++; continue; }
       for (const r of after) del.run(r.memory_id);
       for (const r of rows.filter((x) => x.phase === "before")) {
-        ins.run(r.memory_id, r.text, r.project_path, r.created_at, r.category, r.source_id, r.source_title, r.context);
+        ins.run(r.memory_id, r.text, r.project_path, r.created_at, r.category, r.source_id, r.source_title, r.context, r.kind);
       }
       restored++;
     }

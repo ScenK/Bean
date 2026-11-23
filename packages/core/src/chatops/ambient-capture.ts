@@ -136,7 +136,7 @@ export function makeAmbientCapture(deps: AmbientCaptureDeps): AmbientCapture {
     const at = new Date(now()).toISOString();
     await deps.appendMemories(kept.map((c): Memory => ({
       id: randomUUID(), text: c.text, createdAt: at, ...source,
-      ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
+      ...(c.kind ? { kind: c.kind } : {}), ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
     })));
     // The receipt goes on the first new line each memory rests on (Discord's 🧠).
     for (const line of new Set(kept.flatMap((c) => all[(c.lines?.find((n) => n > context.length) ?? 0) - 1] ?? []))) {
@@ -165,7 +165,7 @@ export function makeAmbientCapture(deps: AmbientCaptureDeps): AmbientCapture {
     await deps.appendMemories(kept.map((c) => ({
       id: randomUUID(), text: c.text, createdAt: at, ...source,
       ...(c.projectPath ? { projectPath: c.projectPath } : {}),
-      ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
+      ...(c.kind ? { kind: c.kind } : {}), ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
     })));
   }
 

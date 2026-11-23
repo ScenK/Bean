@@ -78,10 +78,11 @@ test("a chat failure yields no candidates (never throws)", async () => {
   expect(await extractMemories(transcript, [], projects, deps)).toEqual({ candidates: [], rejected: 0, failed: true });
 });
 
-test("the remember tool requires only text, always offers expires and evidence, and constrains projectPath", () => {
+test("the remember tool requires only text, always offers kind, expires and evidence, and constrains projectPath", () => {
   const spec = rememberToolSpec(projects).parameters as { properties: Record<string, { enum?: string[] }>; required: string[] };
   expect(spec.required).toEqual(["text"]);
-  expect(Object.keys(spec.properties).sort()).toEqual(["category", "evidence", "expires", "projectPath", "text"]);
+  expect(Object.keys(spec.properties).sort()).toEqual(["category", "evidence", "expires", "kind", "projectPath", "text"]);
+  expect(spec.properties.kind!.enum).toEqual(["preference", "decision", "moment", "plan"]);
   expect(spec.properties.projectPath!.enum).toEqual(["/work/api", "/dev/bean"]);
   expect(Object.keys((rememberToolSpec([]).parameters as { properties: object }).properties)).not.toContain("projectPath");
 });
@@ -191,6 +192,12 @@ test("text is one line and capped; expires must parse and lie in the future", ()
   expect(validateCandidate({ text: "Dentist Friday", expires: "not a date" }, projects, { now: NOW })).toEqual({ text: "Dentist Friday", projectPath: undefined });
   expect(validateCandidate({ text: "Dentist Friday", expires: "2026-11-21" }, projects, { now: NOW }))
     .toMatchObject({ expiresAt: "2026-11-21T00:00:00.000Z" });
+});
+
+test("a known kind is kept; anything else is dropped and the memory is still saved", () => {
+  expect(validateCandidate({ text: "Chose a 24-hour veto for triage", kind: "decision" }, projects)).toMatchObject({ kind: "decision" });
+  expect(validateCandidate({ text: "Lives in Camas", kind: "fact" }, projects)).toEqual({ text: "Lives in Camas", projectPath: undefined });
+  expect(validateCandidate({ text: "Lives in Camas", kind: 7 }, projects)).not.toHaveProperty("kind");
 });
 
 test("hostile category text is sanitized: newlines and brackets stripped, capped at 30 chars", () => {

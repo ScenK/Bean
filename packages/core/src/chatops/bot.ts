@@ -517,7 +517,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const batch: Memory[] = candidates.map((c) => ({
         id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, subjectId: speakerId,
         ...(owner && c.category ? { category: c.category } : {}),
-        ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
+        ...(c.kind ? { kind: c.kind } : {}), ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
       }));
       await deps.appendMemories(batch);
       if (fx) for (const m of batch) {

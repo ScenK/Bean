@@ -14,7 +14,8 @@ const GROUP = "This is a group chat nobody addressed you in. Lines marked (owner
 
 // `keep` absent = the episode is noise and must save nothing; else every saved memory must match
 // it, at least one must be saved, and `dated` asks for an `expires`.
-const cases: { name: string; audience: string; lines: EpisodeLine[]; keep?: RegExp; dated?: boolean }[] = [
+// `kind` asks that some saved memory carries that kind.
+const cases: { name: string; audience: string; lines: EpisodeLine[]; keep?: RegExp; dated?: boolean; kind?: string }[] = [
   { name: "a bare acknowledgement", audience: CHAT, lines: [{ who: "Bean", text: "The build finished." }, { who: "You", text: "OK" }] },
   { name: "a one-off request", audience: CHAT, lines: [{ who: "You", text: "Set a reminder at 2:20 PM." }, { who: "Bean", text: "Done — 2:20 PM." }] },
   { name: "a question", audience: CHAT, lines: [{ who: "You", text: "What would we gain from the Teams SDK? Would we have to rewrite the bot?" }] },
@@ -39,6 +40,21 @@ const cases: { name: string; audience: string; lines: EpisodeLine[]; keep?: RegE
       { who: "You", text: "Wait, you only need to work on the 38650 branch, the other branches are all closed." },
     ],
   },
+  {
+    // Kept about triage, not widened into "prefers automatic actions".
+    name: "a design decision, kept as a dated decision", audience: CHAT, keep: /triage/i, kind: "decision",
+    lines: [
+      { who: "Bean", text: "For triage: should every automatic action wait for your approval, or go ahead unless you veto within 24 hours?" },
+      { who: "You", text: "Go with the 24-hour veto. Approving each one would bury me in notifications." },
+    ],
+  },
+  {
+    name: "a milestone the owner was glad about", audience: GROUP, keep: /100/, kind: "moment",
+    lines: [
+      { who: "Scen (owner)", text: "Bean just closed its 100th ticket on iTester 🎉 honestly did not expect it to get here this fast" },
+      { who: "Nik", text: "nice, congrats" },
+    ],
+  },
   { name: "a lasting fact", audience: CHAT, keep: /Camas/, lines: [{ who: "You", text: "We moved to Camas, Washington last month, so use Pacific time for me." }] },
 ];
 
@@ -48,11 +64,12 @@ describe.skipIf(!key)("episode synthesis (live model)", () => {
       const chat = makeOpenAIConverseWithClient(new OpenAI({ apiKey: key }) as never);
       const r = await synthesizeEpisode({ lines: c.lines, firstNew: 0, existing: [], projects: [], audience: c.audience, now: NOW }, { chat, model });
       expect(r.failed).toBe(false);
-      console.log(`${c.name}: ${JSON.stringify(r.candidates.map((m) => [m.text, m.expiresAt ?? null]))}`);
+      console.log(`${c.name}: ${JSON.stringify(r.candidates.map((m) => [m.kind ?? "-", m.text, m.expiresAt ?? null]))}`);
       if (!c.keep) return void expect(r.candidates).toEqual([]);
       expect(r.candidates.length).toBeGreaterThan(0);
       for (const m of r.candidates) expect(m.text).toMatch(c.keep);
       if (c.dated) expect(r.candidates.some((m) => m.expiresAt)).toBe(true);
+      if (c.kind) expect(r.candidates.map((m) => m.kind)).toContain(c.kind);
     }, 60_000);
   }
 });

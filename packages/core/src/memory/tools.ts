@@ -114,7 +114,7 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
         id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: new Date().toISOString(),
         ...(deps.subjectId ? { subjectId: deps.subjectId } : {}),
         ...(deps.categorize && c.category ? { category: c.category } : {}),
-        ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}),
+        ...(c.kind ? { kind: c.kind } : {}), ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}),
       };
       await deps.append([m]);
       texts.add(c.text.toLowerCase());
