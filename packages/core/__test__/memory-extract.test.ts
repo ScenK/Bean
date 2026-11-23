@@ -229,3 +229,11 @@ test("memoryCategories lists distinct sanitized categories, sorted", () => {
   ];
   expect(memoryCategories(rows)).toEqual(["Tools", "You"]);
 });
+
+test("the episode prompt asks for a stated decision date and never primes \"last time you decided\"", async () => {
+  const { deps, seen } = spy();
+  await extractMemories(transcript, [], projects, deps);
+  const system = String(seen[0]!.messages[0]!.content);
+  expect(system).toContain("when the conversation reports a decision made earlier and says when, write that date into the text, and never invent one");
+  expect(system).not.toContain("last time you decided");
+});

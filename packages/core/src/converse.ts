@@ -4,7 +4,7 @@ import { CARD_LEAD } from "./card-record.js";
 import { composePersonaPrompt, type Persona } from "./persona.js";
 import type { Project, RouteSuggestion, Skill } from "./types.js";
 import { memoriesBlock, OWNER_CATEGORY, type Memory } from "./memory/memory.js";
-import { selectRelevantMemories } from "./memory/store.js";
+import { selectRelevantMemories, type RankByMeaning } from "./memory/store.js";
 import { categoriesBlock } from "./memory/extract.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
@@ -96,6 +96,8 @@ export interface ConverseDeps {
     incomplete?: true;
   }>;
   model: string;
+  /** Recall by meaning (core makeRankByMeaning); absent = keyword recall only. */
+  rankByMeaning?: RankByMeaning;
 }
 
 export type ProposedRun = RouteSuggestion;
@@ -778,6 +780,17 @@ function untilAbort<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<
   });
 }
 
+/** The embedding query for a turn: the previous user message (its tail, speaker prefix off) plus
+ * the latest, so a short follow-up ("and what else?") still recalls what the turn before did. Not
+ * after a gap (#977): that message belongs to an earlier conversation. Keyword ranking keeps
+ * using the latest message alone. */
+function meaningQuery(history: ChatTurn[], latestUserText: string, gapMarker?: string): string {
+  const prev = gapMarker ? undefined : history.findLast((t) => t.role === "user")?.content;
+  const tail = prev?.replace(/^\[[^\]\r\n]*\]: /, "").slice(-PREV_TURN_QUERY_CHARS).trim();
+  return tail ? `${tail}\n${latestUserText}` : latestUserText;
+}
+const PREV_TURN_QUERY_CHARS = 500;
+
 // Constant per surface (not per speaker) so the leading system message stays cache-stable.
 const SHARED_CHAT_NOTE =
   "This is a shared chat: several different people may talk to you. Each user turn starts with " +
@@ -842,7 +855,14 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   if (actions.length > 0) contextParts.push(`Current date and time: ${now().toString()}`);
   // No per-chat "current project" signal exists here (LinkedNote doesn't carry one) — force-
   // include is left unused from this call site, but selectRelevantMemories still supports it.
-  const relevant = selectRelevantMemories(memories, latestUserText, undefined, pinOwnerMemories ? { pinCategory: OWNER_CATEGORY } : {});
+  const recallOpts = pinOwnerMemories ? { pinCategory: OWNER_CATEGORY } : {};
+  // A slow embed never holds a Stop: the scores are abandoned with the turn.
+  const scores = deps.rankByMeaning
+    ? await untilAbort(deps.rankByMeaning(memories, meaningQuery(history, latestUserText, input.gapMarker), { ...recallOpts, signal }), signal)
+      .catch(() => undefined)
+    : undefined;
+  if (signal?.aborted) return { reply: "", model: deps.model, stopped: true };
+  const relevant = selectRelevantMemories(memories, latestUserText, undefined, { ...recallOpts, scores });
   const recall = [
     memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "everyone here", speaker } : { ownerIds }),
     memoryCategories ? categoriesBlock(memoryCategories) : "",

@@ -523,3 +523,15 @@ export async function meaningScores(
   if (!queryVec) return undefined;
   return new Map([...vectors].map(([id, v]) => [id, cosine(queryVec, v)]));
 }
+
+/** meaningScores bound to one bean.db and embedder — the optional recall dependency of
+ * converse(), routine steps and chime-ins. Pass the same `memories` (already scope-filtered by
+ * the caller's loadMemories) and recall options the selection uses, so the embedder only ever
+ * sees rows that turn could recall. */
+export type RankByMeaning = (
+  memories: Memory[], query: string, opts?: RecallOptions & { signal?: AbortSignal },
+) => Promise<Map<string, number> | undefined>;
+
+export function makeRankByMeaning(file: string, embed: Embed): RankByMeaning {
+  return (memories, query, opts) => meaningScores(file, embed, memories, query, opts);
+}

@@ -6,7 +6,7 @@ import {
   configFile, projectsFile, skillsDir, personaFile, dbFile, remindersFile, modelMemoryFile, clisFile, routinesDir, routineStateFile, outboxDir,
   scratchDir, imagesDir, isValidSessionId, resumeCommand, pruneStepAttempts, listStepAttempts, CLI_NAMES, watchCliModels,
   loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, loadPersonaNameSync, savePersona,
-  makeOpenAIConverse, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
+  makeOpenAIConverse, makeOpenAIEmbed, makeRankByMeaning, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
   deleteMemories, extractMemories, maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, holdSchedulerLease, enqueueOutbox,
   answerRoutineTrigger, answerTodoRun, queueTodoDispatch, pendingTodoCount, resolveTodoRoutine, sproutRunFacts, withDispatch, enqueueDispatchNotice, threadDispatches, markDispatchDelivered, dispatchContext, type Dispatch, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
   loadNoteHistory, saveNoteImage, loadNoteImage, detectClis, loginShellPath, resolveCliPath, deliver, loadRoutines, saveRoutine,
@@ -171,7 +171,11 @@ export async function createHost(deps: HostDeps) {
   const cfg = await loadConfig(cfgPath, dir);
   const runtime = createRuntimeConfig(
     { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory, gitName: cfg.gitName, gitEmail: cfg.gitEmail },
-    { makeConverse: makeOpenAIConverse, saveConfigFile: (update) => saveConfig(cfgPath, update) },
+    {
+      makeConverse: makeOpenAIConverse,
+      makeRankByMeaning: (key) => makeRankByMeaning(db, makeOpenAIEmbed(key)),
+      saveConfigFile: (update) => saveConfig(cfgPath, update),
+    },
   );
   const enabledClis = (): CliName[] => detectedClis().filter((cli) => !runtime.getDisabledClis().includes(cli));
   const actionTools = buildActionTools({ remindersFile: remindersFile(dir), dbFile: db, systemControls: () => runtime.getSystemControls() });
@@ -269,6 +273,7 @@ export async function createHost(deps: HostDeps) {
     dir,
     builtinDir: projectDir,
     converse: runtime.converse,
+    rankByMeaning: runtime.rankByMeaning,
     getModel: () => runtime.getModel(),
     // ponytail: briefModel read at boot like imageModel; move into runtime-config if a Settings field ever exists
     getBriefModel: () => cfg.briefModel,
@@ -486,6 +491,7 @@ export async function createHost(deps: HostDeps) {
     loadMemories, appendMemories, deleteMemories,
     ownerSubjectIds: () => ownerSubjectIds(db, dir),
     converse: runtime.converse,
+    rankByMeaning: runtime.rankByMeaning,
     getModel: runtime.getModel,
     actions: actionTools,
     beanDirPath: dir,

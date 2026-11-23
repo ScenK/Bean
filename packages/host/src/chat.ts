@@ -22,6 +22,7 @@ export interface ChatHandlerDeps {
   appendMemories: (file: string, additions: Memory[]) => Promise<void>;
   deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   converse: ConverseDeps["chat"];
+  rankByMeaning?: ConverseDeps["rankByMeaning"];
   getModel: () => string;
   projectSkillsDir: string;
   skillsDir: string;
@@ -168,7 +169,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       ownerIds,
       pinOwnerMemories: true, // the desktop is the owner's own machine (#650)
       ...(memoryTools ? { memoryCategories: memoryCategories(memories) } : {}),
-      deps: { chat: deps.converse, model: deps.getModel() },
+      deps: { chat: deps.converse, model: deps.getModel(), rankByMeaning: deps.rankByMeaning },
       droppedUrl: req.droppedUrl,
       actions,
       linkedNote: req.linkedNote,

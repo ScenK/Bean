@@ -33,10 +33,12 @@ without asking.
   recall injects only the top 30 plus the pinned `You` rows — so don't tighten the prompt to
   drop them. The real costs are staleness and retrieval, handled by `kind` below.
 - **`kind`** (nullable; `MEMORY_KINDS` = preference / decision / moment / plan; NULL = a plain
-  fact and every older row): the model picks it. Recall renders a decision as
-  `[decision, noted <date>] …` and a moment as `[moment, noted <date>] …` (the day Bean saved it —
-  no event date is stored), and the header tells the model to say when it noted a decision,
-  since it may have changed. Dream merges within one kind only,
+  fact and every older row): the model picks it. Recall labels a decision `[decision] …` and a moment
+  `[moment] …` with no date of their own — the line's one date is the `(saved …)` suffix, the
+  day Bean recorded it (no event date is stored; #1059: a second date made the model say
+  "decided on <saved date>"). The header says to report "as of <saved date>", never "decided
+  on" unless the text states the date; extract writes a stated earlier date into the text, and
+  dream keeps it through rewrites. Dream merges within one kind only,
   drops an earlier decision a later one replaces, never drops a moment, and refuses a merge
   longer than `MEMORY_TEXT_MAX` (600) — a refused merge leaves its rows as they were. The prompt
   keeps a decision tied to what it was about ("For Bean triage, Scen chose…"); only a correction
