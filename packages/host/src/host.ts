@@ -419,8 +419,9 @@ export async function createHost(deps: HostDeps) {
       const why = err instanceof Error ? err.message : String(err);
       const fix = `Set ${keys} in config.json to keep getting them in your DM.`;
       // A sticky bubble (kept until clicked away) plus a notification, which may be unavailable or fail.
+      // Kind `bot`, not `routine`: a finished routine bubble navigates to its run instead of expanding.
       taskStatus.error("sprouts:home-dm", {
-        kind: "routine", name: "Sprouts", line: "Couldn't turn on DM copies of posts to your chat", detail: `${fix} (${why})`,
+        kind: "bot", name: "Sprouts", line: "Couldn't turn on DM copies of posts to your chat", detail: `${fix} (${why})`,
       });
       void deliver({
         title: "Sprouts now post to your chat with Bean",
