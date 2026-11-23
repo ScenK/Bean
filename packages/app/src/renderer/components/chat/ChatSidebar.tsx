@@ -113,6 +113,13 @@ export function sidebarGroups(rows: SidebarRow[], now: Date): SidebarSection[] {
   return [...(total > 0 ? [{ kind: "starred" as const, key: "starred", label: "Starred", count: total, threads: loose }] : []), ...groups, ...dates];
 }
 
+/** The sidebar search: a lowercased, trimmed query hits a desktop row's title or starred group, or a
+ * synced row's surface and chip text. */
+export function rowMatches(r: SidebarRow, q: string): boolean {
+  const text = r.synced ? `${SURFACE_NAMES[r.chat.surface]} ${kindChip(r.chat)}` : `${r.thread.title || "Untitled chat"}\n${r.thread.groupName ?? ""}`;
+  return text.toLowerCase().includes(q);
+}
+
 /** Palette size: theme.css defines `--bean-group-1…N` in each theme. */
 export const GROUP_COLORS = 6;
 /** Each group's palette entry (1-based), for names in listed order: a stable hash of the name, bumped
@@ -177,8 +184,13 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
   // Filtered here, not into `threads`: effects key on that prop's identity.
   const homeId = threads.find((t) => t.home)?.id;
   const rows = mergeRows(threads.filter((t) => !t.home), synced);
-  const sections = sidebarGroups(rows, now);
-  const groupNames = sections.flatMap((s) => (s.kind === "group" ? [s.label] : []));
+  const all = sidebarGroups(rows, now);
+  // Search filters every listed chat (pruned ones are already gone); groups, colours and folds stay
+  // keyed on the full list, so a query never prunes a fold or recolours a group.
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const sections = q ? sidebarGroups(rows.filter((r) => rowMatches(r, q)), now) : all;
+  const groupNames = all.flatMap((s) => (s.kind === "group" ? [s.label] : []));
   const colors = groupColors(groupNames);
   // Earlier starts folded each time the sidebar mounts; the open chat stays visible inside it.
   const [earlierOpen, setEarlierOpen] = useState(false);
@@ -193,7 +205,8 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
   useEffect(() => {
     if (threads.length > 0 && folded.some((n) => !groupNames.includes(n))) setFolded((f) => f.filter((n) => groupNames.includes(n)));
   }, [threads]);
-  const isFolded = (s: SidebarSection): boolean => (s.kind === "earlier" ? !earlierOpen : s.kind === "group" && folded.includes(s.label));
+  // A live query opens every section with a hit; the stored folds return when it clears.
+  const isFolded = (s: SidebarSection): boolean => !q && (s.kind === "earlier" ? !earlierOpen : s.kind === "group" && folded.includes(s.label));
   const toggleFold = (s: SidebarSection): void => {
     if (s.kind === "earlier") setEarlierOpen(!earlierOpen);
     else setFolded((f) => (f.includes(s.label) ? f.filter((n) => n !== s.label) : [...f, s.label]));
@@ -384,8 +397,25 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
           </span>
         </button>
       </div>
+      <div class="bean-skills-search bean-chat-sidebar-search">
+        <input
+          type="text"
+          class="bean-skills-search-input"
+          placeholder="Search chats"
+          aria-label="Search chats"
+          value={query}
+          onInput={(e) => setQuery(e.currentTarget.value)}
+          // Escape clears a query (default-prevented, so the overlay sidebar stays open).
+          onKeyDown={(e) => {
+            if (e.key !== "Escape" || e.isComposing || !query) return;
+            e.preventDefault();
+            setQuery("");
+          }}
+        />
+      </div>
       <div class="bean-chat-sidebar-list" ref={listRef}>
-        {rows.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div> : null}
+        {rows.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div>
+          : sections.length === 0 ? <div class="bean-chat-sidebar-empty">No chats match "{query.trim()}".</div> : null}
         {sections.map((g) => {
           const header = drafts[`header:${g.label}`];
           const named = g.kind === "group" ? " bean-chat-sidebar-group--named" : "";
@@ -408,7 +438,8 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                 data-section={g.key}
                 {...dropTarget(g)}
                 aria-expanded={!isFolded(g)}
-                title={g.kind === "group" ? "Fold group (double-click or F2 to rename)" : undefined}
+                disabled={!!q}
+                title={q ? "Clear the search to fold sections" : g.kind === "group" ? "Fold group (double-click or F2 to rename)" : undefined}
                 onClick={() => toggleFold(g)}
                 onDblClick={g.kind === "group" ? () => startEdit(`header:${g.label}`, g.label) : undefined}
                 onKeyDown={g.kind === "group" ? (e) => {
