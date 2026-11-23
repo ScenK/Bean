@@ -20,8 +20,8 @@ export interface Memory {
    * recall marks it `re:`, never as the user's words. */
   context?: string;
   /** What sort of memory this is (`MEMORY_KINDS`); absent = a plain lasting fact, and every row
-   * saved before kinds existed. Recall shows a decision and a moment with the day they were noted
-   * instead of stating them as current fact; dream merges within one kind only. */
+   * saved before kinds existed. Recall labels a decision and a moment (dated only by the saved
+   * suffix) instead of stating them as current fact; dream merges within one kind only. */
   kind?: MemoryKind;
   /** ISO time after which the memory is no longer useful (a plan, a deadline): recall skips it
    * from then on and the dream pass deletes it two weeks later. Absent = lasting. */
@@ -147,8 +147,9 @@ export const speakerPrefix = (text: string): string =>
 export const MEMORY_CONFLICT_CLAUSE = "when two facts conflict, the later-saved one is current";
 /** Shared by every recall header that can show a `[re: …]` label. */
 export const MEMORY_CONTEXT_CLAUSE = "a [re: …] prefix is a topic note about what the fact refers to, not the user's words; " +
-  "a [decision, noted <date>] line is what the person had settled when you noted it — when you rely on it, say when you noted it, since it may have changed; " +
-  "a [moment, noted <date>] line is something that happened and mattered to the person";
+  "a [decision] line is what the person had settled as of its saved date, a [moment] line is something that happened and mattered to the person; " +
+  "the saved date is when you recorded it, not when it was decided or happened — when you rely on a decision, say \"as of <saved date>\", " +
+  "never \"decided on <date>\" unless the text itself states that date, since it may have changed";
 
 /** `(saved 2026-07-03 14:05 UTC)` from a stored createdAt; `(saved unknown)` if it doesn't parse. */
 function savedSuffix(createdAt: string): string {
@@ -189,11 +190,10 @@ export function memoriesBlock(
     const scope = m.projectPath ? `(project ${nameFor(m.projectPath)})` : `(about ${owner})`;
     const ctx = sanitizeContext(m.context);
     const re = ctx ? `[re: ${ctx}] ` : "";
-    // A decision or a moment is shown dated rather than as current fact. The date is when Bean
-    // noted it (`createdAt`), which is all that is recorded — the text carries its own date when
-    // the thing itself happened earlier.
-    const day = m.createdAt.slice(0, 10);
-    const dated = m.kind === "decision" || m.kind === "moment" ? `[${m.kind}, noted ${day}] ` : "";
+    // A decision or a moment is labelled rather than stated as current fact. Its only date is the
+    // `(saved …)` suffix — when Bean recorded it (#1059); the text carries its own date when the
+    // thing itself happened earlier.
+    const dated = m.kind === "decision" || m.kind === "moment" ? `[${m.kind}] ` : "";
     const until = m.expiresAt ? ` (relevant until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC)` : "";
     return `- ${tag}${scope} ${re}${dated}${m.text.replace(/\s*[\r\n]+\s*/g, " ")} ${savedSuffix(m.createdAt)}${until}`;
   });

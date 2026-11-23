@@ -223,3 +223,25 @@ export function makeOpenAISpeakWithClient(client: SpeakClient, model = "gpt-4o-m
 export function makeOpenAISpeak(apiKey: string): Speak {
   return makeOpenAISpeakWithClient(new OpenAI({ apiKey }) as unknown as SpeakClient);
 }
+
+interface EmbedClient {
+  embeddings: { create: (a: { model: string; input: string[] }) => Promise<{ data?: Array<{ embedding?: number[]; index?: number }> | null }> };
+}
+
+/** Text embeddings: one vector per input, in input order. `model` is part of each cached
+ * vector's hash, so switching models re-embeds instead of mixing vector spaces. No signal: a
+ * caller that stops waiting still lets the request finish so its vectors get cached. */
+export type Embed = ((texts: string[]) => Promise<Float32Array[]>) & { readonly model: string };
+
+export function makeOpenAIEmbedWithClient(client: EmbedClient, model = "text-embedding-3-small"): Embed {
+  return Object.assign(async (texts: string[]): Promise<Float32Array[]> => {
+    if (texts.length === 0) return [];
+    const res = await client.embeddings.create({ model, input: texts });
+    const data = [...(res.data ?? [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    return data.map((d) => Float32Array.from(d.embedding ?? []));
+  }, { model });
+}
+
+export function makeOpenAIEmbed(apiKey: string): Embed {
+  return makeOpenAIEmbedWithClient(new OpenAI({ apiKey }) as unknown as EmbedClient);
+}

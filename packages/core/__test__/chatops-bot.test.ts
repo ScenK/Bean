@@ -2476,6 +2476,29 @@ async function household() {
   return { ...made, file, prompts, say, loadMemories, chatter };
 }
 
+test("recall by meaning embeds only the speaker's scoped rows: a member's DM never sends another member's private fact", async () => {
+  const h = await household();
+  const { appendMemories, makeRankByMeaning } = await import("../src/memory/store.js");
+  const at = "2026-07-03T00:00:00.000Z";
+  await appendMemories(h.file, [
+    { id: "mia-1", text: "Prefers oat milk", subjectId: "mia", createdAt: at },
+    ...Array.from({ length: 50 }, (_, i) => ({ id: `f-${i}`, text: `household fact ${i}`, createdAt: at })),
+  ]);
+  const inputs: string[] = [];
+  const embed = Object.assign(async (texts: string[]) => {
+    inputs.push(...texts);
+    return texts.map(() => Float32Array.from({ length: 1536 }, () => 1));
+  }, { model: "fake" });
+  h.deps.rankByMeaning = makeRankByMeaning(h.file, embed);
+  const bot = buildTeamsBot(h.deps);
+  await bot.onMessage(h.say("max", true), fx());
+  await bot.onMessage(h.say("u1", false), fx());
+  expect(inputs.some((t) => t.includes("household fact"))).toBe(true);
+  expect(inputs.some((t) => t.includes("oat milk"))).toBe(false);
+  await bot.onMessage(h.say("mia", true), fx());
+  expect(inputs.some((t) => t.includes("oat milk"))).toBe(true);
+});
+
 test("a DM remember is private: recalled in that member's DM only, never another DM, a channel, or a routine", async () => {
   const h = await household();
   const bot = buildTeamsBot(h.deps);

@@ -115,15 +115,19 @@ test("formatMemoryDigest groups by source, shows context, caps the list and poin
   expect(capped).toContain("…and 2 more in Persona.");
 });
 
-test("recall dates a decision and a moment instead of stating them as current fact", () => {
+test("recall labels a decision and a moment instead of stating them as current fact, dated only by the saved suffix", () => {
   const at = "2026-11-20T18:03:00.000Z";
   const block = memoriesBlock([
     { id: "1", text: "Chose a 24-hour veto for triage", createdAt: at, kind: "decision" },
     { id: "2", text: "Was glad Bean finished its 100th ticket", createdAt: at, kind: "moment" },
     { id: "3", text: "Prefers local Codex review", createdAt: at, kind: "preference" },
   ], []);
-  expect(block).toContain("- [1] (about the user) [decision, noted 2026-11-20] Chose a 24-hour veto for triage (saved");
-  expect(block).toContain("- [2] (about the user) [moment, noted 2026-11-20] Was glad Bean finished its 100th ticket (saved");
+  expect(block).toContain("- [1] (about the user) [decision] Chose a 24-hour veto for triage (saved 2026-11-20 18:03 UTC)");
+  expect(block).toContain("- [2] (about the user) [moment] Was glad Bean finished its 100th ticket (saved 2026-11-20 18:03 UTC)");
   expect(block).toContain("- [3] (about the user) Prefers local Codex review (saved");
-  expect(block.split("\n")[0]).toContain("say when you noted it, since it may have changed");
+  for (const line of block.split("\n").slice(1)) expect(line.match(/\d{4}-\d{2}-\d{2}/g)).toHaveLength(1);
+  const header = block.split("\n")[0]!;
+  expect(header).toContain("the saved date is when you recorded it, not when it was decided or happened");
+  expect(header).toContain('say "as of <saved date>", never "decided on <date>" unless the text itself states that date');
+  expect(header).not.toContain("noted <date>");
 });

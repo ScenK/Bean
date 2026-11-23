@@ -46,7 +46,7 @@ import { CHIME_COOLDOWN_MS, makeChimeIn, trimChimeIn, type ChimeInDeps } from ".
 import { ConversationStore } from "../src/chatops/conversation.js";
 import type { Memory } from "../src/memory/memory.js";
 
-function harness(reply: () => Promise<{ content: string; toolCalls: { name: string; args: unknown }[] }> | { content: string; toolCalls: [] } = () => ({ content: "Try `pnpm why`. It lists the path.", toolCalls: [] })) {
+function harness(reply: () => Promise<{ content: string; toolCalls: { name: string; args: unknown }[] }> | { content: string; toolCalls: [] } = () => ({ content: "Try `pnpm why`. It lists the path.", toolCalls: [] }), extra: Partial<ChimeInDeps> = {}) {
   const dbPath = db();
   const chatter = makeChatter({ dbPath, surface: "discord" });
   chatter.setEnabled("s", true);
@@ -66,6 +66,7 @@ function harness(reply: () => Promise<{ content: string; toolCalls: { name: stri
     liveSession: () => live,
     now: () => clock,
     setTimer: (fn, ms) => { const t = { at: clock + ms, fn, dead: false }; timers.push(t); return () => { t.dead = true; }; },
+    ...extra,
   });
   const chatterMsgs: { fromName: string; text: string; at: number }[] = [];
   const posts: string[] = [];
@@ -105,6 +106,15 @@ test("a burst gets one call after the lull; under 2 new messages gets none", asy
   expect(h.conversations.history("c").map((t) => t.role)).toEqual(["user", "assistant"]);
   expect(JSON.stringify(h.conversations.history("c"))).not.toContain("household uses pnpm");
   expect(h.conversations.ambientCutoff("c")).toBeGreaterThan(0);
+});
+
+test("recall by meaning ranks shared rows only, against the chatter window", async () => {
+  const seen: { ids: string[]; query: string }[] = [];
+  const h = harness(undefined, { rankByMeaning: async (ms, query) => { seen.push({ ids: ms.map((m) => m.id), query }); return undefined; } });
+  h.say("anyone used pnpm"); h.say("workspaces?");
+  await h.advance(31_000);
+  expect(seen).toEqual([{ ids: ["1"], query: "anyone used pnpm\nworkspaces?" }]);
+  expect(h.chat).toHaveBeenCalledTimes(1);
 });
 
 test("a steady stream is forced at 2 minutes", async () => {

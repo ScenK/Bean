@@ -28,6 +28,24 @@ test("apply saves config and rebuilds clients with the new key", async () => {
   expect(madeConverse).toEqual(["sk-old", "sk-new"]);
 });
 
+test("recall by meaning: keyword-only (no throw) with an empty key; a key set in Settings applies without a restart", async () => {
+  const made: string[] = [];
+  const rt = createRuntimeConfig(
+    { openaiApiKey: "", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" },
+    {
+      makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
+      makeRankByMeaning: (k) => { made.push(k); return async () => new Map([[k, 1]]); },
+      saveConfigFile: async () => {},
+    },
+  );
+  expect(await rt.rankByMeaning([], "q")).toBeUndefined();
+  expect(made).toEqual([]);
+  await rt.apply({ openaiApiKey: "sk-new" });
+  expect(await rt.rankByMeaning([], "q")).toEqual(new Map([["sk-new", 1]]));
+  await rt.apply({ openaiApiKey: "" });
+  expect(await rt.rankByMeaning([], "q")).toBeUndefined();
+});
+
 test("apply is a patch (#812): an omitted key — or any omitted field — keeps its value", async () => {
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(

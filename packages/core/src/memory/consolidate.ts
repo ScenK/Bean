@@ -13,11 +13,14 @@ const CONSOLIDATE_INSTRUCTIONS =
   "You are tidying the full list of remembered facts. Each line shows the date it was saved. " +
   "Call merge_memories for two or more near-duplicate/overlapping facts, combining them into " +
   "one clearer fact. Call merge_memories with a single id to rewrite one fact — e.g. to turn a " +
-  "relative date (\"next week\", \"yesterday\") into an absolute one using its saved date. " +
+  "relative date (\"next week\", \"yesterday\") into an absolute one using its saved date, " +
+  "only when the text is about the day it was saved. Keep an explicit date the text states " +
+  "(when something was decided or happened) through every merge and rewrite. " +
   "Call drop_memory for a fact that is stale, contradicted by a newer fact (when two facts " +
   "conflict, the more recently saved one wins), or no longer meaningful — including a follow-up, " +
   "deadline or plan whose date is more than two weeks before today. A line tagged {decision} " +
-  "is what was settled on its saved date: when a later decision settles the same question " +
+  "is what was settled as of its saved date — the date it was recorded, not when it was " +
+  "decided: when a later decision settles the same question " +
   "differently, drop the earlier one — never merge the two, and never drop a decision merely " +
   "because it is old. Never drop a {moment}: it records something that mattered, not a fact " +
   "that can go stale. Only merge facts of the same tag, about " +

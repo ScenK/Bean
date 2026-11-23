@@ -6,12 +6,12 @@ import {
 import { setBeanGitIdentity } from "../agent-rules.js";
 import { conversationDispatches } from "../dispatch-store.js";
 import { listDestinations } from "../destinations.js";
-import { appendMemories, deleteMemories, loadMemories, shareMemory } from "../memory/store.js";
+import { appendMemories, deleteMemories, loadMemories, makeRankByMeaning, shareMemory } from "../memory/store.js";
 import { mainCutover } from "../main-conversation.js";
 import { loadModelMemory, saveModelMemory } from "../model-memory.js";
 import { saveNoteImage } from "../note-images.js";
 import { archiveNote, restoreNoteOutcome, saveNote, searchNotes } from "../note-store.js";
-import { makeOpenAIImageGen } from "../openai-chat.js";
+import { makeOpenAIEmbed, makeOpenAIImageGen } from "../openai-chat.js";
 import { enqueueOutbox } from "../outbox.js";
 import { loadPersona } from "../persona-store.js";
 import { loadProjects } from "../project-registry.js";
@@ -37,7 +37,7 @@ import { TodoProposalStore } from "./todo-proposals.js";
  * roles has no default (.memory/safety-chatops-roles.md) and desk-continue / member recipients /
  * headless sprouts are per-surface decisions. */
 export type SharedBotDeps = Pick<TeamsBotDeps,
-  | "onActivity" | "model"
+  | "onActivity" | "model" | "rankByMeaning"
   | "loadSkills" | "loadProjects" | "loadPersona" | "loadMemories" | "ownerSubjectIds" | "loadModelMemory" | "saveModelMemory"
   | "noteProposals" | "saveNote" | "saveNoteImage" | "searchNotes" | "noteArchiveProposals" | "archiveNote" | "restoreNote"
   | "todoProposals" | "queueTodo" | "queueTodoDispatch" | "pendingTodos" | "listTodoRoutines" | "listOpenTodos" | "cancelTodo" | "backgroundWork"
@@ -64,6 +64,9 @@ export function sharedBotDeps(opts: {
   return {
     onActivity: parentActivitySink,
     model: config.model,
+    // ponytail: key read at bot start like its other settings; restart the bot after changing it.
+    // No key = keyword recall (the SDK throws on an empty key).
+    ...(config.openaiApiKey ? { rankByMeaning: makeRankByMeaning(db, makeOpenAIEmbed(config.openaiApiKey)) } : {}),
     loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
     loadProjects: () => loadProjects(projectsFile(dir)),
     loadPersona: () => loadPersona(personaFile(dir), personaFile(builtinDir)),

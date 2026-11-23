@@ -527,6 +527,26 @@ describe("routine memories", () => {
     expect(reqs[1]).toContain("saved mid-run"); // backfilled most-recent, loaded fresh
   });
 
+  it("ranks by meaning on the instruction's head, using the scores", async () => {
+    const many = Array.from({ length: 50 }, (_, i) => mem(String(i + 1), `filler fact ${i + 1}`));
+    const all = [mem("99", "dentist is Dr. Zhang"), ...many];
+    const queries: string[] = [];
+    const reqs: string[] = [];
+    const long = `teeth ${"x".repeat(3000)}`;
+    await runRoutine(
+      routine([{ kind: "delegate", skill: "s", instruction: long }]),
+      baseDeps(async () => ({ content: "digest", toolCalls: [] }), {
+        memories: async () => all,
+        rankByMeaning: async (ms, query) => { expect(ms).toBe(all); queries.push(query); return new Map([["99", 1]]); },
+        delegate: async (req) => { reqs.push(req.memories ?? ""); return "ok"; },
+      }),
+    );
+    expect(queries).toHaveLength(1);
+    expect(queries[0]!.startsWith("teeth ")).toBe(true);
+    expect(queries[0]!.length).toBe(2000);
+    expect(reqs[0]).toContain("Dr. Zhang");
+  });
+
   it("a failing memory loader degrades to no memories and the step still runs", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const reqs: Parameters<RoutineRunnerDeps["delegate"]>[0][] = [];

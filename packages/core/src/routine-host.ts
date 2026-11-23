@@ -61,6 +61,7 @@ export interface RoutineHostDeps {
   loadSkills: () => Promise<Skill[]>;
   /** The recall set chat/delegate steps may draw on — the host decides. */
   memories: () => Promise<Memory[]>;
+  rankByMeaning?: RoutineRunnerDeps["rankByMeaning"];
   /** Read live per digest: the Settings toggle applies to the next run without restarting bots. */
   getRoutineDigestContext: () => boolean;
   onStatus?: (e: RoutineHostStatus) => void;
@@ -179,6 +180,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         tools: [...deps.tools, saveNoteTool],
         findSkill: (name) => skills.find((s) => s.name === name),
         memories: deps.memories,
+        rankByMeaning: deps.rankByMeaning,
         recordAttempt: (a) => {
           recordStepAttempt(dbFile(dir), a);
           if (live && a.stepIndex >= live.first && a.stepIndex <= live.last) { live.left--; showGroup(live); }

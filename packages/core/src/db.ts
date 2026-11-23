@@ -27,6 +27,18 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
   INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, new.text);
 END;
 
+-- Cached meaning vectors (memory/store.ts meaningScores): one per memory, keyed by a hash of the
+-- embedding model + text + context, so an edited row reads as stale and is re-embedded. vec is
+-- Float32 little-endian, EMBED_DIMS values. The trigger drops a deleted row's vector.
+CREATE TABLE IF NOT EXISTS memory_vectors (
+  id   TEXT PRIMARY KEY,
+  hash TEXT NOT NULL,
+  vec  BLOB NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS memory_vectors_ad AFTER DELETE ON memories BEGIN
+  DELETE FROM memory_vectors WHERE id = old.id;
+END;
+
 -- Dream bookkeeping (memory/dream.ts): lastDreamAt, the lastDream digest, and the dreamLease
 -- that keeps two processes/triggers from consolidating at once. Plain KV, JSON values. Also the
 -- main conversation's cutover marker (main-conversation.ts).

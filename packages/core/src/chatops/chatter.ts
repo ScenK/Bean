@@ -174,6 +174,7 @@ export interface ChimeInDeps {
   chatter: Chatter;
   chat: ConverseDeps["chat"];
   model: string;
+  rankByMeaning?: ConverseDeps["rankByMeaning"];
   loadPersona: () => Promise<Persona>;
   /** core's loadMemories scoping — the engine always passes `null` (household-shared only) and
    * the conversation it is about to speak in. */
@@ -195,6 +196,8 @@ export interface ChimeIn {
   /** An addressed turn here: drop the pending timer and any in-flight reply. */
   cancel(conversationId: string): void;
 }
+
+const CHIME_QUERY_CHARS = 2000;
 
 /** Waits for a lull per conversation, then makes one tool-less call that is both the decision and
  * the reply. Silent outcomes persist nothing and leave the ambient cutoff alone. */
@@ -224,7 +227,11 @@ export function makeChimeIn(deps: ChimeInDeps): ChimeIn {
       const block = formatAmbientBlock(window, startedAt);
       const [persona, memories] = await Promise.all([deps.loadPersona(), deps.loadMemories(null, { source: `${deps.chatter.surface}:${scopeId}` })]);
       // Shared rows only (the null above), and never a local project path.
-      const shared = selectRelevantMemories(memories.filter((m) => !m.subjectId), window.map((m) => m.text).join("\n"))
+      const sharedRows = memories.filter((m) => !m.subjectId);
+      const said = window.map((m) => m.text).join("\n");
+      // The newest chatter carries the topic: the embedding sees the window's tail.
+      const scores = await deps.rankByMeaning?.(sharedRows, said.slice(-CHIME_QUERY_CHARS)).catch(() => undefined);
+      const shared = selectRelevantMemories(sharedRows, said, undefined, { scores })
         .map(({ projectPath: _, ...m }) => m);
       const recall = memoriesBlock(shared, [], { ids: false, subject: "everyone here" });
       let timer: (() => void) | undefined;
