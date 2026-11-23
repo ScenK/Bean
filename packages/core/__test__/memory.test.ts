@@ -122,8 +122,8 @@ test("recall dates a decision and a moment instead of stating them as current fa
     { id: "2", text: "Was glad Bean finished its 100th ticket", createdAt: at, kind: "moment" },
     { id: "3", text: "Prefers local Codex review", createdAt: at, kind: "preference" },
   ], []);
-  expect(block).toContain("- [1] (about the user) [decided 2026-11-20] Chose a 24-hour veto for triage (saved");
-  expect(block).toContain("- [2] (about the user) [moment 2026-11-20] Was glad Bean finished its 100th ticket (saved");
+  expect(block).toContain("- [1] (about the user) [decision, noted 2026-11-20] Chose a 24-hour veto for triage (saved");
+  expect(block).toContain("- [2] (about the user) [moment, noted 2026-11-20] Was glad Bean finished its 100th ticket (saved");
   expect(block).toContain("- [3] (about the user) Prefers local Codex review (saved");
-  expect(block.split("\n")[0]).toContain("say when it was decided, since it may have changed");
+  expect(block.split("\n")[0]).toContain("say when you noted it, since it may have changed");
 });

@@ -34,8 +34,9 @@ without asking.
   drop them. The real costs are staleness and retrieval, handled by `kind` below.
 - **`kind`** (nullable; `MEMORY_KINDS` = preference / decision / moment / plan; NULL = a plain
   fact and every older row): the model picks it. Recall renders a decision as
-  `[decided <date>] …` and a moment as `[moment <date>] …`, and the header tells the model to
-  say when a decision was made since it may have changed. Dream merges within one kind only,
+  `[decision, noted <date>] …` and a moment as `[moment, noted <date>] …` (the day Bean saved it —
+  no event date is stored), and the header tells the model to say when it noted a decision,
+  since it may have changed. Dream merges within one kind only,
   drops an earlier decision a later one replaces, never drops a moment, and refuses a merge
   longer than `MEMORY_TEXT_MAX` (600) — a refused merge leaves its rows as they were. The prompt
   keeps a decision tied to what it was about ("For Bean triage, Scen chose…"); only a correction
