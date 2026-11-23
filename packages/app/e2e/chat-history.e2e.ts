@@ -150,7 +150,7 @@ async function fakeClaude(flag: string): Promise<string> {
 test("chat history: New chat in place, and a delegate keeps running in a chat switched away from", async () => {
   const flag = join(tmpdir(), `bean-e2e-flag-${process.pid}-${Date.now()}`);
   const bin = await fakeClaude(flag);
-  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["codex", "opencode"] });
+  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["codex", "opencode", "agy"] });
   const stub = await startStubOpenAI();
   stub.queue({ content: "First!" });
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url, PATH: `${bin}:${process.env.PATH ?? ""}` });
@@ -237,7 +237,7 @@ test("chat history: New chat in place, and a delegate keeps running in a chat sw
 // The active card's "Bean · Claude Code" meta stays one line when hover's ✎ ★ narrow it, and an
 // unsent draft (text + agent pick) survives switching to another chat and back.
 test("chat history: active card keeps its height on hover; a draft survives a switch", async () => {
-  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["codex", "opencode"] });
+  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["codex", "opencode", "agy"] });
   const file = dbFile(join(home.homeDir, ".bean"));
   const a = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
   const b = "2b3c4d5e-6f70-4b8c-9d0e-1f2a3b4c5d6e";

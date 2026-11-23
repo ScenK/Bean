@@ -6,7 +6,7 @@ import { ChipMenu } from "../../shared/ChipMenu.js";
 import { StepFlow } from "../../shared/StepFlow.js";
 import { duplicateStep, moveStep, removeStep, setStepAlongside, setStepContinues, setStepNext, setStepRoute, switchStepKind, withStepIds } from "./step-ids.js";
 
-const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
+const HARNESSES: CliName[] = ["claude", "codex", "opencode", "agy"];
 
 // The numbered step cards — shared by the manual editor and the builder's brief (2a), so what
 // Bean guessed is edited with exactly the same chips as a routine you wrote by hand.
@@ -209,7 +209,7 @@ export function StepsEditor(props: {
                         >
                           <span class="bean-chip-menu-row-title">{step.kind === k ? "✓ " : ""}{k}</span>
                           <span class="bean-chip-menu-caption">
-                            {k === "delegate" ? "coding agent (opencode / claude / codex)"
+                            {k === "delegate" ? "coding agent (opencode / claude / codex / agy)"
                               : k === "chat" ? "Bean's own model + tools, in chat"
                               : "shell check, no model — exit 0 passes"}
                           </span>

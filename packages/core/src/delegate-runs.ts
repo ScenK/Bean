@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { openDb } from "./db.js";
 import type { CliName } from "./launcher.js";
+import { isLiveCli, type LiveCli } from "./live-session.js";
 
 /** One delegate session as recorded in bean.db's append-only `delegate_runs` table, so the user
  * can reopen the CLI's own session by hand later (see .memory/project-delegate-session-receipts.md). */
@@ -52,6 +53,7 @@ export const BAD_SESSION_ID = "Copy the session id from the resume line on the f
 export function resumeCommand(cli: CliName, sessionId: string): string {
   return cli === "claude" ? `claude --resume ${sessionId}`
     : cli === "codex" ? `codex resume ${sessionId}`
+    : cli === "agy" ? `agy --conversation ${sessionId}`
     : `opencode -s ${sessionId}`;
 }
 
@@ -87,7 +89,7 @@ export function delegateRunProject(file: string, sessionId: string): string | un
 }
 
 /** A delegate run that can be continued as a live session, or the one-sentence reason it can't. */
-export type ResumableRun = { run: DelegateRunRow } | { refusal: string };
+export type ResumableRun = { run: DelegateRunRow & { cli: LiveCli } } | { refusal: string };
 
 /** Looks up the newest `delegate_runs` row for `sessionId` and checks it can continue live: a
  * session (with its CLI's id shape, isLiveSessionId) whose project folder still exists. The
@@ -105,13 +107,15 @@ export function findDelegateRun(
     .prepare("SELECT surface, cli, session_id, project_path, instruction, model FROM delegate_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1")
     .get(sessionId) as { surface: DelegateRunRow["surface"]; cli: CliName; session_id: string; project_path: string; instruction: string; model: string | null } | undefined;
   if (!row) return { refusal: "I have no record of that run." };
-  if (!isLiveSessionId(row.cli, row.session_id)) return { refusal: BAD_SESSION_ID };
+  const cli = row.cli;
+  if (!isLiveCli(cli)) return { refusal: `${cli} runs can't continue live.` };
+  if (!isLiveSessionId(cli, row.session_id)) return { refusal: BAD_SESSION_ID };
   if (surface === "desktop") {
     if (row.surface !== "desktop") return { refusal: "I have no record of that run." };
   } else if (row.surface === "desktop") return { refusal: "That run started in Bean's desktop chat — continue it there." };
   if (!exists(row.project_path)) return { refusal: "That project folder no longer exists on this Mac." };
   return { run: {
-    surface: row.surface, cli: row.cli, sessionId: row.session_id, projectPath: row.project_path, instruction: row.instruction,
+    surface: row.surface, cli, sessionId: row.session_id, projectPath: row.project_path, instruction: row.instruction,
     ...(row.model ? { model: row.model } : {}),
   } };
 }

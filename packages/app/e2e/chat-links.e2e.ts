@@ -73,7 +73,7 @@ async function click(page: Page, scope: string, token: string, meta: boolean): P
 }
 
 test("chat links: Cmd+click in a live reply and its steps opens once; plain clicks and local anchors do nothing", async () => {
-  const home = await makeBeanHome({ disabledClis: ["opencode", "codex"], autoMemory: false });
+  const home = await makeBeanHome({ disabledClis: ["opencode", "codex", "agy"], autoMemory: false });
   const bin = join(home.homeDir, "fake-bin");
   await mkdir(bin, { recursive: true });
   await writeFile(join(bin, "claude"), FAKE_CLAUDE, "utf8");

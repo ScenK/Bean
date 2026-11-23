@@ -4,6 +4,7 @@ import type { CliName } from "./launcher.js";
 import { escalateKill, killPendingGroups, killTree, signalGroups, treeGroups } from "./kill-tree.js";
 import { spawnEnv } from "./spawn-env.js";
 import { BEAN_GIT_IDENTITY, withCliRules } from "./agent-rules.js";
+import { isCodexSessionId } from "./delegate-runs.js";
 
 export interface DelegateRequest {
   cli: CliName;
@@ -15,11 +16,11 @@ export interface DelegateRequest {
   resume?: string;
   /** From the resolved skill's `browser: true` frontmatter only — never from instruction text
    * or a renderer/model-supplied flag. claude gets `--chrome` (else `--no-chrome`); codex
-   * already has browser tools; opencode is refused before spawn. */
+   * and agy already have browser tools; opencode is refused before spawn. */
   browser?: boolean;
   /** "plan" = enforced read-only: the CLI can read the project but cannot write, run a shell,
    * reach the network, load MCP servers or open a browser (overrides `browser`). claude and codex
-   * only (denial probes in #908); opencode is refused before spawn. Never falls back to the
+   * only (denial probes in #908); opencode and agy are refused before spawn. Never falls back to the
    * ordinary mode — the resume retry re-spawns with the same request. */
   mode?: "plan";
 }
@@ -28,7 +29,14 @@ export interface DelegateRequest {
 export { BEAN_GIT_IDENTITY, gitTrailerInstruction, FAILED_SENTINEL_INSTRUCTION } from "./agent-rules.js";
 
 export const OPENCODE_BROWSER_REFUSAL = "This skill needs the browser; opencode can't — pick a claude or codex model.";
-export const OPENCODE_PLAN_REFUSAL = "Read-only runs need claude or codex; opencode can't be locked down — pick a claude or codex model.";
+/** Read-only (`mode: "plan"`) runs exist only on claude and codex; every other CLI is refused. */
+export const planRefusal = (cli: CliName): string =>
+  `Read-only runs need claude or codex; ${cli} can't be locked down — pick a claude or codex model.`;
+const PLAN_CLIS: readonly CliName[] = ["claude", "codex"];
+
+/** agy's sign-in failure, replacing its stderr (which carries the OAuth URL). */
+export const AGY_SIGNED_OUT = "Antigravity is signed out on the host — run `agy` once on that machine.";
+const AGY_AUTH_ERROR = /authentication failed or timed out/i;
 
 // claude plan mode: an allowlist of read-only tools (no Bash, Write/Edit, WebFetch/WebSearch,
 // Task, Skill, …), no MCP server from any config or plugin, no browser, and no hooks — user,
@@ -100,7 +108,7 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
       };
     }
     if (req.cli === "codex") return { command: "codex", args: [...CODEX_PLAN_ARGS, ...modelArgs, "--", prompt] };
-    throw new Error(OPENCODE_PLAN_REFUSAL); // runDelegate refuses before this; never fall back to the bypass argv
+    throw new Error(planRefusal(req.cli)); // runDelegate refuses before this; never fall back to the bypass argv
   }
   if (req.cli === "claude") {
     return {
@@ -121,8 +129,24 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
       ],
     };
   }
-  if (req.cli === "codex") return { command: "codex", args: codexExecArgs({ prompt, model: req.model, resume }) };
-  return { command: "opencode", args: opencodeRunArgs({ prompt, model: req.model, resume }) };
+  switch (req.cli) {
+    case "codex": return { command: "codex", args: codexExecArgs({ prompt, model: req.model, resume }) };
+    case "opencode": return { command: "opencode", args: opencodeRunArgs({ prompt, model: req.model, resume }) };
+    case "agy": return { command: "agy", args: agyPrintArgs({ prompt, model: req.model, resume }) };
+  }
+}
+
+/** `agy -p=<prompt>` argv (agy 1.5.14). `-p=` as one token is the only form that keeps a
+ * "-"-leading prompt (a bullet, "---" frontmatter) from being parsed as a flag. Full permission
+ * bypass, as on claude/codex: headless runs can't answer prompts. `prompt` is passed as-is. */
+export function agyPrintArgs(req: { prompt: string; model?: string; resume?: string }): string[] {
+  return [
+    `-p=${req.prompt}`,
+    "--output-format", "stream-json",
+    "--dangerously-skip-permissions",
+    ...(req.model ? ["--model", req.model] : []),
+    ...(req.resume ? ["--conversation", req.resume] : []),
+  ];
 }
 
 /** `opencode run [--session <id>]` argv, shared by delegate runs and opencode live sessions (one
@@ -201,13 +225,57 @@ export function opencodeResult(event: unknown): string | undefined {
   return e?.type === "text" && typeof e.part?.text === "string" ? e.part.text : undefined;
 }
 
+type AgyStep = { step_index?: unknown; state?: unknown; step_type?: unknown; tool_name?: unknown; text_delta?: unknown };
+type AgyEvent = { event?: unknown; conversation_id?: unknown; step_update?: AgyStep; result?: { status?: unknown; response?: unknown; error?: unknown } } | null;
+
+/** agy's final answer: `result.response` of a non-ERROR result event. */
+export function agyResult(event: unknown): string | undefined {
+  const e = event as AgyEvent;
+  if (e?.event !== "result" || e.result?.status === "ERROR") return undefined;
+  return typeof e.result?.response === "string" ? e.result.response : undefined;
+}
+
+/** agy's failure reason: a result event with `status: "ERROR"` (a non-string error reads as unknown). */
+export function agyError(event: unknown): string | undefined {
+  const e = event as AgyEvent;
+  if (e?.event !== "result" || e.result?.status !== "ERROR") return undefined;
+  return typeof e.result.error === "string" && e.result.error.trim() ? e.result.error.trim() : "unknown error";
+}
+
+/** One agy run's step stream, stateful: `▸ <tool_name>` once per tool step (never its command
+ * line), and an agent_response's prose once, on DONE — its `text_delta`s are buffered by step. */
+export function agyStream(): (event: unknown) => { tail?: string; text?: string } {
+  const toolSteps = new Set<unknown>();
+  const prose = new Map<unknown, string>();
+  return (event) => {
+    const e = event as AgyEvent;
+    const s = e?.event === "step_update" ? e.step_update : undefined;
+    if (!s) return {};
+    if (s.step_type === "tool") {
+      if (toolSteps.has(s.step_index) || typeof s.tool_name !== "string") return {};
+      toolSteps.add(s.step_index);
+      return { tail: `▸ ${s.tool_name}` };
+    }
+    if (s.step_type !== "agent_response") return {};
+    const text = (prose.get(s.step_index) ?? "") + (typeof s.text_delta === "string" ? s.text_delta : "");
+    if (s.state !== "DONE") {
+      prose.set(s.step_index, text);
+      return {};
+    }
+    prose.delete(s.step_index);
+    const t = text.trim();
+    return t ? { tail: t, text: t } : {};
+  };
+}
+
 /** The CLI's own session id, taken only from the event that proves the session actually
  * started (a rejected claude --resume still echoes the id on its error `result`). */
 export function sessionIdOf(cli: CliName, event: unknown): string | undefined {
-  const e = event as { type?: unknown; subtype?: unknown; session_id?: unknown; thread_id?: unknown; sessionID?: unknown } | null;
+  const e = event as { type?: unknown; subtype?: unknown; session_id?: unknown; thread_id?: unknown; sessionID?: unknown; event?: unknown; conversation_id?: unknown } | null;
   const id =
     cli === "claude" ? (e?.type === "system" && e.subtype === "init" ? e.session_id : undefined)
     : cli === "codex" ? (e?.type === "thread.started" ? e.thread_id : undefined)
+    : cli === "agy" ? (e?.event === "init" ? e.conversation_id : undefined)
     : e?.sessionID;
   return typeof id === "string" && id ? id : undefined;
 }
@@ -281,12 +349,19 @@ export function runDelegate(
     callbacks.onError(new Error(OPENCODE_BROWSER_REFUSAL));
     return { pid: undefined, cancel: () => {} };
   }
-  if (req.mode === "plan" && req.cli === "opencode") {
-    callbacks.onError(new Error(OPENCODE_PLAN_REFUSAL));
+  if (req.mode === "plan" && !PLAN_CLIS.includes(req.cli)) {
+    callbacks.onError(new Error(planRefusal(req.cli)));
     return { pid: undefined, cancel: () => {} };
   }
   // codex plan runs are fresh only (argv drops it), so there's no rejected resume to retry.
   let resume = req.mode === "plan" && req.cli === "codex" ? undefined : req.resume;
+  const freshNotice = `(Couldn't resume the earlier ${req.cli} session, so this run started fresh.)\n\n`;
+  let notice = "";
+  // agy takes a conversation id only as a UUID; anything else can't be one it has.
+  if (req.cli === "agy" && resume && !isCodexSessionId(resume)) {
+    resume = undefined;
+    notice = freshNotice;
+  }
   let command = "";
   let child!: ChildProcess;
 
@@ -301,7 +376,8 @@ export function runDelegate(
   let rawLines: string[] = []; // non-JSON stdout only — stream JSON never becomes the result
   let stdoutBuf = "";
   let stderrBuf = "";
-  let notice = "";
+  let agyFailure: string | undefined; // agy's `status: "ERROR"` result reason
+  let agyStep = agyStream();
 
   const settle = (fn: () => void): void => {
     if (settled) return;
@@ -343,7 +419,7 @@ export function runDelegate(
     if (!child) return;
     const pid = child.pid;
     if (req.cli === "claude" || typeof pid !== "number") return kill("SIGKILL");
-    if (req.cli === "opencode") {
+    if (req.cli !== "codex") {
       killTree(pid, "SIGKILL");
       return;
     }
@@ -377,6 +453,11 @@ export function runDelegate(
     if (!sessionId) {
       sessionId = sessionIdOf(req.cli, event);
       if (sessionId) callbacks.onSessionStart?.(child.pid, sessionId);
+      // agy starts a fresh conversation (exit 0, its new id in `init`) on an id it doesn't have.
+      if (sessionId && req.cli === "agy" && resume && sessionId !== resume) {
+        notice = freshNotice;
+        callbacks.onOutput(notice.trim());
+      }
     }
     if (req.cli === "claude") {
       const r = claudeResult(event);
@@ -388,6 +469,17 @@ export function runDelegate(
       if (text) callbacks.onText?.(text);
       lastText = text ?? lastText;
       const tail = claudeTailLine(event);
+      if (tail) callbacks.onOutput(tail);
+      return;
+    }
+    if (req.cli === "agy") {
+      const failure = agyError(event);
+      if (failure !== undefined) agyFailure = failure;
+      const r = agyResult(event);
+      if (r !== undefined) result = r;
+      const { tail, text } = agyStep(event);
+      if (text) callbacks.onText?.(text);
+      lastText = text ?? lastText;
       if (tail) callbacks.onOutput(tail);
       return;
     }
@@ -406,6 +498,8 @@ export function runDelegate(
     command = cmd.command;
     result = undefined;
     lastText = undefined;
+    agyFailure = undefined;
+    agyStep = agyStream();
     sessionId = undefined;
     rawLines = [];
     stdoutBuf = "";
@@ -441,7 +535,13 @@ export function runDelegate(
         return;
       }
       if (stdoutBuf.trim()) handleLine(stdoutBuf);
-      if (code === 0) {
+      // Signed out: agy waits for an OAuth login, then fails. Its stderr carries the login URL, so
+      // agy errors never append the stderr tail — and a resume retry would only wait again.
+      if (req.cli === "agy" && AGY_AUTH_ERROR.test(`${agyFailure ?? ""}\n${stderrBuf}`)) {
+        settle(() => callbacks.onError(new Error(AGY_SIGNED_OUT)));
+        return;
+      }
+      if (code === 0 && agyFailure === undefined) {
         const out = result ?? lastText ?? (rawLines.length > 0 ? rawLines.join("\n") : NO_RESULT_NOTICE);
         // Checked before the resume notice is prepended; never retried (a post may have gone out).
         const failed = failedReason(out);
@@ -452,13 +552,13 @@ export function runDelegate(
       // Died before the session started: the CLI rejected the resume id (store cleared, other
       // cwd, …). Never fail the run for that — start fresh once and say so in the result.
       if (resume && !sessionId) {
-        notice = `(Couldn't resume the earlier ${req.cli} session, so this run started fresh.)\n\n`;
+        notice = freshNotice;
         resume = undefined;
         spawnAttempt();
         callbacks.onOutput(notice.trim());
         return;
       }
-      const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
+      const tail = req.cli === "agy" ? agyFailure ?? "" : stderrBuf.trim().split("\n").slice(-5).join("\n");
       settle(() => callbacks.onError(new Error(`${command} exited with code ${code}${tail ? ` - ${tail}` : ""}`)));
     });
   };

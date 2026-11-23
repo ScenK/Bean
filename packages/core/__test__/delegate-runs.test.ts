@@ -17,6 +17,7 @@ test("resumeCommand uses each CLI's interactive resume form", () => {
   expect(resumeCommand("claude", "id1")).toBe("claude --resume id1");
   expect(resumeCommand("codex", "id1")).toBe("codex resume id1");
   expect(resumeCommand("opencode", "id1")).toBe("opencode -s id1");
+  expect(resumeCommand("agy", "id1")).toBe("agy --conversation id1");
 });
 
 test("records rows (repeated ids are distinct rows) and skips invalid ids", () => {
@@ -62,6 +63,8 @@ test("findDelegateRun returns the newest row and refuses ids that can't continue
   recordDelegateSession(file, { ...row, sessionId: "oc", cli: "opencode", surface: "teams" });
   recordDelegateSession(file, { ...row, sessionId: "ses_Ab12", cli: "opencode", surface: "teams" });
   recordDelegateSession(file, { ...row, sessionId: "desk" });
+  const agyId = "c90b8b9c-97a9-44cb-a2cf-cf0e28b56144";
+  recordDelegateSession(file, { ...row, sessionId: agyId, cli: "agy", surface: "teams" });
   recordDelegateSession(file, { ...row, sessionId: "gone", surface: "routine", projectPath: "/gone" });
   expect(findDelegateRun(file, "3f2a-uuid", exists)).toEqual({ run: { ...row, surface: "discord", instruction: "follow-up" } });
   expect(findDelegateRun(file, "--help", exists)).toEqual({ refusal: "Copy the session id from the resume line on the finished card." });
@@ -72,6 +75,8 @@ test("findDelegateRun returns the newest row and refuses ids that can't continue
   // opencode needs its `ses_` shape.
   expect(findDelegateRun(file, "oc", exists)).toEqual({ refusal: "Copy the session id from the resume line on the finished card." });
   expect(findDelegateRun(file, "ses_Ab12", exists)).toEqual({ run: { ...row, sessionId: "ses_Ab12", cli: "opencode", surface: "teams" } });
+  // agy has no live session yet (Continue live stays hidden).
+  expect(findDelegateRun(file, agyId, exists)).toEqual({ refusal: "agy runs can't continue live." });
   expect(findDelegateRun(file, "desk", exists)).toEqual({ refusal: "That run started in Bean's desktop chat — continue it there." });
   expect(findDelegateRun(file, "gone", exists)).toEqual({ refusal: "That project folder no longer exists on this Mac." });
   // The desktop card asks for desktop rows only: its own run resumes, a chatops/routine id is unknown to it.

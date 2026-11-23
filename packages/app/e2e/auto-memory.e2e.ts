@@ -137,7 +137,7 @@ const isAlive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch { return false; }
 };
 test("quit: an agent-mode chat's close catch-up is saved before a local core exits, its tools killed", async () => {
-  const home = await makeBeanHome({ disabledClis: ["opencode", "codex"] });
+  const home = await makeBeanHome({ disabledClis: ["opencode", "codex", "agy"] });
   const bin = join(home.homeDir, "fake-bin");
   await mkdir(bin, { recursive: true });
   // A fake claude that never answers (still running at quit) and has started a tool in its own session.

@@ -75,7 +75,7 @@ Per-user runtime data lives in `~/.bean/` (not in the repo) — see [Runtime con
 ## Environment & Commands
 
 Requires **Node ≥24** and **pnpm 11**. Terminal/delegate runs also need at least one supported
-CLI (`opencode`, `claude`, or `codex`) on `PATH`.
+CLI (`opencode`, `claude`, `codex`, or `agy`) on `PATH`.
 
 Root scripts run through Turborepo (which builds `^build` deps first):
 
@@ -247,7 +247,7 @@ helpers live in `core/src/config.ts`.
   `[{ "provider": "codex", "add": ["gpt-6.1-sol"], "hide": ["gpt-6-luna"] }]` adjusts the
   default list (so shipped models still arrive); `"models": [...]` replaces it outright. Read
   live — no restart. Model strings are passed verbatim to `--model`.
-  Providers are still code (`opencode`, `claude`, `codex`) — only their model lists are config.
+  Providers are still code (`opencode`, `claude`, `codex`, `agy`) — only their model lists are config.
 - `~/.bean/skills/*.md` → one markdown file per skill. `description:` frontmatter is the
   catalog summary the model sees; otherwise the first heading is used. The full body composes the prompt.
 - `~/.bean/projects.json` → `[{ "name": "...", "path": "/abs/path", "skills": ["..."] }]`

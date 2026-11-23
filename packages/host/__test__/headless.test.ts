@@ -25,6 +25,7 @@ describe("bean-core helpers", () => {
     expect(cliAuthPresent("claude", {}, "/h", (p) => p === "/h/.claude/.credentials.json")).toBe(true);
     expect(cliAuthPresent("codex", { CODEX_HOME: "/c" }, "/h", (p) => p === "/c/auth.json")).toBe(true);
     expect(cliAuthPresent("opencode", {}, "/h", (p) => p === "/h/.local/share/opencode/auth.json")).toBe(true);
+    expect(cliAuthPresent("agy", {}, "/h", () => true)).toBeUndefined(); // keychain: unknown, not missing
   });
 
   it("sends notices to the first configured bot's owner DM, else logs them", async () => {

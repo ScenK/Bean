@@ -22,8 +22,12 @@ import {
   gitTrailerInstruction,
   FAILED_SENTINEL_INSTRUCTION,
   OPENCODE_BROWSER_REFUSAL,
-  OPENCODE_PLAN_REFUSAL,
+  planRefusal,
   failedReason,
+  agyStream,
+  agyResult,
+  agyError,
+  AGY_SIGNED_OUT,
   type DelegateCallbacks,
 } from "../src/delegate.js";
 import { AGENT_RULES, REPO_PRECEDENCE } from "../src/agent-rules.js";
@@ -811,7 +815,7 @@ describe("plan (read-only) mode", () => {
   });
 
   it("opencode: delegateCommand throws rather than build the bypass argv", () => {
-    expect(() => delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "x", mode: "plan" })).toThrow(OPENCODE_PLAN_REFUSAL);
+    expect(() => delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "x", mode: "plan" })).toThrow(planRefusal("opencode"));
   });
 
   it("opencode: refused before spawn, with no timer left behind", () => {
@@ -820,7 +824,7 @@ describe("plan (read-only) mode", () => {
     const { cbs, errors, dones } = collect();
     const handle = runDelegate({ cli: "opencode", projectPath: "/p", prompt: "x", mode: "plan" }, cbs, spawnFn);
     expect(spawnFn).not.toHaveBeenCalled();
-    expect(errors).toEqual([OPENCODE_PLAN_REFUSAL]);
+    expect(errors).toEqual([planRefusal("opencode")]);
     expect(dones).toEqual([]);
     expect(handle.pid).toBeUndefined();
     expect(vi.getTimerCount()).toBe(0);
@@ -917,4 +921,138 @@ it("default delegate spawn sets PWD to the spawn cwd", async () => {
   child.stdout?.on("data", (d) => { out += String(d); });
   await new Promise((resolve) => child.on("close", resolve));
   expect(out).toBe(cwd);
+});
+
+describe("agy", () => {
+  const P = GIT_TRAILER_INSTRUCTION;
+  const CONV = "c90b8b9c-97a9-44cb-a2cf-cf0e28b56144";
+  const line = (o: unknown): string => JSON.stringify(o) + "\n";
+  const init = (id: string): string => line({ event: "init", conversation_id: id, init: { cwd: "/p", permission_mode: "always-proceed" } });
+  const step = (s: Record<string, unknown>): string => line({ event: "step_update", step_update: { conversation_id: CONV, ...s } });
+  const result = (r: Record<string, unknown>): string => line({ event: "result", result: { conversation_id: CONV, ...r } });
+  const emit = (c: FakeChild, ...lines: string[]): void => { c.stdout.emit("data", Buffer.from(lines.join(""))); };
+
+  it("delegateCommand: the prompt glued to -p=, stream-json, bypass, model, conversation", () => {
+    expect(delegateCommand({ cli: "agy", projectPath: "/p", prompt: "--- frontmatter\n- bullet", model: "gemini-3.8-flash-high", resume: CONV }))
+      .toEqual({ command: "agy", args: [
+        `-p=--- frontmatter\n- bullet${P}`,
+        "--output-format", "stream-json", "--dangerously-skip-permissions",
+        "--model", "gemini-3.8-flash-high", "--conversation", CONV,
+      ] });
+    expect(delegateCommand({ cli: "agy", projectPath: "/p", prompt: "-x" }).args).toEqual([
+      `-p=-x${P}`, "--output-format", "stream-json", "--dangerously-skip-permissions",
+    ]);
+  });
+
+  it("sessionIdOf reads init's conversation_id only", () => {
+    expect(sessionIdOf("agy", JSON.parse(init(CONV)))).toBe(CONV);
+    expect(sessionIdOf("agy", JSON.parse(result({ status: "SUCCESS", response: "x" })))).toBeUndefined();
+  });
+
+  it("agyStream: one ▸ tool per tool step, never its command; prose once per agent_response on DONE", () => {
+    const next = agyStream();
+    const ev = (s: string) => next(JSON.parse(s));
+    expect(ev(step({ step_index: 1, state: "DONE", step_type: "agent_response" }))).toEqual({}); // thinking only
+    expect(ev(step({ step_index: 2, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: { parameters: { CommandLine: "rm -rf x" } } })))
+      .toEqual({ tail: "▸ run_command" });
+    expect(ev(step({ step_index: 2, state: "DONE", step_type: "tool", tool_name: "run_command" }))).toEqual({});
+    expect(ev(step({ step_index: 3, state: "ACTIVE", step_type: "agent_response", text_delta: "PO" }))).toEqual({});
+    expect(ev(step({ step_index: 3, state: "ACTIVE", step_type: "agent_response", text_delta: "NG" }))).toEqual({});
+    expect(ev(step({ step_index: 3, state: "DONE", step_type: "agent_response", text_delta: "\n" }))).toEqual({ tail: "PONG", text: "PONG" });
+    expect(agyResult(JSON.parse(result({ status: "SUCCESS", response: "PONG\n" })))).toBe("PONG\n");
+    expect(agyResult(JSON.parse(result({ status: "ERROR", response: "", error: "boom" })))).toBeUndefined();
+    expect(agyError(JSON.parse(result({ status: "ERROR", response: "", error: "boom" })))).toBe("boom");
+  });
+
+  it("a run streams tool tails and ends with result.response and its conversation id", () => {
+    const child = new FakeChild();
+    const outputs: string[] = [];
+    const texts: string[] = [];
+    const done: [string, string | undefined][] = [];
+    runDelegate({ cli: "agy", projectPath: "/p", prompt: "go" }, {
+      onOutput: (l) => outputs.push(l), onText: (t) => texts.push(t), onDone: (r, id) => done.push([r, id]), onError: () => {},
+    }, () => asChild(child));
+    emit(child, init(CONV),
+      step({ step_index: 2, state: "ACTIVE", step_type: "tool", tool_name: "run_command" }),
+      step({ step_index: 3, state: "DONE", step_type: "agent_response", text_delta: "All done." }),
+      result({ status: "SUCCESS", response: "All done.\n" }));
+    child.emit("close", 0);
+    expect(outputs).toEqual(["▸ run_command", "All done."]);
+    expect(texts).toEqual(["All done."]);
+    expect(done).toEqual([["All done.\n", CONV]]);
+  });
+
+  it("a resume agy doesn't have: started fresh notice, and the new id is recorded", () => {
+    const child = new FakeChild();
+    const outputs: string[] = [];
+    const done: [string, string | undefined][] = [];
+    const starts: string[] = [];
+    const spawnFn = vi.fn((_c: string, _a: string[], _cwd: string) => asChild(child));
+    runDelegate({ cli: "agy", projectPath: "/p", prompt: "go", resume: "11111111-2222-3333-4444-555555555555" }, {
+      onOutput: (l) => outputs.push(l), onDone: (r, id) => done.push([r, id]), onError: () => {},
+      onSessionStart: (_pid, id) => starts.push(id),
+    }, spawnFn);
+    expect(spawnFn.mock.calls[0]![1]).toEqual(expect.arrayContaining(["--conversation", "11111111-2222-3333-4444-555555555555"]));
+    emit(child, init(CONV), result({ status: "SUCCESS", response: "OK" }));
+    child.stderr.emit("data", Buffer.from('warning: conversation "11111111-2222-3333-4444-555555555555" not found\n'));
+    child.emit("close", 0);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(outputs).toEqual(["(Couldn't resume the earlier agy session, so this run started fresh.)"]);
+    expect(done).toEqual([["(Couldn't resume the earlier agy session, so this run started fresh.)\n\nOK", CONV]]);
+    expect(starts).toEqual([CONV]);
+  });
+
+  it("a resume of the same conversation carries no notice; a non-UUID id is never passed", () => {
+    const child = new FakeChild();
+    const done: string[] = [];
+    runDelegate({ cli: "agy", projectPath: "/p", prompt: "go", resume: CONV }, { onOutput: () => {}, onDone: (r) => done.push(r), onError: () => {} }, () => asChild(child));
+    emit(child, init(CONV), result({ status: "SUCCESS", response: "OK" }));
+    child.emit("close", 0);
+    expect(done).toEqual(["OK"]);
+
+    const spawnFn = vi.fn((_c: string, _a: string[], _cwd: string) => asChild(new FakeChild()));
+    runDelegate({ cli: "agy", projectPath: "/p", prompt: "go", resume: "--help" }, { onOutput: () => {}, onDone: () => {}, onError: () => {} }, spawnFn);
+    expect(spawnFn.mock.calls[0]![1]).not.toContain("--conversation");
+  });
+
+  it("signed out: the signed-out message, no URL or stderr anywhere in the error, no resume retry", () => {
+    const child = new FakeChild();
+    const spawnFn = vi.fn((_c: string, _a: string[], _cwd: string) => asChild(child));
+    const { cbs, errors, dones } = collect();
+    runDelegate({ cli: "agy", projectPath: "/p", prompt: "go", resume: CONV }, cbs, spawnFn);
+    // Recorded from agy 1.5.14 with an empty HOME (state/challenge shortened).
+    child.stderr.emit("data", Buffer.from(
+      "\nAuthentication required. Please visit the URL to log in:\n" +
+      "  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=cDeT&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&state=RAoM\n\n" +
+      "Waiting for authentication (timeout 60s)...\nOr, paste the authorization code here and press Enter:\n" +
+      "Error: authentication timed out.\nerror: authentication failed or timed out\n",
+    ));
+    emit(child, line({ event: "result", result: { conversation_id: "", status: "ERROR", response: "", error: "authentication failed or timed out", finished_reason: "error" } }));
+    child.emit("close", 1);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(dones).toEqual([]);
+    expect(errors).toEqual([AGY_SIGNED_OUT]);
+    expect(errors.join("")).not.toMatch(/https?:|accounts\.google/);
+  });
+
+  it("an ERROR result fails the run with its reason, never the stderr tail, even on exit 0", () => {
+    const child = new FakeChild();
+    const { cbs, errors, dones } = collect();
+    runDelegate({ cli: "agy", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child));
+    child.stderr.emit("data", Buffer.from("secret-ish stderr\n"));
+    emit(child, init(CONV), result({ status: "ERROR", response: "", error: "quota exceeded" }));
+    child.emit("close", 0);
+    expect(dones).toEqual([]);
+    expect(errors).toEqual(["agy exited with code 0 - quota exceeded"]);
+  });
+
+  it("plan mode is refused before spawn; a browser skill runs unchanged", () => {
+    const spawnFn = vi.fn((_c: string, _a: string[], _cwd: string) => asChild(new FakeChild()));
+    const { cbs, errors } = collect();
+    runDelegate({ cli: "agy", projectPath: "/p", prompt: "x", mode: "plan" }, cbs, spawnFn);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(errors).toEqual([planRefusal("agy")]);
+    expect(delegateCommand({ cli: "agy", projectPath: "/p", prompt: "x", browser: true }))
+      .toEqual(delegateCommand({ cli: "agy", projectPath: "/p", prompt: "x" }));
+  });
 });

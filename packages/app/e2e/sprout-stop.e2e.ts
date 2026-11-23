@@ -15,7 +15,7 @@ const sleeping = (): boolean => {
 /** Stop from the bubble: the run ends "Stopped", the panel stops showing it running, and the
  * command step's process is gone. */
 test("sprout stop: the bubble's Stop ends a long command step", async () => {
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode", "agy"] });
   await writeFile(join(home.homeDir, ".bean", "routines", "sleeper.json"), JSON.stringify({
     name: "sleeper", enabled: false, cron: "0 6 * * *", sinks: {},
     steps: [{ kind: "command", command: SLEEP }],
