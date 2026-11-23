@@ -5,7 +5,7 @@ import {
   ConversationStore, appendDelivery, ProposalStore, RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink,
   parseDeskTurn, parseDeskResume, type DeskAckResult, watchCliModels, clisFile, LiveSessionProposalStore,
   LiveSessionRegistry, isLiveCli, findDelegateRun, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, dmAllowed, SproutRunProposalStore, parentSproutTrigger, parentSproutRunning, processParentPort, sproutRunFacts, readHomeDms,
+  makeRoles, dmAllowed, SproutRunProposalStore, parentSproutTrigger, parentSproutRunning, processParentPort, sproutRunFacts,
   recordDestination, sharedBotDeps, type AmbientLine,
 } from "@bean/core";
 import {
@@ -143,7 +143,7 @@ const bot = buildTeamsBot({
     // (#637). A standalone Teams server has no scheduler, so it never offers runs.
     ...(processParentPort.connected() ? {
       sprouts: {
-        trigger: parentSproutTrigger(), facts: (r) => sproutRunFacts(dbFile(dir), r), homeDms: () => readHomeDms(dir), proposals: new SproutRunProposalStore(),
+        trigger: parentSproutTrigger(), facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore(),
         running: parentSproutRunning(),
       },
     } : {}),

@@ -122,7 +122,8 @@ feed watches, `webSearch`, `until` and the found→`done` / nothing→`quiet` ro
 sorted live names + the 10 most recently archived (`draftNames`) so the spec stays byte-stable —
 never the clock. `updating` matches every name, archived too. A draft routing to `done` with no
 `until` gets `COMMITMENT_DAYS` (30) from converse's clock (`withDefaultUntil`); plain schedules get
-none. Chatops strips any draft `sinks.home` before the card (Home is desktop-only). Desktop card
+none. Chatops strips any draft `sinks.home` (and owner-DM chat sinks) before the card unless the
+owner drafts in their own 1:1 (#1070, see project-home-posts). Desktop card
 authority = the send-card pattern: the host keeps the draft, the renderer returns only the id.
 Save re-checks `chatRoutineProblem(…, "desktop")`, the replace target (`draftReplaces` state AND the
 saved definition's JSON snapshot taken at card time — any edit in Sprouts meanwhile refuses) and

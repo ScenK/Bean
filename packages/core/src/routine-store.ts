@@ -548,7 +548,7 @@ export const isOwnerDmSink = (c: RoutineChatopsSink): boolean => c.channel === u
 /** Owner-DM chat sinks fold into Home (#1068): the phone copy is the per-bot `homeDiscordDm` /
  * `homeTeamsDm` setting now. Other chat sinks, TTL and flags are kept (`chatopsOnlyOnProblems` mutes
  * the phone leg, `chatopsVerbatim` its display); idempotent. */
-function foldOwnerDmSinks(s: RoutineSinks): RoutineSinks {
+export function foldOwnerDmSinks(s: RoutineSinks): RoutineSinks {
   const chatops = s.chatops?.filter((c) => !isOwnerDmSink(c));
   if (!chatops || chatops.length === s.chatops?.length) return s;
   const { chatops: _, ...rest } = s;
