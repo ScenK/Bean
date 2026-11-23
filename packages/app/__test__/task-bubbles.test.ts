@@ -106,6 +106,18 @@ test("a held bubble that's gone stops reading as running, and a still pointer re
   } finally { vi.useRealTimers(); }
 });
 
+test("a standalone failure (kind bot) expands to show its detail instead of navigating (#1068)", () => {
+  const { box, open } = mount([job("sprouts:home-dm", {
+    kind: "bot", name: "Sprouts", state: "failed", steps: undefined, step: undefined,
+    line: "Couldn't turn on DM copies", detail: 'Set "homeTeamsDm": true in config.json',
+  })]);
+  const el = (): HTMLElement => box.querySelector<HTMLElement>('.bean-bubble[data-id="sprouts:home-dm"]')!;
+  expect(el().getAttribute("aria-expanded")).toBe("false");
+  open("sprouts:home-dm");
+  expect(el().getAttribute("aria-expanded")).toBe("true");
+  expect(el().querySelector(".bean-bubble-note")?.textContent).toBe('Set "homeTeamsDm": true in config.json');
+});
+
 describe("liveBadgeAgent", () => {
   const job = (p: Partial<TaskJob>): TaskJob => ({ id: "j", kind: "live", name: "", line: "", detail: "", startedAt: 0, state: "running", ...p });
 

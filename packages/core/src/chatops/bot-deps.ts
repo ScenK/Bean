@@ -28,6 +28,7 @@ import { NoteArchiveProposalStore } from "./note-archive-proposals.js";
 import { NoteProposalStore } from "./note-proposals.js";
 import { RoutineProposalStore } from "./routine-proposals.js";
 import { SendProposalStore } from "./send-proposals.js";
+import { readHomeDms } from "./sprout-bridge.js";
 import { SkillProposalStore } from "./skill-proposals.js";
 import { TodoProposalStore } from "./todo-proposals.js";
 
@@ -130,6 +131,7 @@ export function sharedBotDeps(opts: {
       // No channel = the owner's DM.
       notifyOwner: async (body) => { await enqueue({ transport, body }); },
       destinations: () => listDestinations(db, transport),
+      homeDms: () => readHomeDms(dir),
       proposals: new RoutineProposalStore(),
     },
   };
