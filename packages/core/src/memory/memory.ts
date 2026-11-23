@@ -19,6 +19,10 @@ export interface Memory {
    * ("Only in staging") stays readable. The model's words, validated against that window —
    * recall marks it `re:`, never as the user's words. */
   context?: string;
+  /** What sort of memory this is (`MEMORY_KINDS`); absent = a plain lasting fact, and every row
+   * saved before kinds existed. Recall dates a decision and a moment instead of stating them as
+   * current fact; dream merges within one kind only. */
+  kind?: MemoryKind;
   /** ISO time after which the memory is no longer useful (a plan, a deadline): recall skips it
    * from then on and the dream pass deletes it two weeks later. Absent = lasting. */
   expiresAt?: string;
@@ -30,6 +34,14 @@ export interface Memory {
 /** True while a memory is still worth recalling. */
 export const isLive = (m: Memory, now: number = Date.now()): boolean => !m.expiresAt || Date.parse(m.expiresAt) > now;
 
+/** preference = how someone wants things done; decision = what was settled on a given day (it
+ * may be revised later); moment = something that happened and mattered to the person, with how
+ * they felt about it; plan = something still ahead. */
+export const MEMORY_KINDS = ["preference", "decision", "moment", "plan"] as const;
+export type MemoryKind = (typeof MEMORY_KINDS)[number];
+export const asMemoryKind = (v: unknown): MemoryKind | undefined =>
+  (MEMORY_KINDS as readonly unknown[]).includes(v) ? (v as MemoryKind) : undefined;
+
 export interface MemoryCandidate {
   text: string;
   projectPath?: string;
@@ -37,6 +49,7 @@ export interface MemoryCandidate {
   category?: string;
   /** Legacy topic label (#856); episode synthesis writes self-contained text instead. */
   context?: string;
+  kind?: MemoryKind;
   expiresAt?: string;
   /** The numbered lines the model cited, and their text snapshot (see `Memory.evidence`). */
   lines?: number[];
@@ -51,6 +64,7 @@ export function isValidMemory(v: unknown): v is Memory {
   if (typeof m.createdAt !== "string" || m.createdAt.trim() === "") return false;
   if (m.projectPath !== undefined && typeof m.projectPath !== "string") return false;
   if (m.subjectId !== undefined && typeof m.subjectId !== "string") return false;
+  if (m.kind !== undefined && asMemoryKind(m.kind) === undefined) return false;
   for (const k of ["category", "sourceId", "sourceTitle", "context", "expiresAt", "evidence"]) if (m[k] !== undefined && typeof m[k] !== "string") return false;
   return true;
 }
@@ -132,7 +146,9 @@ export const speakerPrefix = (text: string): string =>
 
 export const MEMORY_CONFLICT_CLAUSE = "when two facts conflict, the later-saved one is current";
 /** Shared by every recall header that can show a `[re: …]` label. */
-export const MEMORY_CONTEXT_CLAUSE = "a [re: …] prefix is a topic note about what the fact refers to, not the user's words";
+export const MEMORY_CONTEXT_CLAUSE = "a [re: …] prefix is a topic note about what the fact refers to, not the user's words; " +
+  "a [decided <date>] line is what was settled that day — when you rely on it, say when it was decided, since it may have changed; " +
+  "a [moment <date>] line is something that happened and mattered to the person";
 
 /** `(saved 2026-07-03 14:05 UTC)` from a stored createdAt; `(saved unknown)` if it doesn't parse. */
 function savedSuffix(createdAt: string): string {
@@ -173,8 +189,11 @@ export function memoriesBlock(
     const scope = m.projectPath ? `(project ${nameFor(m.projectPath)})` : `(about ${owner})`;
     const ctx = sanitizeContext(m.context);
     const re = ctx ? `[re: ${ctx}] ` : "";
+    // A decision or a moment is true as of its day, so it is shown dated rather than as current fact.
+    const day = m.createdAt.slice(0, 10);
+    const dated = m.kind === "decision" ? `[decided ${day}] ` : m.kind === "moment" ? `[moment ${day}] ` : "";
     const until = m.expiresAt ? ` (relevant until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC)` : "";
-    return `- ${tag}${scope} ${re}${m.text.replace(/\s*[\r\n]+\s*/g, " ")} ${savedSuffix(m.createdAt)}${until}`;
+    return `- ${tag}${scope} ${re}${dated}${m.text.replace(/\s*[\r\n]+\s*/g, " ")} ${savedSuffix(m.createdAt)}${until}`;
   });
   // Framed as data with no authority: a saved preference still steers (even phrased as an
   // imperative), but never authorizes a tool, an action, or skipping a confirmation.

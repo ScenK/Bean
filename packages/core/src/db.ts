@@ -451,6 +451,10 @@ export function openDb(file: string): DatabaseSync {
     ["memories_history", "context", "TEXT"],
     // Episode memory: when a dated memory stops mattering (NULL = lasting), and a snapshot of the
     // lines it was written from. Dream never merges a dated row, so history doesn't carry them.
+    // Memory kind (preference / decision / moment / plan; NULL = a plain fact). History carries it
+    // so a dream merge and its undo keep it.
+    ["memories", "kind", "TEXT"],
+    ["memories_history", "kind", "TEXT"],
     ["memories", "expires_at", "TEXT"],
     ["memories", "evidence", "TEXT"],
     // Member todos (#283): the non-owner chatops speaker who queued it; NULL = the owner's (desktop,

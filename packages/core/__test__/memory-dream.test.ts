@@ -9,6 +9,7 @@ import {
   updateMemory, updateMemoryCategory, type DreamDigest,
 } from "../src/memory/store.js";
 import { maybeDream, planDream } from "../src/memory/dream.js";
+import { MEMORY_TEXT_MAX } from "../src/memory/extract.js";
 import { speakerLabel } from "../src/memory/memory.js";
 import type { ConverseDeps, ToolCall } from "../src/converse.js";
 import type { Memory } from "../src/memory/memory.js";
@@ -316,4 +317,37 @@ test("a dream merge and its undo keep context", async () => {
   const rows = new Map((await loadMemories(file)).map((x) => [x.id, x]));
   expect(rows.get("a")).toEqual({ ...m("a", "Only in staging"), context: ctx });
   expect(rows.get("b")?.context).toBe(ctx);
+});
+
+test("planDream never merges across kinds, keeps the kind, and refuses a merge longer than one memory", () => {
+  const rows: Memory[] = [
+    { ...m("a", "Chose a 24-hour veto for triage"), kind: "decision" },
+    { ...m("b", "Triage decisions are made in ticket comments"), kind: "decision" },
+    { ...m("c", "Prefers triage reports in full"), kind: "preference" },
+    m("d", "Triage runs every 30 minutes"),
+  ];
+  const plan = planDream(rows, {
+    merges: [
+      { ids: ["a", "c"], mergedText: "Chose a 24-hour veto and prefers full reports" }, // decision + preference
+      { ids: ["b", "d"], mergedText: "Triage decisions happen in comments, every 30 minutes" }, // decision + plain fact
+      { ids: ["a", "b"], mergedText: "Chose a 24-hour veto for triage, with decisions made in ticket comments" },
+    ],
+    drops: [],
+  }, "run", "2026-09-01T00:00:00.000Z");
+  expect(plan.groups).toEqual([expect.objectContaining({ ids: ["a", "b"], kind: "decision" })]);
+  const long = planDream(rows, { merges: [{ ids: ["a", "b"], mergedText: "x".repeat(MEMORY_TEXT_MAX + 1) }], drops: [] }, "run", "2026-09-01T00:00:00.000Z");
+  expect(long.groups).toEqual([]);
+});
+
+test("a dream merge and its undo keep kind", async () => {
+  await appendMemories(file, [
+    { ...m("a", "Chose a 24-hour veto"), kind: "decision" }, { ...m("b", "Chose a 24-hour veto for triage"), kind: "decision" },
+    m("c", "fact c"), m("d", "fact d"), m("e", "fact e"),
+  ]);
+  const digest = (await maybeDream(deps(chatCalling([
+    { name: "merge_memories", args: { ids: ["a", "b"], mergedText: "Chose a 24-hour veto for Bean triage" } },
+  ]))))!;
+  expect((await loadMemories(file)).find((x) => x.text === "Chose a 24-hour veto for Bean triage")?.kind).toBe("decision");
+  expect(await restoreDreamRun(file, digest.runId)).toEqual({ restored: 1, skipped: 0 });
+  expect((await loadMemories(file)).find((x) => x.id === "a")).toEqual({ ...m("a", "Chose a 24-hour veto"), kind: "decision" });
 });

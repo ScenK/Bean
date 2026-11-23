@@ -20,13 +20,26 @@ without asking.
   `BEAN_EPISODE_IDLE_MS` overrides the desktop wait (e2e uses it).
 - **Chatops DMs are still per turn** (`captureDm`, `latestTurn`): Teams' reply context is gone
   by the time a lull would fire, so the receipt card couldn't post. Same synthesis, one new line.
-- **What code still checks** (`validateCandidate`): non-empty, one line, ≤400 chars, a known
+- **What code still checks** (`validateCandidate`): non-empty, one line, ≤600 chars, a known
   project, a future `expires`; a recognizable credential prefix is redacted in place;
   override-shaped text (ignore previous…, bypass confirmation, system prompt) is refused. The real
   safeguards are elsewhere and invisible: recall is framed data with no authority
   ([safety-saved-text-never-system](safety-saved-text-never-system.md)), scope is filtered in SQL,
   incognito / `memory off` / `autoMemory` are re-checked right before the insert, every save has
   an Undo or a Forget.
+- **The bar is a human assistant's notebook, not task utility** (owner decision 2026-11-22, after
+  reading the first 54 rows): design decisions ("last time you decided…") and moments that
+  mattered ("glad Bean closed its 100th ticket") are kept on purpose. Storing more costs little —
+  recall injects only the top 30 plus the pinned `You` rows — so don't tighten the prompt to
+  drop them. The real costs are staleness and retrieval, handled by `kind` below.
+- **`kind`** (nullable; `MEMORY_KINDS` = preference / decision / moment / plan; NULL = a plain
+  fact and every older row): the model picks it. Recall renders a decision as
+  `[decided <date>] …` and a moment as `[moment <date>] …`, and the header tells the model to
+  say when a decision was made since it may have changed. Dream merges within one kind only,
+  drops an earlier decision a later one replaces, never drops a moment, and refuses a merge
+  longer than `MEMORY_TEXT_MAX` (600) — a refused merge leaves its rows as they were. The prompt
+  keeps a decision tied to what it was about ("For Bean triage, Scen chose…"); only a correction
+  of how Bean worked is generalized into a rule. `category` is a topic label, never "fact".
 - **`expires_at`** (nullable): the model sets it for a plan, appointment or deadline. Scoped
   reads filter it in SQL, desktop recall in `selectRelevantMemories`; recall shows
   `(relevant until …)`. `purgeExpiredMemories` deletes rows two weeks past it (called by
