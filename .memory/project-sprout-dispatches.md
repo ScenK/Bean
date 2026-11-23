@@ -42,7 +42,7 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   30 days at start.
 - **The chatops notice is chat context (#920).** `enqueueDispatchNotice` posts the finish line +
   brief (`displayBody`) and saves `dispatchContext` — the brief fenced as run output — with
-  `context: true`, whatever `routineDigestContext` says. The bot appends to the conversation key
+  `context: true`, like every sprout digest. The bot appends to the conversation key
   at delivery, so a `/new` mid-run lands it in the fresh history.
 - **Sink skip.** A triggered run carries its chat origin (`RunOpts.origin`) to `deliverDigest`,
   which drops chat sinks that resolve to it (`sameChatTarget`: transport + resolved conversation;

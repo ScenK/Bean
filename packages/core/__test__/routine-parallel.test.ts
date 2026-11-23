@@ -132,7 +132,7 @@ describe("parallel groups on the host", () => {
       dir, converse: async () => ({ content: "the digest", toolCalls: [] }), getModel: () => "gpt-test",
       delegateStep: async () => ({ output: "out", cli: "claude" }),
       commandStep: async () => ({ exitCode: 0, output: "ok" }),
-      tools: [], loadSkills: async () => [], memories: async () => [], getRoutineDigestContext: () => false,
+      tools: [], loadSkills: async () => [], memories: async () => [],
       onStatus: (e) => status.push(e), newId: () => "id-1", ...over,
     });
     return { ...h, status };

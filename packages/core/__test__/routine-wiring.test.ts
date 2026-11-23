@@ -15,7 +15,7 @@ afterEach(() => { vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: tr
 const wiring = (canSchedule: () => boolean, deliverDispatch?: RoutineWiringDeps["deliverDispatch"]) => createRoutineWiring({
   dir, builtinDir: dir, converse: async () => ({ content: "", toolCalls: [] }), getModel: () => "m",
   clis: () => [], cliModels: [], getDelegateCli: () => "", path: "", tools: [],
-  getRoutineDigestContext: () => false, canSchedule, alarm: () => {},
+  canSchedule, alarm: () => {},
   ...(deliverDispatch ? { deliverDispatch } : {}),
 } satisfies RoutineWiringDeps);
 

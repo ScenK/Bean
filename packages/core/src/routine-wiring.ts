@@ -44,7 +44,6 @@ export interface RoutineWiringDeps {
   spawnFn?: DelegateSpawnFn;
   /** Act-now tools for chat steps. */
   tools: ActionTool[];
-  getRoutineDigestContext: () => boolean;
   onStatus?: RoutineHostDeps["onStatus"];
   notify?: RoutineHostDeps["notify"];
   onHomePost?: RoutineHostDeps["onHomePost"];
@@ -99,7 +98,6 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     // The owner's own automation: shared rows from every channel, never a private one.
     memories: () => loadMemories(db, null, { allSources: true }),
     rankByMeaning: deps.rankByMeaning,
-    getRoutineDigestContext: deps.getRoutineDigestContext,
     holdsLease: deps.canSchedule,
     ...(deps.onStatus ? { onStatus: deps.onStatus } : {}),
     ...(deps.notify ? { notify: deps.notify } : {}),

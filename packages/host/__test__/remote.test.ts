@@ -279,6 +279,8 @@ describe("remote attach over the unix socket", () => {
     expect(JSON.stringify(view)).not.toContain("sk-secret");
     expect(await shell.call("saveConfig", { model: "gpt-5" })).toMatchObject({ ok: true });
     expect(applyConfig).toHaveBeenCalledWith({ model: "gpt-5" });
+    // An older shell still sends the retired key (#1066): it passes the guard; the runtime ignores it.
+    expect(await shell.call("saveConfig", { routineDigestContext: true })).toMatchObject({ ok: true });
     expect(await shell.call("saveConfig", { openaiApiKey: 42 })).toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
     // A saved path that's gone passes; a new one must be a directory on the core.
     const kept = { name: "old", path: "/gone/elsewhere" };

@@ -82,10 +82,6 @@ export interface BeanConfig {
   gitName: string;
   gitEmail: string;
 
-  /** Opt-in: a routine digest delivered to a chatops conversation is also appended to that
-   * conversation's history, so a follow-up question about it has the digest as context.
-   * Off by default — every digest otherwise costs tokens in conversations nobody asks about. */
-  routineDigestContext: boolean;
   /** Detected CLIs the user has switched off — a denylist so a newly installed CLI is
    * enabled by default (auto-detect sets the initial status; spec: codex-cli-support). */
   disabledClis: CliName[];

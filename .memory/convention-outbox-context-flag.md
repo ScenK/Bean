@@ -1,8 +1,8 @@
 # Outbox messages are not chat context unless flagged
 
-A routine digest delivered to a Discord/Teams conversation is **not** in that conversation's
-history by default, so a follow-up question about it ("what did step 2 mean?") reaches a bot
-with no idea what you're referring to. Three independent gaps produce that, and all three are
+An outbox message delivered to a Discord/Teams conversation is **not** in that conversation's
+history unless flagged, so a follow-up question about it ("what did step 2 mean?") would reach a
+bot with no idea what you're referring to. Three independent gaps produce that, and all three are
 deliberate:
 
 1. `deliverDigest` (core `routine-host.ts`) enqueues an `OutboxMessage`; it never goes through
@@ -11,11 +11,13 @@ deliberate:
 3. Discord's ambient `fetchRecent` filters `!m.author.bot`, so Bean's own post is not ambient
    context either.
 
-The opt-in is `OutboxMessage.context` (core `outbox.ts`), set per message by the enqueuer from
-the `routineDigestContext` config flag (Settings → Chat bots, default off). It is read **live**
-via `runtime.getRoutineDigestContext()` at enqueue time, so the bot servers — which load
-`~/.bean/config.json` once at boot — need no restart when the toggle flips. Don't "simplify"
-this by having the bots read the config themselves; that reintroduces the restart.
+The opt-in is `OutboxMessage.context` (core `outbox.ts`), set per message by the enqueuer.
+**Sprout digests always set it** (`deliverDigest`, #1066) — channel, alias, owner-DM and
+member-DM sinks alike, so a member-DM digest sits in that member's own history. The old
+`routineDigestContext` setting is gone; an older config or peer that still carries the key is
+accepted and ignored (dropped on the next config save). The owner's daily **memory digest**
+(`host/memory-digest.ts`) sends `context: false`: it is private recall material, not something
+to follow up on. Keep the decision at enqueue time, not in the bots.
 
 **Exception — Teams channel posts.** A digest sent to a bare Teams channel id starts a new
 post, and replies in its thread arrive as `<channel>;messageid=<post id>`. The drain keeps
@@ -40,8 +42,8 @@ first's summary plus every newer turn — 22 turns collapsed to 1 in the regress
 Across processes (#996) `replaceOldest` is a compare-and-swap on the snapshot, so the stale pass
 skips instead; the in-process queue only saves the wasted summary call.
 
-Default is off on purpose: every digest kept as context costs tokens on every later turn in
-that conversation, including the ones nobody asks about.
+Cost: every digest kept as context costs tokens on later turns in that conversation;
+`maybeCompact` (above) bounds it.
 
 **Logging.** Bot outbox failure logs go through core `outboxErrorLine(err)` (name + message):
 platform errors carry the request body (DiscordAPIError `requestBody`), and an outbox body can be

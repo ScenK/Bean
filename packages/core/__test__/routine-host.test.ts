@@ -35,7 +35,6 @@ function host(over: Partial<RoutineHostDeps> = {}) {
     tools: [],
     loadSkills: async () => [],
     memories: async () => [],
-    getRoutineDigestContext: () => true,
     onStatus: (e) => status.push(e),
     newId: () => "id-1",
     ...over,
@@ -184,7 +183,6 @@ describe("createRoutineHost", () => {
     let n = 0;
     const h = host({
       newId: () => `id-${++n}`,
-      getRoutineDigestContext: () => false,
       delegateStep: async () => ({ output: "It's out at $499.\nROUTE: found" }),
       converse: async () => ({ content: "Heads up: it's out at $499.", toolCalls: [] }),
     });
@@ -203,7 +201,7 @@ describe("createRoutineHost", () => {
     // The asking chat isn't skipped for an ending: its dispatch notice doesn't carry the question.
     await h.deliverDigest(r, res, false, { transport: "discord", channel: "c1" });
     expect((await claimOutbox(outboxDir(dir), "discord")).map((m) => m.body)).toEqual([expect.stringContaining("Want me to keep watching?")]);
-    // An ordinary ok run stays muted and keeps the configured context.
+    // An ordinary ok run stays muted.
     await h.deliverDigest(r, { ...res, ending: undefined, record: { ...res.record, done: undefined } });
     expect(await claimOutbox(outboxDir(dir), "discord")).toEqual([]);
   });
@@ -213,8 +211,16 @@ describe("createRoutineHost", () => {
     const r = routine([], { sinks: { chatops: [{ transport: "discord", user: "u1" }] } });
     await h.deliverDigest(r, { digest: "hello", results: [], record: { startedAt: "2026-10-23T06:00:00.000Z" } as never });
     const [msg] = await claimOutbox(outboxDir(dir), "discord");
-    expect(msg).toMatchObject({ userId: "u1", body: 'hello\n\n_Sent by Bean\'s owner\'s sprout "r"._' });
+    expect(msg).toMatchObject({ userId: "u1", body: 'hello\n\n_Sent by Bean\'s owner\'s sprout "r"._', context: true });
     expect(msg?.channel).toBeUndefined();
+  });
+
+  it("every digest is chat context (#1066): owner DM, channel and member DM alike", async () => {
+    let n = 0;
+    const h = host({ newId: () => `id-${n++}` });
+    const r = routine([], { sinks: { chatops: [{ transport: "discord" }, { transport: "discord", channel: "c1" }, { transport: "discord", user: "u1" }] } });
+    await h.deliverDigest(r, { digest: "hello", results: [], record: { startedAt: "2026-10-23T06:00:00.000Z", status: "ok" } as never });
+    expect((await claimOutbox(outboxDir(dir), "discord")).map((m) => m.context)).toEqual([true, true, true]);
   });
 
   it("chatopsOnlyOnProblems: ok posts no chat message; failed / needs-attention post one per sink; note + notify fire for all", async () => {

@@ -170,7 +170,7 @@ export async function createHost(deps: HostDeps) {
   if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "" });
   const cfg = await loadConfig(cfgPath, dir);
   const runtime = createRuntimeConfig(
-    { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory, gitName: cfg.gitName, gitEmail: cfg.gitEmail },
+    { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory, gitName: cfg.gitName, gitEmail: cfg.gitEmail },
     {
       makeConverse: makeOpenAIConverse,
       makeRankByMeaning: (key) => makeRankByMeaning(db, makeOpenAIEmbed(key)),
@@ -283,7 +283,6 @@ export async function createHost(deps: HostDeps) {
     path: resolvedPath,
     spawnFn: resolvedPathSpawnFn(resolvedPath),
     tools: actionTools,
-    getRoutineDigestContext: () => runtime.getRoutineDigestContext(),
     onStatus: routineBubbles.onStatus,
     notify: async ({ target, home, ...msg }) => {
       const meta = home ? { open: "home" } : target ? { open: "dashboard", target } : undefined;
@@ -590,7 +589,6 @@ export async function createHost(deps: HostDeps) {
     delegateCli: runtime.getDelegateCli(),
     systemControls: runtime.getSystemControls(),
     reasoningEffort: runtime.getReasoningEffort(),
-    routineDigestContext: runtime.getRoutineDigestContext(),
     disabledClis: runtime.getDisabledClis(),
     webSearch: runtime.getWebSearch(),
     autoMemory: runtime.getAutoMemory(),

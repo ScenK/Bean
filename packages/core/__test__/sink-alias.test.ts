@@ -65,14 +65,14 @@ describe("alias chat sinks", () => {
     const h = createRoutineHost({
       dir, converse: async () => ({ content: "", toolCalls: [] }), getModel: () => "m",
       delegateStep: async () => ({ output: "", cli: "claude" }), commandStep: async () => ({ exitCode: 0, output: "" }),
-      tools: [], loadSkills: async () => [], memories: async () => [], getRoutineDigestContext: () => false, newId: () => `id-${n++}`,
+      tools: [], loadSkills: async () => [], memories: async () => [], newId: () => `id-${n++}`,
     });
     const r = routine({ sinks: { chatops: [{ transport: "teams", alias: "Ops" }, { transport: "teams", alias: "Gone" }] } });
     expect(h.sinkProblems(r)).toEqual([expect.stringContaining('"Gone"')]);
     await h.deliverDigest(r, result("needs-attention"));
     let posted = await claimOutbox(outboxDir(dir), "teams");
     // One message, to the named conversation — the unknown alias posts nowhere (no owner DM).
-    expect(posted.map((m) => m.channel)).toEqual(["19:ops@thread.tacv2"]);
+    expect(posted.map((m) => [m.channel, m.context])).toEqual([["19:ops@thread.tacv2", true]]);
 
     expect(retargetAlias(dbFile(dir), "Ops", { surface: "teams", conversationId: "19:new@thread.tacv2" }, () => ["r"]).ok).toBe(true);
     await h.deliverDigest(r, result("needs-attention"));

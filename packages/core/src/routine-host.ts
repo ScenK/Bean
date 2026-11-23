@@ -62,8 +62,6 @@ export interface RoutineHostDeps {
   /** The recall set chat/delegate steps may draw on — the host decides. */
   memories: () => Promise<Memory[]>;
   rankByMeaning?: RoutineRunnerDeps["rankByMeaning"];
-  /** Read live per digest: the Settings toggle applies to the next run without restarting bots. */
-  getRoutineDigestContext: () => boolean;
   onStatus?: (e: RoutineHostStatus) => void;
   /** Desktop notification sink; absent = `sinks.notify` is skipped. `target` names the run, so a
    * click can open it (other hosts ignore it). */
@@ -301,8 +299,9 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         title: `Sprout: ${routine.name}`,
         // A member DM says whose routine it is — they didn't set it up.
         body: sink.user ? `${chatBody}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : chatBody,
-        // An ending asks "keep watching?" / "extend?": a reply there must have the question in history.
-        context: result.ending !== undefined || deps.getRoutineDigestContext(),
+        // Always chat context (#1066): a reply to a digest — or to an ending's "keep watching?" —
+        // must have it in history.
+        context: true,
       }, newId);
     }
     if (routine.sinks.notify && deps.notify) {
