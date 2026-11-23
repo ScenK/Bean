@@ -35,3 +35,11 @@ test("sinkRecipients counts the owner's real DM, not a targeted ref", async () =
   }), "utf8");
   expect(await sinkRecipients(dir)).toEqual({ teams: 1 });
 });
+
+test("sinkRecipients takes a pre-roles Discord config's single allowed id as the owner", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bean-sink-"));
+  await writeFile(join(dir, "discord.json"), JSON.stringify({ botToken: "t", allowedUserIds: ["123"] }), "utf8");
+  expect(await sinkRecipients(dir)).toEqual({ discord: 1 });
+  await writeFile(join(dir, "discord.json"), JSON.stringify({ botToken: "t", allowedUserIds: ["1", "2"] }), "utf8");
+  expect(await sinkRecipients(dir)).toEqual({ discord: 0 });
+});

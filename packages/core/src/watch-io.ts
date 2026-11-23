@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { loadChatopsOwners } from "./chatops/catalog.js";
 import { safeFetch } from "./safe-fetch.js";
 import { spawnEnv } from "./spawn-env.js";
 import type { WatchPollDeps } from "./watch.js";
@@ -67,17 +68,17 @@ export function ownerDmRefs<R extends DmRef>(refs: Record<string, R>, ownerId: s
     r.bot?.isTargeted !== true && (r.user?.id === ownerId || r.user?.aadObjectId === ownerId));
 }
 
-/** Counts only: DMs go to the configured `ownerId` alone (0 = none set / owner's chat unknown). */
+/** Counts only: DMs go to the configured owner alone (0 = none set / owner's chat unknown). The
+ * owner is resolved like the bots do (`loadChatopsOwners`: a pre-roles Discord config's single
+ * `allowedUserIds` entry is the owner). */
 export async function sinkRecipients(dir: string): Promise<{ discord?: number; teams?: number }> {
-  const owner = (cfg: unknown): string | undefined => {
-    const id = (cfg as { ownerId?: unknown } | undefined)?.ownerId;
-    return typeof id === "string" && id ? id : undefined;
-  };
+  const owners = await loadChatopsOwners(dir);
+  const owner = (surface: "discord" | "teams"): string | undefined => owners.find((o) => o.surface === surface)?.ownerId;
   const discord = await readJson(join(dir, "discord.json"));
-  const teamsOwner = owner(await readJson(join(dir, "teams.json")));
+  const teamsOwner = owner("teams");
   const teams = (await readJson(join(dir, "teams-conversations.json"))) as Record<string, DmRef> | undefined;
   return {
-    ...(discord && typeof discord === "object" ? { discord: owner(discord) ? 1 : 0 } : {}),
+    ...(discord && typeof discord === "object" ? { discord: owner("discord") ? 1 : 0 } : {}),
     ...(teams && typeof teams === "object" ? { teams: ownerDmRefs(teams, teamsOwner).length } : {}),
   };
 }
