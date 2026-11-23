@@ -3,10 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
 import {
-  countPendingHomePosts, HOME_PENDING_CAP, HOME_POST_MAX_CHARS, insertHomePost, listPendingHomePosts, markHomePostsDrained,
+  countPendingHomePosts, HOME_DM_MIGRATION_KEY, migrateOwnerDmSinks, HOME_PENDING_CAP, HOME_POST_MAX_CHARS, insertHomePost, listPendingHomePosts, markHomePostsDrained,
   nextHomePostExpiry, saveDesktopChatDraining,
 } from "../src/home-posts.js";
+import { openDb } from "../src/db.js";
 import { DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, getDesktopChat, listDesktopChats, saveDesktopChat } from "../src/desktop-chats.js";
 
 let dir: string;
@@ -92,5 +94,44 @@ describe("Home thread (#960, #976)", () => {
     expect(saveDesktopChatDraining(file, { id: home, title: "Home", itemsJson: "[]" }, ["p0"], at(3)())).toBe("Home");
     expect(getDesktopChat(file, home)).toBeDefined();
     expect(listPendingHomePosts(file, at(3)).map((p) => p.id)).toEqual(["p1"]);
+  });
+});
+
+describe("owner-DM sink migration (#1068)", () => {
+  const sprout = (routines: string, name: string, chatops: object[]): void => {
+    mkdirSync(routines, { recursive: true });
+    writeFileSync(join(routines, `${name}.json`), JSON.stringify({ name, enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: { chatops } }));
+  };
+  const marker = (): unknown => openDb(file).prepare("SELECT value FROM memory_meta WHERE key = ?").get(HOME_DM_MIGRATION_KEY);
+
+  it("turns on each surface an owner-DM sink named, once; the marker stops every later run", async () => {
+    const routines = join(dir, "routines");
+    sprout(routines, "a", [{ transport: "teams" }, { transport: "discord", channel: "c" }]);
+    const calls: string[][] = [];
+    const enable = async (t: string[]): Promise<void> => { calls.push(t); };
+    expect(await migrateOwnerDmSinks(routines, file, enable, at(0))).toBe("done");
+    expect(calls).toEqual([["teams"]]);
+    expect(marker()).toEqual({ value: at(0)().toISOString() });
+    // Another (standby) host taking the lease later, even with a new owner-DM sink on disk: nothing.
+    sprout(routines, "b", [{ transport: "discord" }]);
+    expect(await migrateOwnerDmSinks(routines, file, enable, at(1))).toBe("already");
+    expect(calls).toEqual([["teams"]]);
+  });
+
+  it("no owner-DM sink: no config write, marker written", async () => {
+    let called = false;
+    expect(await migrateOwnerDmSinks(join(dir, "none"), file, async () => { called = true; })).toBe("done");
+    expect(called).toBe(false);
+    expect(marker()).toBeDefined();
+  });
+
+  it("a failed config write leaves no marker, so the next lease take retries", async () => {
+    const routines = join(dir, "routines");
+    sprout(routines, "a", [{ transport: "discord" }]);
+    await expect(migrateOwnerDmSinks(routines, file, async () => { throw new Error("disk full"); })).rejects.toThrow("disk full");
+    expect(marker()).toBeUndefined();
+    const calls: string[][] = [];
+    expect(await migrateOwnerDmSinks(routines, file, async (t) => { calls.push(t); })).toBe("done");
+    expect(calls).toEqual([["discord"]]);
   });
 });

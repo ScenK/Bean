@@ -1247,9 +1247,15 @@ describe("propose_routine", () => {
     } };
     await conv({ latestUserText: "x", deps, routineAuthoring: authoring });
     await conv({ latestUserText: "x", deps, routineAuthoring: { ...authoring, transport: "teams" } });
-    expect(texts[0]).toContain('"transport": "discord", "user"?: id');
-    expect(texts[1]).toContain('"transport": "teams", "channel"?: id');
+    await conv({ latestUserText: "x", deps, routineAuthoring: { ...authoring, home: true } });
+    expect(texts[0]).toContain('"transport": "discord", "user": id or "channel": id');
+    expect(texts[1]).toContain('"transport": "teams", "channel": id');
     expect(texts[1]).not.toContain('"user"');
+    // Home only in the owner's own 1:1 (#1070); no surface describes an owner-DM chat sink.
+    expect(texts[0]).not.toContain('"home"');
+    expect(texts[2]).toContain('"home"?: {}');
+    expect(texts[2]).toContain('For "send it to me", use home.');
+    for (const t of texts) expect(t).not.toMatch(/DMs the owner/);
     for (const t of texts) expect(t).toMatch(/every N days.*weekdays/);
   });
 

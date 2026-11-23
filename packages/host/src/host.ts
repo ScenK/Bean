@@ -13,7 +13,7 @@ import {
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
   listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
   isWatchSeeded, clearWatch, watchSourceKey, briefMessages, parseBrief, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat,
-  deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, detectTools,
+  deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, migrateOwnerDmSinks, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
   saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID, MAIN_CONVERSATION_ID,
@@ -405,7 +405,32 @@ export async function createHost(deps: HostDeps) {
       .then((r) => { if (r === "changed") console.warn("bean: main conversation cutover deferred to the next boot: Home was open or a history changed mid-fold"); })
       .catch((err: unknown) => console.error("bean: main conversation cutover failed", err));
   };
-  startScheduler = () => { void routines.start(); cutover(); };
+  // Owner-DM sinks fold into Home on load (#1068); once per data dir the surfaces they named get
+  // their "Home posts also go to this DM" toggle. Called first: it reads the raw sprout files
+  // synchronously, before a scheduler tick can re-save one already folded.
+  // A failed config write is shown to the owner with the keys to set by hand: the retry at the next
+  // lease take is best-effort (a sprout saved meanwhile no longer names its owner DM on disk).
+  const migrateHomeDms = (): void => {
+    void migrateOwnerDmSinks(routinesPath, db, (ts) => runtime.apply({
+      ...(ts.includes("discord") ? { homeDiscordDm: true } : {}),
+      ...(ts.includes("teams") ? { homeTeamsDm: true } : {}),
+    }).catch((err: unknown) => {
+      const keys = ts.map((t) => `"${t === "discord" ? "homeDiscordDm" : "homeTeamsDm"}": true`).join(" and ");
+      const why = err instanceof Error ? err.message : String(err);
+      const fix = `Set ${keys} in config.json to keep getting them in your DM.`;
+      // A sticky bubble (kept until clicked away) plus a notification, which may be unavailable or fail.
+      // Kind `bot`, not `routine`: a finished routine bubble navigates to its run instead of expanding.
+      taskStatus.error("sprouts:home-dm", {
+        kind: "bot", name: "Sprouts", line: "Couldn't turn on DM copies of posts to your chat", detail: `${fix} (${why})`,
+      });
+      void deliver({
+        title: "Sprouts now post to your chat with Bean",
+        body: `Sprouts that DMed you now post to your chat with Bean, but turning on their phone copy failed (${why}). ${fix}`,
+      }, [deps.notification]);
+      throw err;
+    })).catch((err: unknown) => console.error("bean: owner-DM sink migration failed; retried at the next lease take", err));
+  };
+  startScheduler = () => { migrateHomeDms(); void routines.start(); cutover(); };
   stopScheduler = () => routineScheduler.stop();
   if (schedulerLeaseHeld) startScheduler();
   deps.onQuit(() => routineScheduler.stop());
@@ -470,6 +495,7 @@ export async function createHost(deps: HostDeps) {
     enableWatch: (name, until) => routineScheduler.enableWatch(name, false, until),
     cliModels: () => cliModels, destinations: () => listDestinations(db), newId: randomUUID,
     personaName: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
+    homeDms: () => runtime.getHomeDms(),
   });
   // The running turn per chat (mount id), so image progress can find its bubble.
   const chatTurnIds = new Map<string, string>();
@@ -504,6 +530,7 @@ export async function createHost(deps: HostDeps) {
     runAvailable: (clientId) => !attachments.isClient(clientId),
     loadRoutines: () => loadRoutines(routinesPath),
     sproutFacts: (r) => sproutRunFacts(db, r),
+    homeDms: () => runtime.getHomeDms(),
     todoAhead: (r) => pendingTodoCount(db, r),
     backgroundWork: { stateFile: routineStateFile(dir), running: liveSprouts, threadsOf: (k) => threadsOfChat?.(k) ?? [] },
     proposeSend: sends.propose,

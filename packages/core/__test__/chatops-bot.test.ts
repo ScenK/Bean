@@ -3181,7 +3181,7 @@ describe("owner routines from chat (#285)", () => {
     expect(effects.posted.at(-1)).toMatch(/"mia-summary" changed since this card/);
   });
 
-  test("an owner's chat replacement never sets or changes sinks.home, whatever the draft carries", async () => {
+  test("an owner's channel replacement never sets or changes sinks.home, whatever the draft carries", async () => {
     const drafted = { ...routineJson, sinks: { ...routineJson.sinks, home: { ttlMinutes: 5 } } };
     const replace = async (existing: Routine): Promise<Routine | undefined> => {
       const h = setup(drafted, [existing]);
@@ -3193,6 +3193,59 @@ describe("owner routines from chat (#285)", () => {
     const saved = routineJson as Routine;
     expect((await replace({ ...saved, sinks: { ...saved.sinks, home: { ttlMinutes: 30 } } }))?.sinks.home).toEqual({ ttlMinutes: 30 });
     expect((await replace(saved))?.sinks).toEqual(routineJson.sinks);
+  });
+  // #1070: Home is the owner's own chat with Bean — only the owner's draft in their 1:1 may set it.
+  const sendToMe = { ...routineJson, sinks: { chatops: [{ transport: "discord" }] } };
+  const ownerDm = { ...msg, direct: true, text: "send me a weekday 7am summary" };
+  const dmTap = (beanAction: string, proposalId: string, fromId = "u1") => ({ conversationId: "c1", fromId, fromName: fromId, direct: true, value: { beanAction, proposalId } });
+
+  test("the owner's 1:1 \"send it to me\" draft saves with home: {} and the card names the chat (#1070)", async () => {
+    const h = setup(sendToMe);
+    h.deps.routines!.homeDms = async () => ({ discord: true, teams: false });
+    const effects = fx();
+    await h.bot.onMessage(ownerDm, effects);
+    expect(h.offered[0]).toContain("propose_routine");
+    const card = effects.cards[0] as { proposalId: string; sinks: string[] };
+    expect(card.sinks).toEqual(["Your chat with Bean and your Discord DM"]);
+    await h.bot.onCardAction(dmTap("save-routine", card.proposalId), effects);
+    expect(h.store).toEqual([{ ...routineJson, sinks: { home: {} } }]);
+  });
+
+  test("the owner's 1:1 replacement keeps the saved home when the draft omits it, and takes a drafted one (#1070)", async () => {
+    const replace = async (drafted: unknown, existing: Routine): Promise<Routine | undefined> => {
+      const h = setup(drafted, [existing]);
+      const effects = fx();
+      await h.bot.onMessage(ownerDm, effects);
+      await h.bot.onCardAction(dmTap("save-routine", (effects.cards.at(-1) as { proposalId: string }).proposalId), effects);
+      return h.store[0];
+    };
+    const saved = { ...(routineJson as Routine), sinks: { home: { ttlMinutes: 30 } } };
+    expect((await replace(routineJson, saved))?.sinks).toEqual({ ...routineJson.sinks, home: { ttlMinutes: 30 } });
+    expect((await replace({ ...routineJson, sinks: { home: { ttlMinutes: 5 } } }, saved))?.sinks).toEqual({ home: { ttlMinutes: 5 } });
+  });
+
+  test("channel drafts, admin drafts and a non-DM tap never set home, nor an owner-DM sink that would fold into it (#1070)", async () => {
+    const forged = { ...routineJson, sinks: { chatops: [{ transport: "discord" }, { transport: "discord", channel: "s1" }], home: {} } };
+    // The owner in a channel: neither offered nor saved.
+    const owner = setup(forged);
+    const ownerFx = fx();
+    await owner.bot.onMessage({ ...msg, scopeId: "s1", text: "summary to me" }, ownerFx);
+    const ownerCard = ownerFx.cards[0] as { proposalId: string; sinks: string[] };
+    expect(ownerCard.sinks).toEqual(["This channel"]);
+    await owner.bot.onCardAction(tap("save-routine", ownerCard.proposalId), ownerFx);
+    expect(owner.store).toEqual([{ ...routineJson, sinks: { chatops: [{ transport: "discord", channel: "s1" }] } }]);
+    // An admin (admins draft only in their channel).
+    const admin = setup(forged);
+    const adminFx = fx();
+    await admin.bot.onMessage(adminMsg(), adminFx);
+    await admin.bot.onCardAction(tap("save-routine", (adminFx.cards[0] as { proposalId: string }).proposalId, "ada"), adminFx);
+    expect(admin.store).toEqual([{ ...routineJson, enabled: false, sinks: { chatops: [{ transport: "discord", channel: "s1" }] } }]);
+    // The owner's 1:1 draft tapped without the adapter's DM flag: re-checked at Save.
+    const h = setup(sendToMe);
+    const effects = fx();
+    await h.bot.onMessage(ownerDm, effects);
+    await h.bot.onCardAction({ ...dmTap("save-routine", (effects.cards[0] as { proposalId: string }).proposalId), direct: false }, effects);
+    expect(h.store).toEqual([{ ...routineJson, sinks: {} }]);
   });
 });
 

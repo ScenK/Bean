@@ -1,6 +1,6 @@
 import {
-  chatRoutineProblem, draftNames, draftReplaces, hasEnded, routineDraftCard,
-  type CliModels, type Destination, type DraftReplaces, type ProposedRoutine, type Routine, type RoutineAuthoring, type RoutineDraftCard,
+  chatRoutineProblem, draftNames, draftReplaces, hasEnded, homeDestination, routineDraftCard,
+  type CliModels, type HomeDms, type Destination, type DraftReplaces, type ProposedRoutine, type Routine, type RoutineAuthoring, type RoutineDraftCard,
 } from "@bean/core";
 
 // propose_routine on the desktop (#982): the card is the owner's one-tap confirm of a sprout Bean
@@ -21,6 +21,8 @@ export interface RoutineDraftDeps {
   newId: () => string;
   /** The persona's name: a Home sink reads "Your chat with <name>" on the card (#1001). */
   personaName?: () => string;
+  /** The owner DMs a Home post is copied to, named on the card too (#1069). */
+  homeDms?: () => HomeDms;
   now?: () => Date;
 }
 
@@ -64,7 +66,7 @@ export function buildRoutineDraftHandlers(deps: RoutineDraftDeps) {
       const id = deps.newId();
       pending.set(id, { routine: checked.routine, replaces, prior: snapshot(name, routines), ...(checked.problem ? { problem: checked.problem } : {}) });
       while (pending.size > PENDING_DRAFTS_MAX) pending.delete(pending.keys().next().value!);
-      return routineDraftCard(id, checked, replaces, deps.personaName?.());
+      return routineDraftCard(id, checked, replaces, homeDestination(deps.personaName?.() ?? "Bean", deps.homeDms?.()));
     },
     /** Saves it on (a watch seeded from now). Everything the card showed is checked again first:
      * the draft, its end date, and the sprout it replaces (its state and its whole definition). */

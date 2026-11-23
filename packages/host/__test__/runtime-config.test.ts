@@ -268,3 +268,16 @@ test("reasoning effort reaches the converse client and is rebuilt on save", asyn
   expect(rt.getReasoningEffort()).toBe("high");
   expect(saved[0]).toMatchObject({ reasoningEffort: "high" });
 });
+
+test("an open Settings window saving after the owner-DM migration keeps the migrated toggles (#1068)", async () => {
+  const saved: RuntimeUpdate[] = [];
+  const rt = createRuntimeConfig(
+    { openaiApiKey: "sk", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "", gitEmail: "" },
+    { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async (u) => { saved.push(u); } },
+  );
+  await rt.apply({ homeDiscordDm: true }); // the migration's patch
+  // SettingsWindow's onSave patch: only what the window shows, loaded before the migration ran.
+  await rt.apply({ model: "m", delegateCli: "", reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" });
+  expect(rt.getHomeDms()).toEqual({ discord: true, teams: false });
+  expect(saved.at(-1)).toMatchObject({ homeDiscordDm: true, homeTeamsDm: false });
+});

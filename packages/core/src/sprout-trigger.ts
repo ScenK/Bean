@@ -12,6 +12,22 @@ export function sproutTriggerAction(routine: Routine, pendingCount: number): "ru
   return routine.steps.length > 0 && routine.todoDriven && pendingCount > 0 ? "run" : "check";
 }
 
+/** The per-bot "Home posts also go to the owner's DM" settings (#1067). */
+export interface HomeDms { discord: boolean; teams: boolean }
+
+/** The owner DMs a Home post is copied to: "your Discord DM", "your Discord and Teams DMs", or "". */
+export function homeDmNames(dms?: HomeDms): string {
+  const phone = (["discord", "teams"] as const).filter((t) => dms?.[t]).map((t) => (t === "discord" ? "Discord" : "Teams"));
+  return phone.length === 0 ? "" : `your ${phone.join(" and ")} DM${phone.length > 1 ? "s" : ""}`;
+}
+
+/** Where a sprout's Home post lands (#1069), the one wording for the run card, the Sprouts footer
+ * and the builder review: "your chat with <name>", plus the owner DMs it's copied to. */
+export function homeDestination(beanName: string, dms?: HomeDms): string {
+  const dm = homeDmNames(dms);
+  return `your chat with ${beanName}${dm ? ` and ${dm}` : ""}`;
+}
+
 /** What a sprout-run confirm card does, decided when Bean proposes it and frozen on the card:
  * a tap triggers exactly this action. */
 export interface SproutRunPlan {
@@ -33,19 +49,19 @@ export type SproutRunBlock = "off" | "review" | "empty";
 
 const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
 
-function resultsTo(r: Routine, action: "run" | "check"): string {
+function resultsTo(r: Routine, action: "run" | "check", home: string): string {
   const out: string[] = [...new Set((r.sinks.chatops ?? []).map((s) => (s.transport === "teams" ? "Teams" : "Discord")))];
   if (r.sinks.note) out.push("a note");
   if (r.sinks.notify) out.push("a desktop notification");
-  if (r.sinks.home) out.push("your main chat");
+  if (r.sinks.home) out.push(home);
   // A run's end comes back to the chat that started it (#921); a check's doesn't.
   if (action === "run") return out.length > 0 ? `this chat, ${out.join(", ")}` : "this chat";
   return out.length > 0 ? out.join(", ") : "the run history only";
 }
 
 /** The card for "run the X sprout", from the saved definition, its pending todos, and whether a
- * watch's seen-set is seeded. */
-export function planSproutRun(r: Routine, pendingCount: number, seeded: boolean): { plan: SproutRunPlan } | { blocked: SproutRunBlock } {
+ * watch's seen-set is seeded. `home` = homeDestination's wording for a Home post. */
+export function planSproutRun(r: Routine, pendingCount: number, seeded: boolean, home = homeDestination("Bean")): { plan: SproutRunPlan } | { blocked: SproutRunBlock } {
   if (r.watch && !r.enabled) return { blocked: seeded ? "off" : "review" };
   const action = sproutTriggerAction(r, pendingCount);
   if (action === "run" && r.todoDriven && pendingCount === 0) return { blocked: "empty" };
@@ -55,7 +71,7 @@ export function planSproutRun(r: Routine, pendingCount: number, seeded: boolean)
     : r.todoDriven ? `Works through ${plural(pendingCount, "queued todo")}` : "Runs its steps once now";
   return {
     plan: {
-      routine: r.name, action, actionLine, resultsTo: resultsTo(r, action),
+      routine: r.name, action, actionLine, resultsTo: resultsTo(r, action, home),
       paused: !r.enabled, queuesNew: Boolean(w && r.steps.length > 0),
     },
   };
