@@ -1,7 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { HOME_DM_MIGRATION_KEY } from "@bean/core";
 import { DISCONNECT_GRACE_MS, HEARTBEAT_TIMEOUT_MS } from "../src/attachments.js";
 import { createHost } from "../src/host.js";
 
@@ -157,6 +159,36 @@ test("the lease holder migrates owner-DM sinks into the per-bot Home toggles", a
       expect(cfg).toMatchObject({ homeTeamsDm: true, homeDiscordDm: false });
     });
     expect(host.handlers.getConfig()).toMatchObject({ homeTeamsDm: true, homeDiscordDm: false });
+  } finally {
+    for (const fn of quit) fn();
+  }
+});
+
+// #1068: a failed config write tells the owner which keys to set, and leaves no marker.
+test("a failed owner-DM toggle migration notifies with the keys to set by hand", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-host-"));
+  mkdirSync(join(dir, "routines"));
+  writeFileSync(join(dir, "routines", "brief.json"), JSON.stringify({
+    name: "brief", enabled: false, cron: "0 9 * * *", steps: [{ kind: "command", command: "true" }],
+    sinks: { chatops: [{ transport: "teams" }] },
+  }));
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ openaiApiKey: "", model: "m" }));
+  chmodSync(join(dir, "config.json"), 0o444); // the migration's config write fails
+  const quit: (() => void)[] = [];
+  const send = vi.fn();
+  const host = await createHost({
+    dir, builtinDir: dir, push: vi.fn(), onJobs: vi.fn(),
+    notification: { name: "owner", available: () => true, send },
+    isChatClient: () => false, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
+    headless: { onLeaseLost: vi.fn() },
+  });
+  try {
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.stringContaining('Set "homeTeamsDm": true in config.json'),
+    })));
+    expect(host.handlers.getConfig()).toMatchObject({ homeTeamsDm: false });
+    expect(new DatabaseSync(join(dir, "bean.db")).prepare("SELECT 1 FROM memory_meta WHERE key = ?").get(HOME_DM_MIGRATION_KEY)).toBeUndefined();
   } finally {
     for (const fn of quit) fn();
   }

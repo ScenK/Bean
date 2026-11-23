@@ -45,6 +45,12 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   re-save one), turns on `homeDiscordDm`/`homeTeamsDm` for each surface found via `runtime.apply`
   (a patch, so an open Settings window's later save keeps them), then writes the marker. A failed
   config write = no marker, retried at the next lease take; a toggle turned off later stays off.
+  The failure also notifies the owner with the exact keys to set by hand: the retry is best-effort,
+  since a sprout saved meanwhile no longer names its owner DM on disk. Don't gate the scheduler or
+  sprout saves on it — a missing phone copy is the owner's to fix, no sprouts at all is worse.
+- Known gap (deferred P2): a standby host started before the holder migrated keeps `false` toggles in
+  its runtime config after taking the lease (runtime config isn't re-read across hosts sharing a data
+  dir, and `apply` would write its other stale fields over the file). Restart that host.
 
 ## Home thread (#960, continuous since #976)
 
