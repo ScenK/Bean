@@ -19,6 +19,19 @@ unread dot, the avatar bubble and the jump-down pill; #962 the sprout-editor con
   no transaction of its own, so the host can run it inside the transcript save's transaction.
 - Not `sprout_dispatches`: posts have no origin conversation and never enter the chatops outbox.
 
+## Owner-DM copy (#1067)
+
+- Config `homeDiscordDm` / `homeTeamsDm` (default off, read live via runtime config, both config
+  guards; no Settings UI yet): each Home post also goes to the owner's DM on that bot. Only when the
+  post was inserted, the transport is reachable (`sinkRecipients` > 0 — else nothing is enqueued),
+  and like any chat sink: muted by `chatopsOnlyOnProblems` (an ending still goes), skipped when the
+  run was dispatched from that DM. An owner-DM chatops sink on that transport is dropped for the run
+  (no second copy).
+- Outbox `body` = `postTurn` of the capped post body (`homePostBody`), `displayBody` = the brief (the
+  full digest under `chatopsVerbatim`), `mainTurnKey` = `post:<id>`. The bot's `appendDelivery`
+  writes it after the cutover as the drain does (user role, surface `desktop`, that key), so phone
+  and Home drain — either order — leave **one** main-log row. The Home post stays unread.
+
 ## Home thread (#960, continuous since #976)
 
 - Home is **one continuous thread**: `HOME_THREAD_ID` (core `desktop-chats.ts`) is a fixed UUID-shaped

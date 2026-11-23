@@ -164,10 +164,15 @@ export async function boundMainLog(log: ConversationStore, deps: ConverseDeps, s
 export function appendDelivery(
   conversations: ConversationStore, conversationId: string, body: string, deps: ConverseDeps,
   ownerDm?: { mainLog: { surface: TurnSurface; cutover: () => boolean }; deliveryId: string },
+  mainTurnKey?: string,
 ): void {
-  const turn: ChatTurn = { role: "assistant", content: body };
+  // A Home post's copy (OutboxMessage.mainTurnKey, #1067) is the post's own turn, written as the
+  // Home drain writes it (user role, surface desktop, its `post:` key).
+  const turn: ChatTurn = { role: mainTurnKey ? "user" : "assistant", content: body };
   if (ownerDm?.mainLog.cutover()) {
-    conversations.append(MAIN_CONVERSATION_ID, turn, { surface: ownerDm.mainLog.surface, turnKey: deliveryTurnKey(ownerDm.deliveryId) });
+    conversations.append(MAIN_CONVERSATION_ID, turn, mainTurnKey
+      ? { surface: "desktop", turnKey: mainTurnKey }
+      : { surface: ownerDm.mainLog.surface, turnKey: deliveryTurnKey(ownerDm.deliveryId) });
     return;
   }
   conversations.append(conversationId, turn);

@@ -8,6 +8,9 @@ import { CHATOPS_COMMANDS } from "../src/chatops/commands.js";
 import { findDelegateRun, recordDelegateSession, type ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { appendDelivery } from "../src/chatops/compact.js";
+import { insertHomePost, listPendingHomePosts, saveDesktopChatDraining } from "../src/home-posts.js";
+import { HOME_THREAD_ID } from "../src/desktop-chats.js";
+import { postTurn } from "../src/prompt.js";
 import { MAIN_CONVERSATION_ID, MAIN_CUTOVER_KEY, mainCutover } from "../src/main-conversation.js";
 import type { ChatTurn } from "../src/converse.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
@@ -5104,7 +5107,7 @@ describe("appendDelivery (#998)", () => {
     const conversations = new ConversationStore(file);
     const mainLog = { surface: "teams" as const, cutover: () => mainCutover(file) };
     const deps = { chat: async () => ({ content: "", toolCalls: [] }), model: "m" };
-    return { conversations, mainLog, deps };
+    return { conversations, mainLog, deps, file };
   };
 
   test("an owner-DM delivery joins the main log once, even fanned out; a member's never does", () => {
@@ -5115,6 +5118,23 @@ describe("appendDelivery (#998)", () => {
     expect(conversations.history(MAIN_CONVERSATION_ID)).toEqual([{ role: "assistant", content: "digest" }]);
     expect(conversations.history("a:dm1")).toEqual([]);
     expect(conversations.history("a:member")).toEqual([{ role: "assistant", content: "your reminder" }]);
+  });
+
+  test("a Home post's phone copy (#1067) and the Home drain leave one main-log row, either order; the post stays unread", () => {
+    for (const phoneFirst of [true, false]) {
+      const { conversations, mainLog, deps, file } = setup(true);
+      const post = insertHomePost(file, { sprout: "r", body: "brief" });
+      const body = postTurn({ sprout: "r", text: "brief" });
+      const phone = (): void => appendDelivery(conversations, "a:dm1", body, deps, { mainLog, deliveryId: `o-${phoneFirst}` }, `post:${post}`);
+      if (phoneFirst) {
+        phone();
+        expect(listPendingHomePosts(file).map((p) => p.id)).toEqual([post]);
+      }
+      saveDesktopChatDraining(file, { id: HOME_THREAD_ID, title: "Home", itemsJson: "[]" }, [post], new Date(), { mainLog: true });
+      if (!phoneFirst) phone();
+      expect(conversations.history(MAIN_CONVERSATION_ID)).toEqual([{ role: "user", content: body }]);
+      expect(conversations.history("a:dm1")).toEqual([]);
+    }
   });
 
   test("before the cutover an owner-DM delivery stays on the DM", () => {
