@@ -429,6 +429,14 @@ describe("routed runs", () => {
       expect(res.results).toEqual([]);
     });
 
+    it("clips a long quiet reason at a word break with an ellipsis, never mid-word", async () => {
+      const long = "Checked 14 mail and about 25 Teams messages since 7 AM, and nothing needs you. I filed the mail and archived 10 from the Inbox.";
+      const f = fakeDelegate({ d: [`${long}\nROUTE: nothing`] });
+      const res = await runRoutine(routine(quietSteps()), deps(f.delegate));
+      expect(res.record.quiet).toBe("Checked 14 mail and about 25 Teams messages since 7 AM, and nothing needs you. I filed the mail and archived 10 from…");
+      expect(res.record.quiet!.length).toBeLessThanOrEqual(120);
+    });
+
     it('a saved sprout with a step named "quiet" still routes to that step and delivers', async () => {
       const f = fakeDelegate({ d: ["ROUTE: b"], quiet: ["the quiet step ran"] });
       const r = routine([
