@@ -23,4 +23,6 @@ key); selecting one boots `remote-core.ts` instead of the local core.
   relaunch / detach. A remote quit is a deliberate `detach`.
 - Keep-awake: delegate `started`/`output` and live events (until `ended`) on the wire hold it
   (`keepAwake.setWorking`), including while reconnecting.
+- Renderer windows re-run their mount-time pulls (sidebar lists, Home restore + DM pull, `/` catalogs, Skills) on every
+  transition to `attached` (#1095): a window opened while connecting had them refused. Local cores never see `attached`.
 - e2e `remote-core.e2e.ts` puts a fake `ssh` on PATH that speaks the wire — use it for new remote UI.

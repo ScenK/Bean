@@ -7,6 +7,7 @@ import { skillSection, type SkillSection } from "@bean/core/usage-sections";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { ProposalsInbox, type ProposalLists } from "./ProposalsInbox.js";
+import { useCoreStatus } from "../../shared/core-status.js";
 
 /** The Run button's Plan-card seed. No linked project → projectPath omitted, so the card opens
  * on "no project" (scratch). Same composePrompt() the drag-drop-onto-petal flow uses, so both
@@ -109,6 +110,10 @@ export function SkillsPanel({
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, []);
+  // A window opened while a remote core was connecting (#1095) got a refused first read.
+  const core = useCoreStatus();
+  const attached = core.kind === "remote" && core.state === "attached";
+  useEffect(() => { if (attached) refresh().catch(() => {}); }, [attached]);
 
   const selectedSkill = skills.find((s) => s.name === selectedName);
   const filteredSkills = useMemo(() => {

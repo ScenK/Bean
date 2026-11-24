@@ -594,9 +594,15 @@ export function ChatSession({
         updatePick(cli, { ...seeded, ...picksRef.current[cli] });
       }, () => {});
     }
+    restore();
+  }, []);
+
+  // A thread picked from history: restored inert (chat-thread.ts), its snapshot the baseline. The
+  // linked-note chip comes back only if that note still exists. A failed restore (a remote core still
+  // connecting, #1095) keeps its error row's id: the next attach retries it and drops the row.
+  const failedRestoreRef = useRef<string | undefined>(undefined);
+  const restore = (): void => {
     if (!restoreId) return;
-    // A thread picked from history: restored inert (chat-thread.ts), its snapshot the baseline. The
-    // linked-note chip comes back only if that note still exists.
     window.bean.chatThreadGet(restoreId, mountId).then(async (t) => {
       if (goneRef.current) return;
       if ("missing" in t) {
@@ -660,9 +666,22 @@ export function ChatSession({
       restoringRef.current = false;
       // Not on Home after all: the Home row takes a click again, which retries (#961).
       if (restoreId === "home" && !hiddenRef.current) onActive(undefined, false);
-      addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error");
+      failedRestoreRef.current = newId();
+      addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error", undefined, failedRestoreRef.current);
     });
-  }, []);
+  };
+  const retryRestore = (): boolean => {
+    const row = failedRestoreRef.current;
+    // Nothing failed, or the chat moved on (a turn started a thread of its own): nothing to retry.
+    if (row === undefined || threadRef.current !== undefined) return false;
+    failedRestoreRef.current = undefined;
+    itemsRef.current = itemsRef.current.filter((it) => it.id !== row);
+    setItems(itemsRef.current);
+    restoringRef.current = true;
+    if (restoreId === "home" && !hiddenRef.current) onActive(undefined, true);
+    restore();
+    return true;
+  };
 
   // A prompt pushed from outside (a Plan chat skill, a Dashboard ask, a note): auto-sent, collapsed to
   // `▶ label`. Notes' Add to current chat (`here`) goes to whoever this chat is talking to — the live
@@ -1751,7 +1770,13 @@ export function ChatSession({
       setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
     },
     mainChanged: pullMain,
-    reattached: () => pullPosts(pullMain),
+    // Mount-time pulls that failed while connecting (#1095) run again: the `/` catalogs, the projects
+    // and a failed restore (which pulls Home's DM rows itself); otherwise Home re-opens and pulls.
+    reattached: () => {
+      refreshCatalogs();
+      window.bean.listProjects().then(setProjects, () => {});
+      if (!retryRestore()) pullPosts(pullMain);
+    },
     runPrompt,
     blank: untouched,
     draft,

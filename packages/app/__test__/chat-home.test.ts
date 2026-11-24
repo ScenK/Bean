@@ -173,6 +173,30 @@ describe("ChatWindow Home", () => {
     }
   });
 
+  it("#1095: a window opened while the core connects re-runs its refused pulls on attach", async () => {
+    const offline = new Error("Not connected to the core — reconnecting.");
+    bean.chatThreadGet!.mockRejectedValueOnce(offline).mockResolvedValue({ ...homeThread([]), home: { posts: [], log: true, cursor: 0 } });
+    bean.chatThreadList!.mockRejectedValueOnce(offline).mockResolvedValue([{ id: "t1", title: "Earlier", updatedAt: now, agents: [] as string[], starred: false }]);
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await click(homeRow());
+    await vi.waitFor(() => expect(shownChat().textContent).toContain("Couldn't open that chat"));
+    expect(root.querySelector(".bean-chat-sidebar-home--active")).toBeNull();
+    const skills = bean.listSkills!.mock.calls.length;
+    try {
+      await act(async () => { listeners.onCoreStatus!({ kind: "remote", host: "me@box", state: "attached" }); });
+      await flush();
+      expect(bean.chatThreadGet).toHaveBeenCalledTimes(2);
+      expect(root.querySelector(".bean-chat-sidebar-home--active")).not.toBeNull();
+      expect(shownChat().textContent).not.toContain("Couldn't open that chat");
+      expect(bean.chatMainSince).toHaveBeenCalled();
+      expect(root.textContent).toContain("Earlier");
+      expect(bean.listSkills!.mock.calls.length).toBeGreaterThan(skills);
+    } finally {
+      await act(async () => { listeners.onCoreStatus!({ kind: "local" }); });
+    }
+  });
+
   it("#1000: a chat not on the main log never pulls DM rows", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();

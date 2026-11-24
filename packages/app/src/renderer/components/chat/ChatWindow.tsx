@@ -75,9 +75,14 @@ export function ChatWindow() {
   const [find, setFind] = useState(0); // Cmd/Ctrl+F presses while the find bar is open; 0 = closed
   const coreStatus = useCoreStatus();
   // A remote core (re)attached (#1000): a restarted core lost Home's pin and a `main` ping acked before
-  // the drop may never replay, so Home re-opens on the core and pulls.
+  // the drop may never replay, so Home re-opens on the core and pulls. A window opened while connecting
+  // (#1095) had its mount-time pulls refused, so the sidebar lists and each chat's pulls run again.
   const attached = coreStatus.kind === "remote" && coreStatus.state === "attached";
-  useEffect(() => { if (attached) for (const s of sessions.values()) s.reattached(); }, [attached]);
+  useEffect(() => {
+    if (!attached) return;
+    pullLists();
+    for (const s of sessions.values()) s.reattached();
+  }, [attached]);
   const [droppedUrl, setDroppedUrl] = useState<ChatDrop | undefined>(undefined);
   // A per-turn memory receipt is tagged with the mount that asked. One for a chat switched away
   // mid-capture follows its thread: shown at once if that thread is back on screen, otherwise held
@@ -195,6 +200,17 @@ export function ChatWindow() {
     api.open("new");
   };
 
+  // The sidebar's lists and the Home count: pulled at mount and again on every attach (#1095).
+  const refreshSynced = (): void => { window.bean.syncedChatList().then((c) => setSynced(c ?? []), () => {}); };
+  const pullLists = (): void => {
+    window.bean.chatThreadList().then((t) => setThreads(t ?? []), () => {});
+    refreshSynced();
+    window.bean.chatopsStatus().then((st) => {
+      if (st) setBots({ discord: st.discord.running, teams: st.teams.running });
+    }, () => {});
+    window.bean.homePending().then((n) => setHomePending(n > 0), () => {});
+  };
+
   useEffect(() => {
     const setTheme = (theme: string): void => {
       document.documentElement.dataset.theme = theme;
@@ -204,12 +220,7 @@ export function ChatWindow() {
     const route = (mountId: string | undefined): ChatSessionApi | undefined => (mountId === undefined ? shownApi() : sessions.get(mountId));
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
-    window.bean.chatThreadList().then((t) => setThreads(t ?? []), () => {});
-    const refreshSynced = (): void => { window.bean.syncedChatList().then((c) => setSynced(c ?? []), () => {}); };
-    refreshSynced();
-    window.bean.chatopsStatus().then((st) => {
-      if (st) setBots({ discord: st.discord.running, teams: st.teams.running });
-    }, () => {});
+    pullLists();
     window.bean.onChatopsEvent((e) => setBots((prev) => ({ ...prev, [e.bot]: e.running })));
     window.bean.onSyncedChatEvent((e) => {
       refreshSynced();
@@ -241,7 +252,6 @@ export function ChatWindow() {
     // Progress for a chat that's gone is dropped, never shown in another one.
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
     window.bean.onChatMainChanged((from) => sessions.get(from)?.mainChanged());
-    window.bean.homePending().then((n) => setHomePending(n > 0), () => {});
     window.bean.onTaskStatus((jobs) => setHomePending(jobs.some((j) => j.kind === "home")));
     // The Home bubble, the avatar with posts pending, or a sprout banner: show Home.
     window.bean.getPendingChatHome().then((h) => { if (h) openThreadRef.current("home"); }, () => {});
