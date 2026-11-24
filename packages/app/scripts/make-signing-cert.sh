@@ -26,8 +26,10 @@ EOF
 pass=$(openssl rand -hex 24)
 openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$cnf" \
   -keyout "$out/key.pem" -out "$out/cert.pem" 2>/dev/null
-openssl pkcs12 -export -inkey "$out/key.pem" -in "$out/cert.pem" \
-  -name "Bean Self-Signed Code Signing" -out "$out/bean-signing.p12" -passout "pass:$pass"
+# 3DES/SHA1 PKCS12: macOS `security import` rejects OpenSSL 3+'s AES/SHA256 default
+# ("MAC verification failed … wrong password?").
+openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
+  -inkey "$out/key.pem" -in "$out/cert.pem" -name "Bean Self-Signed Code Signing" -out "$out/bean-signing.p12" -passout "pass:$pass"
 printf '%s' "$pass" > "$out/bean-signing.p12.password"
 rm "$out/key.pem" "$cnf"
 
