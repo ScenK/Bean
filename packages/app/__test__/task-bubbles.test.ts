@@ -106,6 +106,76 @@ test("a held bubble that's gone stops reading as running, and a still pointer re
   } finally { vi.useRealTimers(); }
 });
 
+describe("clicks survive a re-rendering stack (#1093)", () => {
+  // A real click: pointerdown, (a push lands), pointerup, then click on the node pressed first.
+  const press = (node: HTMLElement): void => { node.dispatchEvent(new Event("pointerdown", { bubbles: true })); };
+  const lift = (node: HTMLElement): void => { node.dispatchEvent(new Event("pointerup", { bubbles: true })); node.click(); };
+
+  it("a push between pointerdown and pointerup still fires Stop, then catches up", async () => {
+    const r = job("routine:r:1", { routine: "r" });
+    const { box, b, onStop, open } = mount([r]);
+    open("routine:r:1");
+    const stop = box.querySelector<HTMLButtonElement>(".bean-bubble-stop")!;
+    press(stop);
+    b.update([{ ...r, line: "step two" }, job("delegate:1", { kind: "delegate", steps: undefined })]);
+    expect(stop.isConnected).toBe(true); // the DOM wasn't touched
+    lift(stop);
+    expect(onStop).toHaveBeenCalledExactlyOnceWith("r");
+    await new Promise((res) => setTimeout(res));
+    expect(box.textContent).toContain("step two"); // caught up; the new bubble waits for pointerleave
+    box.querySelector(".bean-bubble-stack")!.dispatchEvent(new Event("pointerleave"));
+    expect(box.querySelector('.bean-bubble[data-id="delegate:1"]')).not.toBeNull();
+  });
+
+  it("a push between pointerdown and pointerup still opens a memory bubble", () => {
+    const box = document.createElement("div");
+    document.body.append(box);
+    const onMemory = vi.fn();
+    const b = createTaskBubbles(box, () => {}, () => {}, onMemory);
+    const memory = job("memory:batch", { kind: "memory", state: "done", steps: undefined });
+    b.update([memory]);
+    const node = box.querySelector<HTMLElement>('.bean-bubble[data-id="memory:batch"]')!;
+    press(node);
+    b.update([memory, job("chat:1", { kind: "chat", steps: undefined })]);
+    b.setLayout(true, undefined);
+    lift(node);
+    expect(onMemory).toHaveBeenCalledOnce();
+  });
+
+  it("a missed pointerup can't freeze the stack: pointercancel releases it", async () => {
+    const { box, b } = mount([job("chat:1", { kind: "chat", steps: undefined })]);
+    const stack = box.querySelector<HTMLElement>(".bean-bubble-stack")!;
+    stack.dispatchEvent(new Event("pointerdown"));
+    b.update([]);
+    expect(box.querySelectorAll(".bean-bubble")).toHaveLength(1);
+    window.dispatchEvent(new Event("pointercancel"));
+    await new Promise((res) => setTimeout(res));
+    expect(box.querySelectorAll(".bean-bubble")).toHaveLength(1); // still hovered: held, reads done
+    stack.dispatchEvent(new Event("pointerleave"));
+    expect(box.querySelectorAll(".bean-bubble")).toHaveLength(0);
+  });
+
+  it("an expanded sprout never folds into +N more: an older bubble folds instead, and Stop stays", () => {
+    const others = [1, 2, 3, 4].map((n) => job(`delegate:${n}`, { kind: "delegate", steps: undefined }));
+    const r = job("routine:r:1", { routine: "r" });
+    const { box, b, open } = mount([r, ...others.slice(0, 3)]);
+    open("routine:r:1");
+    b.update([r, ...others]); // pointer not held: the sprout is now the oldest of five
+    const ids = [...box.querySelectorAll<HTMLElement>(".bean-bubble")].map((n) => n.dataset.id);
+    expect(ids).toEqual(["routine:r:1", "delegate:2", "delegate:3", "delegate:4"]);
+    expect(box.querySelector(".bean-bubble-more")!.textContent).toBe("+1 more");
+    expect(box.querySelector(".bean-bubble-stop")).not.toBeNull();
+  });
+
+  it("a click beside Stop (its reserved room) doesn't collapse the bubble", () => {
+    const { box, onStop, open } = mount([job("routine:r:1", { routine: "r" })]);
+    open("routine:r:1");
+    box.querySelector<HTMLElement>(".bean-bubble-stop-room")!.click();
+    expect(box.querySelector(".bean-bubble-stop")).not.toBeNull();
+    expect(onStop).not.toHaveBeenCalled();
+  });
+});
+
 test("a standalone failure (kind bot) expands to show its detail instead of navigating (#1068)", () => {
   const { box, open } = mount([job("sprouts:home-dm", {
     kind: "bot", name: "Sprouts", state: "failed", steps: undefined, step: undefined,

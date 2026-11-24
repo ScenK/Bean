@@ -80,10 +80,15 @@ test("status bubbles grow the avatar around a fixed bean and collapse when jobs 
     await expect(page.locator(".bean-bubble")).toHaveCount(4);
     await expect(page.locator(".bean-bubble-more")).toBeFocused(); // keyboard focus survives the re-render
 
-    // An open job that folds into the pill doesn't leave the visible ones muted.
+    // The open job never folds into the pill: an older one folds in its place (#1093).
+    const r6 = { id: "r6", kind: "delegate", name: "job 6", line: "Running…", detail: "", startedAt: now, state: "running" };
     await page.locator('.bean-bubble[data-id="r3"]').click();
     await expect(page.locator(".bean-bubble-line")).toHaveCount(1);
-    await push([...many, { id: "r6", kind: "delegate", name: "job 6", line: "Running…", detail: "", startedAt: now, state: "running" }]);
+    await push([...many, r6]);
+    await expect(page.locator(".bean-bubble")).toHaveCount(4);
+    await expect(page.locator('.bean-bubble[data-id="r3"]')).toHaveAttribute("aria-expanded", "true");
+    // An open job that leaves doesn't leave the visible ones muted.
+    await push([...many.filter((j) => j.id !== "r3"), r6]);
     await expect(page.locator(".bean-bubble-line")).toHaveCount(4);
     // Focus on a job that then folds away lands on the newest bubble instead of vanishing.
     await page.locator('.bean-bubble[data-id="r4"]').focus();

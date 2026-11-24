@@ -15,6 +15,9 @@ import type { DashboardTarget } from "../channels.js";
 // it leaves: a 10s-lingering bubble vanishing under the cursor would slide its neighbour into the
 // spot, and the click would land there (a memory bubble's click opening a delegate's chat). The
 // shown bubbles' content and the Stop count still follow the latest list, so Stop never undersells.
+// While a button is pressed on the stack, pushes don't touch the DOM at all (#1093): a click fires
+// only when pointerdown and pointerup hit the same node, and a render in between detaches it, so
+// Stop / open / expand would silently do nothing. They catch up right after the click.
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
@@ -145,8 +148,16 @@ export function createTaskBubbles(
     const stopOf = active?.classList.contains("bean-bubble-stop")
       ? active.closest<HTMLElement>(".bean-bubble-item")?.querySelector<HTMLElement>(".bean-bubble")?.dataset.id : undefined;
     if (jobs.length <= MAX_VISIBLE) showAll = false;
-    const hidden = showAll ? [] : jobs.slice(0, Math.max(0, jobs.length - MAX_VISIBLE));
-    const shown = jobs.slice(hidden.length);
+    const fold = showAll ? 0 : Math.max(0, jobs.length - MAX_VISIBLE);
+    let hidden = jobs.slice(0, fold);
+    let shown = jobs.slice(fold);
+    // The open bubble never folds (its Stop would vanish under the pointer): the oldest shown one
+    // folds in its place, so the cap holds.
+    const pinned = hidden.find((j) => j.id === openId);
+    if (pinned) {
+      hidden = [...hidden.filter((j) => j !== pinned), shown[0]!];
+      shown = [pinned, ...shown.slice(1)];
+    }
     // An open job that left (or folded into the pill) would otherwise keep every visible one quiet.
     if (openId && !shown.some((j) => j.id === openId)) openId = undefined;
     const html = shown.map((j, i) =>
@@ -179,13 +190,24 @@ export function createTaskBubbles(
     latest = latest.filter((j) => j.id !== id);
     jobs = latest;
   };
+  let pressed = false; // a button is down on the stack: don't touch the DOM until the click is out
+  let pending = false; // a push arrived while pressed
+  // Bring the shown stack up to `latest`: the same bubbles in the same spots while hovered.
+  const apply = (): void => {
+    pending = false;
+    if (hovered && !sameIds(jobs, latest)) {
+      const byId = new Map(latest.map((j) => [j.id, j]));
+      // Same bubbles in the same spots, fresh content; one that's gone stops reading as running.
+      jobs = jobs.map((j) => byId.get(j.id) ?? (j.state === "running" ? { ...j, state: "done" as const } : j));
+    } else jobs = latest;
+    render();
+  };
   let holdTimer: ReturnType<typeof setTimeout> | undefined;
   const release = (): void => {
     clearTimeout(holdTimer);
     hovered = false;
-    if (jobs === latest) return;
-    jobs = latest;
-    render();
+    pressed = false; // a missed pointerup can't freeze the stack past HOLD_MS or pointerleave
+    if (jobs !== latest || pending) apply();
   };
   // Hiding the avatar (Cmd+W) doesn't always send pointerleave, and a stuck hold would hide new
   // bubbles — so a still pointer releases it too. ponytail: fixed HOLD_MS, a hide IPC if 10s bites.
@@ -198,6 +220,15 @@ export function createTaskBubbles(
   // under isn't reaching for a bubble, and holding then would keep new bubbles out (#970).
   stack.addEventListener("pointermove", hold);
   stack.addEventListener("pointerleave", release);
+  stack.addEventListener("pointerdown", () => { pressed = true; hold(); });
+  // The click dispatches right after pointerup (same task), so catch up on the next one.
+  const unpress = (): void => {
+    if (!pressed) return;
+    pressed = false;
+    setTimeout(() => { if (pending && !pressed) apply(); });
+  };
+  window.addEventListener("pointerup", unpress);
+  window.addEventListener("pointercancel", unpress);
 
   stack.addEventListener("click", (e) => {
     const stop = (e.target as HTMLElement).closest<HTMLButtonElement>(".bean-bubble-stop");
@@ -205,6 +236,8 @@ export function createTaskBubbles(
       if (!stop.disabled && stop.dataset.routine) onStop(stop.dataset.routine);
       return;
     }
+    // A near miss beside Stop lands on its reserved room inside the bubble: don't collapse it.
+    if ((e.target as HTMLElement).closest(".bean-bubble-stop-room")) return;
     if ((e.target as HTMLElement).closest(".bean-bubble-more")) {
       showAll = !showAll;
       render();
@@ -258,12 +291,8 @@ export function createTaskBubbles(
   return {
     update(next: TaskJob[]): void {
       latest = next;
-      if (hovered && !sameIds(jobs, next)) {
-        const byId = new Map(next.map((j) => [j.id, j]));
-        // Same bubbles in the same spots, fresh content; one that's gone stops reading as running.
-        jobs = jobs.map((j) => byId.get(j.id) ?? (j.state === "running" ? { ...j, state: "done" as const } : j));
-      } else jobs = next;
-      render();
+      if (pressed) pending = true;
+      else apply();
     },
     running: (): boolean => latest.some((j) => j.state === "running"),
     /** From main's layout: which side of the bean, and how tall the stack may get before it scrolls. */
@@ -271,7 +300,8 @@ export function createTaskBubbles(
       stack.style.maxHeight = stackMax ? `${stackMax}px` : "";
       if (nextBelow === below) return;
       below = nextBelow;
-      render();
+      if (pressed) pending = true;
+      else render();
     },
   };
 }
