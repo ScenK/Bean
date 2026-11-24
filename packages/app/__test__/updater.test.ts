@@ -47,7 +47,11 @@ describe("downloadAsset", () => {
 });
 
 describe("extractAndSign", () => {
-  test("writes the zip, ditto-extracts it, ad-hoc codesigns it, and returns the Bean.app path", async () => {
+  const ditto = { cmd: "ditto", args: ["-x", "-k", "/tmp/bean-update-xyz/Bean-update.zip", "/tmp/bean-update-xyz"] };
+  const verify = { cmd: "codesign", args: ["--verify", "--deep", "--strict", "/tmp/bean-update-xyz/Bean.app"] };
+  const adHoc = { cmd: "codesign", args: ["--force", "--deep", "--sign", "-", "/tmp/bean-update-xyz/Bean.app"] };
+
+  test("writes the zip, ditto-extracts it, keeps a signature that verifies, and returns the Bean.app path", async () => {
     const calls: { cmd: string; args: string[] }[] = [];
     const written: { path: string; data: Buffer }[] = [];
     const appPath = await extractAndSign(Buffer.from("zip-bytes"), {
@@ -57,10 +61,21 @@ describe("extractAndSign", () => {
     });
     expect(appPath).toBe("/tmp/bean-update-xyz/Bean.app");
     expect(written).toEqual([{ path: "/tmp/bean-update-xyz/Bean-update.zip", data: Buffer.from("zip-bytes") }]);
-    expect(calls).toEqual([
-      { cmd: "ditto", args: ["-x", "-k", "/tmp/bean-update-xyz/Bean-update.zip", "/tmp/bean-update-xyz"] },
-      { cmd: "codesign", args: ["--force", "--deep", "--sign", "-", "/tmp/bean-update-xyz/Bean.app"] },
-    ]);
+    // No re-sign: replacing the release's stable signature resets the user's privacy grants.
+    expect(calls).toEqual([ditto, verify]);
+  });
+
+  test("ad-hoc re-signs only a bundle whose signature fails verification", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    await extractAndSign(Buffer.from("zip-bytes"), {
+      mkdtemp: async () => "/tmp/bean-update-xyz",
+      writeFile: async () => {},
+      runCodesignAndDitto: async (cmd, args) => {
+        calls.push({ cmd, args });
+        if (args[0] === "--verify") throw new Error("code object is not signed at all");
+      },
+    });
+    expect(calls).toEqual([ditto, verify, adHoc]);
   });
 });
 

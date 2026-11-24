@@ -1,6 +1,6 @@
 ---
 name: project-manual-update-check
-description: Manual "Check for Updates" flow — Ed25519-signed GitHub Releases, no Sparkle/electron-updater, ad-hoc re-sign on install.
+description: Manual "Check for Updates" flow — Ed25519-signed GitHub Releases, no Sparkle/electron-updater, release signature kept on install.
 metadata:
   type: project
 ---
@@ -11,8 +11,8 @@ pure) and `packages/app/src/updater.ts` (fetch/download/extract/install — IO),
 `bean:check-for-update`/`bean:install-update` IPC. No background polling; every step is a
 user click.
 
-**Why not Sparkle/electron-updater:** ad-hoc
-signing (matching [safety-mac-adhoc-signing.md](safety-mac-adhoc-signing.md)) is NOT the
+**Why not Sparkle/electron-updater:** non-Developer-ID
+signing (see [safety-mac-codesigning.md](safety-mac-codesigning.md)) is NOT the
 blocker it looks like — Sparkle's authenticity check is EdDSA, independent of code-signing
 tier — but Sparkle.framework itself has no supported Electron embedding (electron/electron
 #5850, #29057, both unresolved). We took the EdDSA idea without the framework: Node's
@@ -22,10 +22,10 @@ built-in `crypto` module signs/verifies Ed25519 natively.
 (`packages/core/src/update-public-key.ts`) verifies a `.sig` sidecar asset the release
 workflow produces via `packages/app/scripts/sign-release.mjs` (private key only in the
 `UPDATE_ED_PRIVATE_KEY` GitHub Actions secret, never committed). A failed/missing signature
-is a hard stop — Bean never extracts/installs an unverified update. Ad-hoc re-signing the
-extracted bundle (`codesign --force --deep --sign -`, same command as `after-sign.mjs`)
-still happens before install, but that's only the AMFI "must be signed to execute" bar — it
-doesn't substitute for the EdDSA check.
+is a hard stop — Bean never extracts/installs an unverified update. The extracted bundle keeps
+its release codesignature when `codesign --verify` passes (ad-hoc re-sign only as a fallback),
+so macOS privacy grants survive the update — that's codesigning for AMFI/TCC, not a
+substitute for the EdDSA check.
 
 **Install mechanism:** `installAndRelaunch` (`packages/app/src/updater.ts`) does the same
 rename-dance Sparkle/Squirrel use — current `Bean.app` → `.old`, extracted bundle → the live
