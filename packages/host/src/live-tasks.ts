@@ -69,8 +69,8 @@ const HISTORY_MAX = 200;
 export const CARRY_ITEMS = 60;
 export const CARRY_CHARS = 32000;
 export const CARRY_ITEM_CHARS = 4000;
-/** The desktop chat's own summary of the messages before the carried ones. */
-export const CARRY_SUMMARY_CHARS = 4000;
+/** The desktop chat's own summary of the messages before the carried ones — compact.ts's SUMMARY_MAX_CHARS, so a valid one is never cut. */
+export const CARRY_SUMMARY_CHARS = 8000;
 interface Caps { items: number; chars: number; itemChars: number }
 const HANDOFF_CAPS: Caps = { items: HANDOFF_ITEMS, chars: HANDOFF_CHARS, itemChars: HANDOFF_ITEM_CHARS };
 const CARRY_CAPS: Caps = { items: CARRY_ITEMS, chars: CARRY_CHARS, itemChars: CARRY_ITEM_CHARS };

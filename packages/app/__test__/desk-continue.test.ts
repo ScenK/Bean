@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DeskContinueBody, DeskContinueResult, Destination } from "@bean/core";
+import { MAX_CONTINUE_TAIL, type DeskContinueBody, type DeskContinueResult, type Destination } from "@bean/core";
 import { buildDeskContinueHandler } from "../src/desk-continue.js";
 import { buildCarryTail, type LiveHandover } from "@bean/host";
 
@@ -86,5 +86,8 @@ describe("desk-continue handler", () => {
     expect(cut.tail.startsWith("Summary of the earlier messages: earlier plan\n\nUser: m20")).toBe(true);
     expect(buildCarryTail(many, 42).tail.startsWith("User: m20")).toBe(true);
     expect(buildCarryTail([], "s")).toEqual({ tail: "", count: 0 });
+    // The fullest carry (every cap hit, a full-size summary) still fits the wire.
+    const full = buildCarryTail(Array.from({ length: 80 }, () => ({ role: "user", text: "y".repeat(994) })), "s".repeat(9000));
+    expect(full.tail.length).toBeLessThanOrEqual(MAX_CONTINUE_TAIL);
   });
 });

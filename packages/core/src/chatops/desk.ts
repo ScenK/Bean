@@ -45,7 +45,7 @@ const MAX_WIRE_TEXT = 64_000;
 /** A continued thread's name (Discord's thread-name limit). */
 export const MAX_CONTINUE_TITLE = 100;
 /** The carried tail: host's CARRY_CHARS plus its summary and separator lines. */
-export const MAX_CONTINUE_TAIL = 40_000;
+export const MAX_CONTINUE_TAIL = 42_000;
 const MAX_CONTINUE_COUNT = 200;
 
 const fields = (v: unknown, type: string): Record<string, unknown> | undefined => {
