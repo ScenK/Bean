@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { PHONE_COLS, renderTables } from "../src/tables.js";
+import { PHONE_COLS, renderStream, renderTables } from "../src/tables.js";
 
 const fence = (...lines: string[]): string => ["```", ...lines, "```"].join("\n");
 
@@ -79,5 +79,25 @@ describe("renderTables", () => {
 
   test("short and long body rows are padded or cut to the header", () => {
     expect(renderTables("| a | b |\n|-|-|\n| x |\n| y | z | w |")).toBe(fence("a  b", "-  -", "x", "y  z"));
+  });
+});
+
+describe("renderStream (#1085)", () => {
+  test("a streamed table stays raw until its first row arrives, then renders each snapshot", () => {
+    const head = "Results:\n| PR | State |";
+    expect(renderStream(head)).toBe(head);
+    expect(renderStream(`${head}\n|---|---|`)).toBe(`${head}\n|---|---|`);
+    expect(renderStream(`${head}\n|---|---|\n| 1 | open |`)).toBe(`Results:\n${fence("PR  State", "--  -----", "1   open")}`);
+    expect(renderStream(`${head}\n|---|---|\n| 1 | open |\n| 22 | merged |`)).toBe(
+      `Results:\n${fence("PR  State", "--  ------", "1   open", "22  merged")}`,
+    );
+  });
+
+  test("a render past the limit falls back to the raw snapshot", () => {
+    // Records outgrow the raw rows (each repeats the header names).
+    const md = `| ${"h".repeat(20)} | ${"k".repeat(20)} |\n|-|-|\n${"| a | b |\n".repeat(50)}`;
+    expect(renderTables(md).length).toBeGreaterThan(md.length);
+    expect(renderStream(md, renderTables(md).length)).not.toBe(md);
+    expect(renderStream(md, md.length)).toBe(md);
   });
 });

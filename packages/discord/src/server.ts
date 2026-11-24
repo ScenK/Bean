@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { basename } from "node:path";
 import { sendChunks } from "./chunk.js";
+import { renderStream } from "./tables.js";
 import { discordCards } from "./components.js";
 import { discordDestinations } from "./destinations.js";
 import { openContinueThread, ownerOnly } from "./desk-continue.js";
@@ -241,8 +242,14 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
       if (voiceReply) voiceCards.add(id);
       return id;
     },
-    // Live-session stream messages: plain sends, so they never land in voiceCards (no click claims them).
-    postStream: async (text) => (await send(text)).id,
+    // Live-session stream messages: plain sends, so they never land in voiceCards (no click claims
+    // them). Each cumulative snapshot renders its tables (#1085).
+    postStream: async (text) => (await send(renderStream(text))).id,
+    editStream: async (id, text) => {
+      if (!("messages" in channel)) return;
+      const msg = await channel.messages.fetch(id);
+      await msg.edit({ content: renderStream(text) });
+    },
     updateCard: async (activityId, card) => {
       if (!("messages" in channel)) return;
       const msg = await channel.messages.fetch(activityId);
