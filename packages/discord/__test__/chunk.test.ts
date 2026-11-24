@@ -23,6 +23,57 @@ test("hard-splits a single over-long line", () => {
   expect(chunks).toEqual(["a".repeat(2000), "a".repeat(2000), "a".repeat(500)]);
 });
 
+describe("fence-aware chunkText", () => {
+  const body = Array.from({ length: 30 }, (_, i) => `const v${i} = ${"x".repeat(20)};`);
+  const text = ["intro", "```ts", ...body, "```", "outro"].join("\n");
+  const chunks = chunkText(text, 200);
+  const fenceLines = (c: string) => c.split("\n").filter((l) => l.startsWith("```")).length;
+
+  test("a split fence closes in one chunk and reopens with its info string in the next", () => {
+    expect(chunks.length).toBeGreaterThan(2);
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(200);
+      expect(fenceLines(c) % 2).toBe(0);
+    }
+    for (const c of chunks.slice(1, -1)) {
+      expect(c.startsWith("```ts\n")).toBe(true);
+      expect(c.endsWith("\n```")).toBe(true);
+    }
+  });
+
+  test("joined minus the added fences equals the input", () => {
+    expect(chunks.join("\n").replaceAll("\n```\n```ts", "")).toBe(text);
+  });
+
+  test("a chunk never ends on a bare opening line", () => {
+    const t = `${"a".repeat(95)}\n\`\`\`\n${"b".repeat(90)}\n\`\`\``;
+    expect(chunkText(t, 100)).toEqual(["a".repeat(95), `\`\`\`\n${"b".repeat(90)}\n\`\`\``]);
+  });
+
+  test("a hard-split line inside a fence keeps every piece fenced and under the limit", () => {
+    const t = `\`\`\`\n${"z".repeat(250)}\n\`\`\``;
+    const out = chunkText(t, 100);
+    for (const c of out) {
+      expect(c.length).toBeLessThanOrEqual(100);
+      expect(fenceLines(c) % 2).toBe(0);
+    }
+    expect(out.join("").replaceAll(/\n?```\n?/g, "")).toBe("z".repeat(250));
+    expect(out.at(-1)).not.toBe("```\n```"); // the real closer isn't left as an empty block
+  });
+});
+
+test("an opening line too long to wrap pieces in still splits, every chunk under the limit", () => {
+  const out = chunkText(`\`\`\`${"i".repeat(93)}\n${"z".repeat(30)}`, 100);
+  expect(out.length).toBeGreaterThan(0);
+  for (const c of out) expect(c.length).toBeLessThanOrEqual(100);
+  expect(out.join("")).toContain("z".repeat(30));
+});
+
+test("a split before a trailing newline sends no blank chunk", () => {
+  expect(chunkText(`${"a".repeat(2000)}\n`)).toEqual(["a".repeat(2000)]);
+  expect(chunkText(`${"a".repeat(2000)}\n\n \n`)).toEqual(["a".repeat(2000)]);
+});
+
 describe("sendChunks", () => {
   const long = `${"a".repeat(2000)}\n${"b".repeat(2000)}\nc`;
   const sender = (failAt = -1) => {
@@ -55,6 +106,12 @@ describe("sendChunks", () => {
     const record = vi.fn();
     await expect(sendChunks(long, sender(1).send, { record })).rejects.toThrow("send failed");
     expect(record).not.toHaveBeenCalled();
+  });
+
+  test("tables are rendered before chunking", async () => {
+    const { sent, send } = sender();
+    await sendChunks("| a | b |\n|-|-|\n| x | y |", send, { record: vi.fn() });
+    expect(sent).toEqual(["```\na  b\n-  -\nx  y\n```"]);
   });
 
   test("a failing record doesn't fail the send", async () => {

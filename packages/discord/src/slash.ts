@@ -1,6 +1,7 @@
 import { CHATOPS_COMMANDS, type BotEffects, type IncomingMessage } from "@bean/core";
 import { ApplicationCommandOptionType, type ApplicationCommandDataResolvable } from "discord.js";
 import { chunkText } from "./chunk.js";
+import { renderTables } from "./tables.js";
 
 // The one option each kind of command carries; always required.
 const OPTIONS = {
@@ -79,7 +80,7 @@ export async function answerSlash(
     },
   });
   const text = lines.join("\n\n") || (!handled ? "Unknown command." : announced ? "Posted in the channel." : "OK.");
-  const [first = text, ...rest] = chunkText(text);
+  const [first = text, ...rest] = chunkText(renderTables(text));
   await out.editReply(first);
   for (const chunk of rest) await out.followUp(chunk);
 }
