@@ -3,7 +3,7 @@ import { ChatPanel, type StopTarget } from "./ChatPanel.js";
 import { MAX_IMAGES_PER_MESSAGE, PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
-  HANDOFF_ITEMS, chatTurns, keyedTurns, modelHistory, placeSummary, sinceSummary, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
+  CARRY_ITEMS, chatTurns, keyedTurns, modelHistory, placeSummary, sinceSummary, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
   LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
   LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths, type LabeledImage,
 } from "./agent-mode.js";
@@ -1815,7 +1815,8 @@ export function ChatSession({
     if (continuingRef.current) return "Already continuing.";
     const l = liveRef.current;
     const request = window.bean.deskContinue(
-      l?.sessionId ? { channelId, title, sessionId: l.sessionId } : { channelId, title, history: handoffItems(itemsRef.current) },
+      l?.sessionId ? { channelId, title, sessionId: l.sessionId }
+        : { channelId, title, history: handoffItems(sinceSummary(itemsRef.current)), summary: modelHistory(itemsRef.current).summary },
       mountId,
     ).catch((err: unknown) => ({ failed: err instanceof Error ? err.message : String(err) }));
     continuingRef.current = request;
@@ -1943,7 +1944,8 @@ export function ChatSession({
             disabled={continueDisabled}
             title={threadRef.current?.title ?? ""}
             agent={live?.sessionId ? live.agent : undefined}
-            count={Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)}
+            count={Math.min(handoffItems(sinceSummary(items)).filter((h) => h.text.trim()).length, CARRY_ITEMS)}
+            summary={items.some((it) => it.kind === "summary")}
             onContinue={continueChat}
           />
         )}

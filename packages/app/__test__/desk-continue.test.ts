@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DeskContinueBody, DeskContinueResult, Destination } from "@bean/core";
+import { MAX_CONTINUE_TAIL, type DeskContinueBody, type DeskContinueResult, type Destination } from "@bean/core";
 import { buildDeskContinueHandler } from "../src/desk-continue.js";
 import { buildCarryTail, type LiveHandover } from "@bean/host";
 
@@ -72,5 +72,22 @@ describe("desk-continue handler", () => {
     expect(buildCarryTail([{ role: "reply", text: "done", agent: "codex" }, { role: "bogus", text: "x" }, "junk"]))
       .toEqual({ tail: "Codex: done", count: 1 });
     expect(buildCarryTail(undefined)).toEqual({ tail: "", count: 0 });
+  });
+
+  it("carries far more than a handoff, led by the summary whenever there is one", () => {
+    const long = Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? "reply" : "user", text: `m${i} ${"x".repeat(900)}` }));
+    expect(buildCarryTail(long).count).toBe(30);
+    expect(buildCarryTail(long).tail.startsWith("User: m0")).toBe(true);
+    // A restored chat may have trimmed the summarized messages: the summary still leads.
+    expect(buildCarryTail(long.slice(0, 2), "earlier plan").tail.startsWith("Summary of the earlier messages: earlier plan\n\nUser: m0")).toBe(true);
+    const many = Array.from({ length: 80 }, (_, i) => ({ role: "user", text: `m${i}` }));
+    const cut = buildCarryTail(many, "  earlier plan ");
+    expect(cut.count).toBe(60);
+    expect(cut.tail.startsWith("Summary of the earlier messages: earlier plan\n\nUser: m20")).toBe(true);
+    expect(buildCarryTail(many, 42).tail.startsWith("User: m20")).toBe(true);
+    expect(buildCarryTail([], "s")).toEqual({ tail: "", count: 0 });
+    // The fullest carry (every cap hit, a full-size summary) still fits the wire.
+    const full = buildCarryTail(Array.from({ length: 80 }, () => ({ role: "user", text: "y".repeat(994) })), "s".repeat(9000));
+    expect(full.tail.length).toBeLessThanOrEqual(MAX_CONTINUE_TAIL);
   });
 });
