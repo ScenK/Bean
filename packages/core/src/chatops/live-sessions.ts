@@ -97,6 +97,29 @@ function consumePrefix(s: ActiveSession, n: number): void {
   s.seals = s.seals.filter((x) => x > n).map((x) => x - removed);
 }
 
+const pipeLed = (line: string): boolean => line.trimStart().startsWith("|");
+const isDelimiterRow = (line: string): boolean =>
+  line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").every((c) => /^\s*:?-+:?\s*$/.test(c));
+
+/** Where a rollover at the newline `at` should cut instead: the newline before the table block
+ * (consecutive `|`-led lines including a delimiter row) that `at` falls inside, so the table's
+ * tail isn't stranded without its header. Unchanged when `at` isn't inside a table or the table
+ * starts the message (nothing earlier to cut at). */
+function rolloverCut(buf: string, at: number): number {
+  if (buf[at] !== "\n") return at;
+  const lines = buf.split("\n");
+  let k = 0; // the line ending at `at`
+  for (let off = 0; off + (lines[k] ?? "").length < at; k++) off += (lines[k] ?? "").length + 1;
+  if (!pipeLed(lines[k] ?? "") || !pipeLed(lines[k + 1] ?? "")) return at;
+  let first = k;
+  while (first > 0 && pipeLed(lines[first - 1] ?? "")) first--;
+  let last = k + 1;
+  while (last + 1 < lines.length && pipeLed(lines[last + 1] ?? "")) last++;
+  const head = lines.slice(0, first).join("\n");
+  // A blank head would post an empty message (Discord rejects it): treat it as offset 0.
+  return head.trim() && lines.slice(first, last + 1).some(isDelimiterRow) ? head.length : at;
+}
+
 function turnFooter(s: TurnSummary): string {
   if (s.failed !== undefined) return `— turn failed: ${s.failed}`;
   const parts: string[] = [];
@@ -426,7 +449,7 @@ export class LiveSessionRegistry {
           if (end > MSG_LIMIT) {
             // Rollover: send the head of the current message, the rest starts a new one.
             const cut = s.buf.lastIndexOf("\n", MSG_LIMIT);
-            const at = cut > 0 ? cut : MSG_LIMIT;
+            const at = cut > 0 ? rolloverCut(s.buf, cut) : MSG_LIMIT;
             const head = s.buf.slice(0, at);
             if (s.msgId === undefined) await s.sink.post(head);
             else if (head !== s.sent) await s.sink.edit(s.msgId, head);

@@ -12,4 +12,9 @@ markdown; only reply-to stitching sees the rendered text.
 - `chunkText` is fence-aware (closes/reopens a split code block); keep it that way or a split grid
   inverts the next message.
 
-Epic #1083; live-session streams: #1085.
+- Live-session streams (#1085): `postStream`/`editStream` run `renderStream()` on each cumulative
+  snapshot — raw text when the render would pass 2000 (core caps the raw snapshot at 1900). Core's
+  rollover (`rolloverCut` in `chatops/live-sessions.ts`) cuts before a `|`-led block with a
+  delimiter row instead of inside it, unless the table starts the message.
+
+Epic #1083.

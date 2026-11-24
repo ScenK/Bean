@@ -189,3 +189,10 @@ export function renderTables(text: string, cols = PHONE_COLS): string {
   }
   return out.join("\n");
 }
+
+/** A live-session stream snapshot, tables rendered, unless that pushes it past Discord's message
+ * cap — then the raw text (core keeps the raw snapshot under it) for this tick. */
+export function renderStream(text: string, limit = 2000): string {
+  const rendered = renderTables(text);
+  return rendered.length <= limit ? rendered : text;
+}

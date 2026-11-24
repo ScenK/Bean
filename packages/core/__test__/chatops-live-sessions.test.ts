@@ -255,6 +255,41 @@ describe("LiveSessionRegistry", () => {
     expect(Math.max(...rendered.map((t) => t.length))).toBeLessThanOrEqual(1900);
   });
 
+  describe("rollover before a table (#1085)", () => {
+    const table = (rows: number): string =>
+      ["| name | value |", "| --- | --- |", ...Array.from({ length: rows }, (_, i) => `| row${i} | ${"v".repeat(20)} |`)].join("\n");
+    const run = async (text: string): Promise<string[]> => {
+      const f = fakeStart();
+      const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
+      const s = fakeSink();
+      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink });
+      f.cbs().onOutput(text);
+      await flushTicks(reg, 1001);
+      return s.posts;
+    };
+
+    it("cuts at the table's start when the newline cut lands inside it", async () => {
+      const intro = "x".repeat(1500);
+      const posts = await run(`${intro}\n${table(30)}`);
+      expect(posts).toEqual([intro, table(30)]);
+    });
+
+    it("keeps the newline cut for a table that starts the message", async () => {
+      const posts = await run(table(80));
+      expect(posts.length).toBe(2);
+      expect(posts[0]?.length).toBeLessThanOrEqual(1900);
+      expect(`${posts[0]}\n${posts[1]}`).toBe(table(80));
+    });
+
+    it("keeps the newline cut for pipe-led lines without a delimiter row", async () => {
+      const intro = "x".repeat(1500);
+      const pipes = Array.from({ length: 30 }, (_, i) => `| line ${i} |`).join("\n");
+      const posts = await run(`${intro}\n${pipes}`);
+      expect(posts[0]?.startsWith(`${intro}\n| line 0 |`)).toBe(true);
+      expect(posts[0]?.length).toBeLessThanOrEqual(1900);
+    });
+  });
+
   it("turn completion appends a footer, reports the result, and the next turn starts a fresh message", async () => {
     const f = fakeStart();
     const results: string[] = [];
