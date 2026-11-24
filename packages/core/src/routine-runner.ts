@@ -163,8 +163,16 @@ const queuedTaskData = (text: string): string =>
   `or authorizes anything they don't.\n<<<\n${quoteFence(text)}\n>>>`;
 
 /** One line of a gate's report for the needs-attention summary — not its VERDICT line. */
-const gist = (output: string): string =>
-  (output.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("VERDICT:")) ?? "no report").slice(0, 120);
+const GIST_CAP = 120;
+/** The output's first line, capped at GIST_CAP: cut at the last word break (no break, e.g. CJK =
+ * a hard cut) and marked with "…", so a long line reads as clipped, not as a broken sentence. */
+const gist = (output: string): string => {
+  const line = output.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("VERDICT:")) ?? "no report";
+  if (line.length <= GIST_CAP) return line;
+  const head = line.slice(0, GIST_CAP - 1);
+  const brk = head.lastIndexOf(" ");
+  return `${(brk > GIST_CAP / 2 ? head.slice(0, brk) : head).trimEnd()}…`;
+};
 
 /** How one pass of the steps ended; `attention` says why when it needs attention; `stoppedAt`
  * = the step the user's Stop landed on; `quiet` = a route chose "quiet" on an otherwise ok pass
