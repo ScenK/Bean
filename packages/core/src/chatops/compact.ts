@@ -1,6 +1,8 @@
 import type { ChatTurn, ConverseDeps } from "../converse.js";
 import type { ConversationStore, TurnSurface } from "./conversation.js";
 import { MAIN_CONVERSATION_ID, deliveryTurnKey } from "../main-conversation.js";
+import { CARRIED_LEAD } from "./ambient.js";
+import { MAX_CONTINUE_TAIL } from "./desk.js";
 
 // Above this many raw turns, summarize the oldest chunk instead of letting the conversation
 // grow unbounded — the SQLite-backed store no longer has the old in-memory MAX_TURNS=40 hard
@@ -11,7 +13,13 @@ const SUMMARIZE_COUNT = 40;
 // One turn's share of a summary call's input: a pasted log or an agent's long final can't make a
 // summary call as big as the history it bounds.
 export const SUMMARY_TURN_CHARS = 2000;
-const capTurn = (s: string): string => (s.length > SUMMARY_TURN_CHARS ? `${s.slice(0, SUMMARY_TURN_CHARS)}…` : s);
+// A desk-continue carry (#1099) is many messages in one turn: it gets the whole tail as its budget.
+// Framing at worst triples the tail (an all-newline tail gains `> ` per char) plus the lead line.
+const CARRIED_TURN_CHARS = 3 * MAX_CONTINUE_TAIL + 1000;
+const capTurn = (s: string): string => {
+  const cap = s.startsWith(CARRIED_LEAD) ? CARRIED_TURN_CHARS : SUMMARY_TURN_CHARS;
+  return s.length > cap ? `${s.slice(0, cap)}…` : s;
+};
 
 /** A summary of `turns`, folded into `previous` (the summary so far) when there is one. Throws when
  * the model call fails or comes back empty — callers decide what a failure keeps. */
