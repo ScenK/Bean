@@ -43,7 +43,7 @@ export const opencodeTurnAdapter: TurnAdapter = {
   command: "opencode",
   args: opencodeRunArgs,
   validResume: isOpencodeSessionId,
-  parse: parseOpencode,
+  parser: () => parseOpencode,
   rejected: /Session not found/i,
   mismatch: OPENCODE_SESSION_MISMATCH,
   // opencode reaps its tools on neither SIGTERM nor SIGINT: soft-signal every group (#246).

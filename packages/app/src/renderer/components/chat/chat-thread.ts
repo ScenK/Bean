@@ -106,7 +106,7 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
         && (it.role === "user" || it.role === "bean" || it.role === "agent" || it.role === "status")
         ? {
           kind: "dm", id: it.id, seq: it.seq, via: it.via, role: it.role, text: cap(it.text),
-          ...(it.agent === "claude" || it.agent === "codex" || it.agent === "opencode" ? { agent: it.agent } : {}),
+          ...(it.agent === "claude" || it.agent === "codex" || it.agent === "opencode" || it.agent === "agy" ? { agent: it.agent } : {}),
         }
         : undefined;
   }

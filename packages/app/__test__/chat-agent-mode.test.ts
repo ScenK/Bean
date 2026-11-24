@@ -31,6 +31,7 @@ describe("agent-mode helpers", () => {
     expect(parseSlash("/claude")).toEqual({ agent: "claude", rest: "" });
     expect(parseSlash("/claude fix X\nplease")).toEqual({ agent: "claude", rest: "fix X\nplease" });
     expect(parseSlash("/bean hi")).toEqual({ agent: "bean", rest: "hi" });
+    expect(parseSlash("/agy fix X")).toEqual({ agent: "agy", rest: "fix X" });
     expect(parseSlash("/claudex")).toBeUndefined();
     expect(parseSlash("/new")).toBeUndefined();
     expect(parseSlash("see /claude")).toBeUndefined();

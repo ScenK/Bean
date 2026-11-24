@@ -43,7 +43,7 @@ export function isOpencodeSessionId(id: string): boolean {
 
 /** Whether `id` is a session id `cli` can continue live: valid, plus each CLI's own shape. */
 export function isLiveSessionId(cli: CliName, id: string): boolean {
-  return isValidSessionId(id) && (cli === "codex" ? isCodexSessionId(id) : cli === "opencode" ? isOpencodeSessionId(id) : true);
+  return isValidSessionId(id) && (cli === "codex" || cli === "agy" ? isCodexSessionId(id) : cli === "opencode" ? isOpencodeSessionId(id) : true);
 }
 
 /** The refusal for an id that isn't one Bean can continue — CLI-neutral. */

@@ -15,4 +15,7 @@ Verified on agy 1.5.14 (#1078). Re-probe after an agy upgrade.
   retried fresh. Auth lives in the OS keychain, so `bean-core`'s boot line says `agy=unknown`.
 - **Stream shape.** `{event:"init"|"step_update"|"result"}`; tool steps tail as `▸ <tool_name>`
   (never the command line); prose is buffered per `step_index` and emitted once on `DONE`.
-- **No live sessions yet:** `LIVE_CLIS` excludes agy and `findDelegateRun` refuses its rows.
+- **Live sessions (#1079)** run on the per-turn engine (`agy-live-session.ts`) with the same argv
+  and parsing. agy never rejects a resume, so `rejected` never matches: a continued id agy no longer
+  has surfaces as a different `init` id, which the engine's mismatch path stops before any output.
+  agy reaps its tool process groups on neither SIGINT nor SIGTERM: stop SIGTERMs the whole tree.

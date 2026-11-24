@@ -75,8 +75,8 @@ test("findDelegateRun returns the newest row and refuses ids that can't continue
   // opencode needs its `ses_` shape.
   expect(findDelegateRun(file, "oc", exists)).toEqual({ refusal: "Copy the session id from the resume line on the finished card." });
   expect(findDelegateRun(file, "ses_Ab12", exists)).toEqual({ run: { ...row, sessionId: "ses_Ab12", cli: "opencode", surface: "teams" } });
-  // agy has no live session yet (Continue live stays hidden).
-  expect(findDelegateRun(file, agyId, exists)).toEqual({ refusal: "agy runs can't continue live." });
+  // agy needs a UUID, like codex.
+  expect(findDelegateRun(file, agyId, exists)).toEqual({ run: { ...row, sessionId: agyId, cli: "agy", surface: "teams" } });
   expect(findDelegateRun(file, "desk", exists)).toEqual({ refusal: "That run started in Bean's desktop chat — continue it there." });
   expect(findDelegateRun(file, "gone", exists)).toEqual({ refusal: "That project folder no longer exists on this Mac." });
   // The desktop card asks for desktop rows only: its own run resumes, a chatops/routine id is unknown to it.

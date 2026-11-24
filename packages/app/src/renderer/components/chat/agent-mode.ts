@@ -11,7 +11,7 @@ import { pdfPlaceholder, SPROUT_UNKNOWN } from "./chat-thread.js";
 // kept out of ChatWindow so they test without a DOM. See .memory/project-live-sessions.md.
 
 // Renderer copy of core's LIVE_CLIS (node-free bundle rule: types only from the barrel).
-export const LIVE_AGENTS: readonly LiveCli[] = ["claude", "codex", "opencode"];
+export const LIVE_AGENTS: readonly LiveCli[] = ["claude", "codex", "opencode", "agy"];
 export const isLiveAgent = (a: unknown): a is LiveCli => LIVE_AGENTS.includes(a as LiveCli);
 
 /** Renderer copy of live-tasks' HANDOFF_ITEMS (that module is main-only) — for the placeholder's count. */
@@ -83,10 +83,10 @@ export function canContinueLive(item: ChatItem, enabled: readonly CliName[], liv
   return !liveInWindow && !!receipt?.sessionId && !!receipt.agent && enabled.includes(receipt.agent);
 }
 
-/** `/claude fix X` → { agent: "claude", rest: "fix X" }; a bare alias has rest "". Only the four
+/** `/claude fix X` → { agent: "claude", rest: "fix X" }; a bare alias has rest "". Only the five
  * aliases parse — any other `/text` stays a normal message. Installed-ness is the caller's check. */
 export function parseSlash(text: string): { agent: AgentId; rest: string } | undefined {
-  const m = /^\/(claude|codex|opencode|bean)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const m = /^\/(claude|codex|opencode|agy|bean)(?:\s+([\s\S]*))?$/.exec(text.trim());
   return m ? { agent: m[1] as AgentId, rest: (m[2] ?? "").trim() } : undefined;
 }
 

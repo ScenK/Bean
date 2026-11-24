@@ -74,7 +74,7 @@ export const LIVE_CAP_REACHED = `${LIVE_SESSION_CAP} live agent sessions are alr
 /** A chat: the client (window) it runs in plus its mount id (push.ts). */
 export interface LiveOwner { clientId: ClientId; mountId: string }
 
-export const LIVE_AGENT_NAMES: Record<LiveCli, string> = { claude: "Claude Code", codex: "Codex", opencode: "opencode" };
+export const LIVE_AGENT_NAMES: Record<LiveCli, string> = { claude: "Claude Code", codex: "Codex", opencode: "opencode", agy: "Antigravity" };
 
 /** The opening turn: the recent chat as quoted, non-authoritative context, then the ask. Bean's
  * memories and persona never go in — only what the user already sees in the transcript.
@@ -128,8 +128,8 @@ function parseHistory(raw: unknown): HandoffItem[] {
 }
 
 /** The live spawn on the login shell's resolved PATH (Finder-launched Electron gets launchd's —
- * safety-packaged-app-path-detection). claude reads further turns on stdin (`pipe`); codex and
- * opencode spawn per turn with stdin `ignore` (opencode blocks forever on an open pipe), which is
+ * safety-packaged-app-path-detection). claude reads further turns on stdin (`pipe`); codex,
+ * opencode and agy spawn per turn with stdin `ignore` (opencode blocks forever on an open pipe), which is
  * why delegate-tasks' resolvedPathSpawnFn can't be reused for claude. */
 export function liveSpawnFn(agent: LiveCli, resolvedPath: string | undefined): LiveSessionSpawnFn {
   const stdin = agent === "claude" ? "pipe" : "ignore";

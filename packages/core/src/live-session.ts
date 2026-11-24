@@ -9,9 +9,9 @@ import { withCliRules } from "./agent-rules.js";
 import { spawnEnv } from "./spawn-env.js";
 
 /** CLIs that can host a live session, claude first (the default engine): claude (one long-lived
- * stream-json process), codex and opencode (one spawn per turn, turn-live-session.ts). */
-export type LiveCli = "claude" | "codex" | "opencode";
-export const LIVE_CLIS: readonly LiveCli[] = ["claude", "codex", "opencode"];
+ * stream-json process), codex, opencode and agy (one spawn per turn, turn-live-session.ts). */
+export type LiveCli = "claude" | "codex" | "opencode" | "agy";
+export const LIVE_CLIS: readonly LiveCli[] = ["claude", "codex", "opencode", "agy"];
 
 export function isLiveCli(cli: unknown): cli is LiveCli {
   return LIVE_CLIS.includes(cli as LiveCli);
@@ -26,7 +26,7 @@ export interface LiveSessionRequest {
   prompt: string;
   /** Literal --model value (clis.json); flag omitted when unset. */
   model?: string;
-  /** Session id to continue (claude `--resume`, codex `exec resume`, opencode `--session`). Only pass an id Bean recorded in delegate_runs. */
+  /** Session id to continue (claude `--resume`, codex `exec resume`, opencode `--session`, agy `--conversation`). Only pass an id Bean recorded in delegate_runs. */
   resume?: string;
 }
 

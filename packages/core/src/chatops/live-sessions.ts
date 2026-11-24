@@ -7,6 +7,7 @@ import {
 } from "../live-session.js";
 import { codexTurnAdapter } from "../codex-live-session.js";
 import { opencodeTurnAdapter } from "../opencode-live-session.js";
+import { agyTurnAdapter } from "../agy-live-session.js";
 import { startTurnLiveSession } from "../turn-live-session.js";
 import { recordRun, releaseRun, updateRunPid } from "../run-queue.js";
 import { dbFile } from "../config.js";
@@ -67,15 +68,15 @@ type StartFn = (
   idleTimeoutMs?: number,
 ) => LiveSessionHandle;
 
-const TURN_ADAPTERS = { codex: codexTurnAdapter, opencode: opencodeTurnAdapter };
+const TURN_ADAPTERS = { codex: codexTurnAdapter, opencode: opencodeTurnAdapter, agy: agyTurnAdapter };
 
 /** Picks the engine by cli (absent = claude): claude's long-lived process, or the shared
  * per-turn engine. An injected spawnFn (e.g. the desktop's resolved-PATH spawn) reaches either;
  * absent = each engine's own default. */
 export const startLiveEngine: StartFn = (req, cbs, spawnFn, idleTimeoutMs) =>
-  req.cli === "codex" || req.cli === "opencode"
-    ? startTurnLiveSession(TURN_ADAPTERS[req.cli], req, cbs, spawnFn, idleTimeoutMs)
-    : startLiveSession(req, cbs, spawnFn, idleTimeoutMs);
+  req.cli === undefined || req.cli === "claude"
+    ? startLiveSession(req, cbs, spawnFn, idleTimeoutMs)
+    : startTurnLiveSession(TURN_ADAPTERS[req.cli], req, cbs, spawnFn, idleTimeoutMs);
 
 // Ended notices shown as-is, not as "Live session died: …".
 const VERBATIM_END = new Set([RESUME_REJECTED, ...Object.values(TURN_ADAPTERS).flatMap((a) => a.endMessages)]);
@@ -280,7 +281,7 @@ export class LiveSessionRegistry {
   // child exists); switch it to the child's real pid so crash cleanup tracks *that child*, not
   // this process — same reasoning as RunRegistry.start(). A lazy resume spawns claude on its first
   // send, so this runs after start and after each send.
-  // Per-turn CLIs (codex, opencode) spawn one child per turn, so their record stays on this
+  // Per-turn CLIs (codex, opencode, agy) spawn one child per turn, so their record stays on this
   // (bot) process for the whole session: a dead between-turns child's pid would get swept.
   // ponytail: if the bot hard-crashes mid-turn, boot cleanup misses that one detached turn;
   // per-turn pid tracking would need a multi-pid record.
