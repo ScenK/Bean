@@ -20,6 +20,30 @@ test("availableModels derives the label from the last path segment", () => {
   expect(result.find((m) => m.id === "sonnet")?.label).toBe("sonnet");
 });
 
+test("availableModels labels models whose short names collide with their full id", () => {
+  const result = availableModels([
+    { provider: "claude", models: ["opus"] },
+    { provider: "opencode", models: ["openai/gpt-6.1-sol", "github-copilot/gpt-6.1-sol", "github-copilot/gpt-6.1-terra"] },
+  ], ["claude", "opencode"]);
+  expect(result.map((m) => m.label)).toEqual(["opus", "openai/gpt-6.1-sol", "github-copilot/gpt-6.1-sol", "gpt-6.1-terra"]);
+});
+
+test("a bare id colliding with a prefixed one keeps its bare label; the prefixed one shows its full id", () => {
+  const result = availableModels([
+    { provider: "codex", models: ["gpt-6.1-sol"] },
+    { provider: "opencode", models: ["github-copilot/gpt-6.1-sol"] },
+  ], ["codex", "opencode"]);
+  expect(result.map((m) => m.label)).toEqual(["gpt-6.1-sol", "github-copilot/gpt-6.1-sol"]);
+});
+
+test("a collision only via a disabled CLI keeps the short label", () => {
+  const result = availableModels([
+    { provider: "codex", models: ["gpt-6.1-sol"] },
+    { provider: "opencode", models: ["github-copilot/gpt-6.1-sol"] },
+  ], ["opencode"]);
+  expect(result.map((m) => m.label)).toEqual(["gpt-6.1-sol"]);
+});
+
 test("availableModels with no detected CLIs returns nothing", () => {
   expect(availableModels(CLI_MODELS, [])).toEqual([]);
 });
