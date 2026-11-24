@@ -9,6 +9,11 @@ array, never copy it; pickers refetch on window focus. The repo default is ours 
 latest version per tier only (sol/astra/terra/luna, opus/sonnet…), superseded ones dropped —
 except when the latest regressed (e.g. gpt-6.2-sol): keep the previous one beside it until
 the new one is trusted, since sprouts pin it.
+agy is paid-tier only (agy users are on Google AI Pro or above): the latest Gemini paid tiers
+(today `gemini-4-neon-*`, `gemini-4-carbon-*`), one entry per effort level. Never add free-tier
+models (Flash, Hydrogen) or the third-party models agy also serves (Claude, GPT-OSS). A free
+account's `agy models` lists none of the paid tiers, so read the IDs from
+antigravity.google/docs/models instead.
 Users keep an older one with `add` — prefer `add`/`hide` over `models`, which freezes the
 provider's list against future defaults. Dropping a model fails any sprout step pinned to it
 (`pinnedStepSelection`), so call drops out in release notes. Tests seed their own
