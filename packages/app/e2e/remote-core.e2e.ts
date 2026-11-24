@@ -13,7 +13,7 @@ type Bean = { bean: { openComponent: (k: string) => Promise<void>; coreStatus: (
 // stdio. A chat message drives it: "drop" kills the tunnel mid-turn, "takeover" is another machine
 // attaching. Each spawn logs its argv. `<log>.core` (JSON, optional) is the core's update state (#838):
 // its version, the latest release, its busy list; mode "old" predates the update ops, "gone" never
-// comes back after an update.
+// comes back after an update; `attachDelay` (ms) holds the attach reply, so a window opens while connecting.
 const fakeSsh = (log: string): string => `#!${process.execPath}
 const { appendFileSync, readFileSync, writeFileSync } = require("node:fs");
 appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + "\\n");
@@ -31,7 +31,7 @@ process.stdin.on("data", (d) => {
     const n = buf.readUInt32BE(0);
     const m = JSON.parse(buf.subarray(4, 4 + n).toString());
     buf = buf.subarray(4 + n);
-    if (m.type === "attach") send({ type: "attached", handshake: { contract: ${CONTRACT_VERSION}, core: core().version ?? "test", platform: "linux", capabilities: [] }, generation: 1, clientId: -1 });
+    if (m.type === "attach") setTimeout(() => send({ type: "attached", handshake: { contract: ${CONTRACT_VERSION}, core: core().version ?? "test", platform: "linux", capabilities: [] }, generation: 1, clientId: -1 }), core().attachDelay ?? 0);
     if (m.type === "detach") process.exit(0);
     if (m.type !== "call") continue;
     appendFileSync(${JSON.stringify(log)} + ".calls", JSON.stringify({ op: m.op, args: m.args }) + "\\n");
@@ -84,6 +84,11 @@ process.stdin.on("data", (d) => {
 process.stdin.on("end", () => process.exit(0));
 `;
 
+// Opens a window only once the core is attached, so the spec doesn't depend on how fast the fake `ssh`
+// starts (its first exec on macOS can take most of a second, #1095).
+const whenAttached = (avatar: Page): Promise<void> => expect.poll(() => avatar.evaluate(() =>
+  (window as unknown as { bean: { coreStatus: () => Promise<{ state?: string }> } }).bean.coreStatus().then((s) => s.state)), { timeout: 10_000 }).toBe("attached");
+
 // #811: a shell attached to a remote core over ssh — host badge, a chat turn over the wire, the
 // reconnect bar with a read-only composer, and the takeover banner that waits for Take back.
 test("remote core: chat over ssh, reconnect bar, takeover banner", async () => {
@@ -102,6 +107,7 @@ test("remote core: chat over ssh, reconnect bar, takeover banner", async () => {
     const avatar = await app.firstWindow();
     watch(avatar);
     await expect(avatar.locator("#bean")).toHaveAttribute("title", "Bean on me@box");
+    await whenAttached(avatar);
     const [chat] = await Promise.all([
       app.waitForEvent("window"),
       avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("chat")),
@@ -164,6 +170,7 @@ test("remote core: capability-gated chat and key-preserving Settings", async () 
   try {
     const avatar = await app.firstWindow();
     await expect(avatar.locator("#bean")).toHaveAttribute("title", "Bean on me@box");
+    await whenAttached(avatar);
     const open = async (kind: string): Promise<Page> => {
       const [w] = await Promise.all([
         app.waitForEvent("window"),
@@ -218,6 +225,8 @@ test("remote core: capability-gated chat and key-preserving Settings", async () 
 
 // #1000: the core ran headless with no shell while the owner DMed it; a shell attaches, opens Home and
 // sees those exchanges labelled with their surface, then a bot's ping brings the next one — once each.
+// #1095: the chat and Skills windows open while the core is still connecting; their refused first
+// pulls run again on attach, without reopening anything.
 test("remote core: Home shows the owner's DM exchanges", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "bean-e2e-home-"));
   const userDataDir = await mkdtemp(join(tmpdir(), "bean-e2e-userdata-"));
@@ -226,22 +235,26 @@ test("remote core: Home shows the owner's DM exchanges", async () => {
   await writeFile(join(bin, "ssh"), fakeSsh(log));
   await chmod(join(bin, "ssh"), 0o755);
   await writeFile(join(userDataDir, "cores.json"), JSON.stringify({ selected: "r1", cores: [{ id: "r1", host: "me@box" }] }));
+  await writeFile(`${log}.core`, JSON.stringify({ attachDelay: 4_000 }));
   const app = await launchBean({ HOME: homeDir, PATH: `${bin}:${process.env.PATH ?? ""}` }, userDataDir);
   try {
     const avatar = await app.firstWindow();
     await expect(avatar.locator("#bean")).toHaveAttribute("title", "Bean on me@box");
-    // Attached first: a chat opened while still connecting gets its Home read refused ("Not connected …
-    // reconnecting") and doesn't load it again once attached — the race that made this test flaky.
-    await expect.poll(() => avatar.evaluate(async () => {
-      const s = await (window as unknown as Bean).bean.coreStatus();
-      return s.state ?? s.kind;
-    })).toBe("attached");
-    const [chat] = await Promise.all([
-      app.waitForEvent("window"),
-      avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("chat")),
-    ]);
-    await chat.waitForLoadState("domcontentloaded");
-    await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
+    const open = async (kind: string): Promise<Page> => {
+      const [w] = await Promise.all([
+        app.waitForEvent("window"),
+        avatar.evaluate((k) => (window as unknown as Bean).bean.openComponent(k), kind),
+      ]);
+      await w.waitForLoadState("domcontentloaded");
+      return w;
+    };
+    const chat = await open("chat");
+    const skills = await open("skills");
+    await expect(chat.locator(".bean-core-bar")).toContainText("Connecting to me@box");
+    await expect(chat.locator(".bean-core-bar")).toBeHidden({ timeout: 10_000 });
+    await expect(skills.locator(".bean-skills-row-name", { hasText: "remote-skill" })).toBeVisible();
+    await expect(chat.locator(".bean-chat-sidebar-home")).toHaveClass(/bean-chat-sidebar-home--active/);
+    await expect(chat.locator(".bean-chat:not([hidden])")).not.toContainText("Couldn't open that chat");
     // Named after the core's persona, read over the wire (#1001).
     await expect(chat.locator(".bean-chat-sidebar-home-title")).toHaveText("Pip");
     const shown = chat.locator(".bean-chat:not([hidden])");
@@ -277,6 +290,7 @@ test("remote core: update the core from About", async () => {
   try {
     const avatar = await app.firstWindow();
     await expect(avatar.locator("#bean")).toHaveAttribute("title", "Bean on me@box");
+    await whenAttached(avatar);
     const [about] = await Promise.all([
       app.waitForEvent("window"),
       avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("about")),
