@@ -69,7 +69,7 @@ const HISTORY_MAX = 200;
 export const CARRY_ITEMS = 60;
 export const CARRY_CHARS = 32000;
 export const CARRY_ITEM_CHARS = 4000;
-/** The desktop chat's own summary, carried when older messages didn't fit. */
+/** The desktop chat's own summary of the messages before the carried ones. */
 export const CARRY_SUMMARY_CHARS = 4000;
 interface Caps { items: number; chars: number; itemChars: number }
 const HANDOFF_CAPS: Caps = { items: HANDOFF_ITEMS, chars: HANDOFF_CHARS, itemChars: HANDOFF_ITEM_CHARS };
@@ -121,14 +121,13 @@ function pickRecent(history: readonly HandoffItem[], shape: (entry: string) => s
 }
 
 /** Continue in Discord (#697): the recent chat as plain `Who: text` blocks under the carry caps,
- * led by the desktop chat's summary when older messages didn't fit — the bot quotes and frames it
- * (core `formatCarriedBlock`). `count` = messages carried (the summary isn't one). Untrusted renderer input. */
+ * led by the desktop chat's summary — the bot quotes and frames it (core `formatCarriedBlock`).
+ * The renderer sends only the messages after its latest summary, so the summary covers everything
+ * before them. `count` = messages carried (the summary isn't one). Untrusted renderer input. */
 export function buildCarryTail(raw: unknown, rawSummary?: unknown): { tail: string; count: number } {
-  const history = parseHistory(raw);
-  const picked = pickRecent(history, undefined, CARRY_CAPS);
-  const dropped = history.filter((it) => it.text.trim()).length > picked.length;
+  const picked = pickRecent(parseHistory(raw), undefined, CARRY_CAPS);
   const summary = typeof rawSummary === "string" ? rawSummary.trim().slice(0, CARRY_SUMMARY_CHARS) : "";
-  const lead = picked.length > 0 && dropped && summary ? [`Summary of the earlier messages: ${summary}`] : [];
+  const lead = picked.length > 0 && summary ? [`Summary of the earlier messages: ${summary}`] : [];
   return { tail: [...lead, ...picked].join("\n\n"), count: picked.length };
 }
 

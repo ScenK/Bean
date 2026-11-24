@@ -1816,7 +1816,7 @@ export function ChatSession({
     const l = liveRef.current;
     const request = window.bean.deskContinue(
       l?.sessionId ? { channelId, title, sessionId: l.sessionId }
-        : { channelId, title, history: handoffItems(itemsRef.current), summary: modelHistory(itemsRef.current).summary },
+        : { channelId, title, history: handoffItems(sinceSummary(itemsRef.current)), summary: modelHistory(itemsRef.current).summary },
       mountId,
     ).catch((err: unknown) => ({ failed: err instanceof Error ? err.message : String(err) }));
     continuingRef.current = request;
@@ -1944,7 +1944,8 @@ export function ChatSession({
             disabled={continueDisabled}
             title={threadRef.current?.title ?? ""}
             agent={live?.sessionId ? live.agent : undefined}
-            count={Math.min(handoffItems(items).filter((h) => h.text.trim()).length, CARRY_ITEMS)}
+            count={Math.min(handoffItems(sinceSummary(items)).filter((h) => h.text.trim()).length, CARRY_ITEMS)}
+            summary={items.some((it) => it.kind === "summary")}
             onContinue={continueChat}
           />
         )}

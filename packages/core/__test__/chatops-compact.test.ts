@@ -134,6 +134,10 @@ describe("compactHistory (desktop rolling summary, #975)", () => {
     expect(out.summary?.covers).toBe(4); // two turns = half the budget
     expect(out.history).toHaveLength(3);
     expect(seen[0]!.length).toBeLessThan(6 * (SUMMARY_TURN_CHARS + 10));
+    // A long turn (a desk-continue carry) keeps its opening and its most recent end.
+    seen.length = 0;
+    await summarize([{ role: "user", content: `HEAD${"x".repeat(5000)}TAIL` }], summarizer as never);
+    expect(seen[0]).toMatch(/HEAD.*…x*TAIL/);
   });
 
   test("one turn over the byte budget is summarized away, success or failure — no raw turn kept", async () => {

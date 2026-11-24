@@ -11,7 +11,9 @@ const SUMMARIZE_COUNT = 40;
 // One turn's share of a summary call's input: a pasted log or an agent's long final can't make a
 // summary call as big as the history it bounds.
 export const SUMMARY_TURN_CHARS = 2000;
-const capTurn = (s: string): string => (s.length > SUMMARY_TURN_CHARS ? `${s.slice(0, SUMMARY_TURN_CHARS)}…` : s);
+// Head and tail: a long turn (a desk-continue carry is one) keeps its opening and its most recent end.
+const capTurn = (s: string): string =>
+  s.length > SUMMARY_TURN_CHARS ? `${s.slice(0, SUMMARY_TURN_CHARS / 2)}…${s.slice(-SUMMARY_TURN_CHARS / 2)}` : s;
 
 /** A summary of `turns`, folded into `previous` (the summary so far) when there is one. Throws when
  * the model call fails or comes back empty — callers decide what a failure keeps. */

@@ -14,12 +14,14 @@ export const continueChannels = (rows: readonly DestinationView[]): DestinationV
 /** Continue in Discord (#697): the chat header's button and its picker. `disabled` = why it can't
  * run now (shown as the button's tooltip). `agent` = this chat's open agent session moves too.
  * `onContinue` resolves to an error to show, or undefined once the chat moved. */
-export function ContinueDiscord({ disabled, title, agent, count, onContinue }: {
+export function ContinueDiscord({ disabled, title, agent, count, summary, onContinue }: {
   disabled?: string;
   title: string;
   agent?: LiveCli;
   /** Recent messages the plain chat carries over (agent mode carries the session instead). */
   count: number;
+  /** The chat has a summary of its older messages, which goes along too. */
+  summary?: boolean;
   onContinue: (channelId: string, title: string) => Promise<string | undefined>;
 }) {
   const [open, setOpen] = useState(false);
@@ -99,7 +101,7 @@ export function ContinueDiscord({ disabled, title, agent, count, onContinue }: {
                 <div class="bean-offer-ask">
                   {agent
                     ? `Your ${AGENT_NAMES[agent]} session moves to the thread and ends here.`
-                    : `The last ${count} message${count === 1 ? "" : "s"} go along as context.`}
+                    : `Up to ${count} recent message${count === 1 ? "" : "s"}${summary ? " and a summary of the earlier chat" : ""} go along as context.`}
                   {" "}This chat becomes read-only.
                 </div>
                 <div class="bean-offer-ask" role="note">Bean opens a public thread — anyone in the channel can read it.</div>

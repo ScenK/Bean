@@ -74,11 +74,12 @@ describe("desk-continue handler", () => {
     expect(buildCarryTail(undefined)).toEqual({ tail: "", count: 0 });
   });
 
-  it("carries far more than a handoff, and leads with the summary only when older messages were dropped", () => {
+  it("carries far more than a handoff, led by the summary whenever there is one", () => {
     const long = Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? "reply" : "user", text: `m${i} ${"x".repeat(900)}` }));
-    const all = buildCarryTail(long, "earlier plan");
-    expect(all.count).toBe(30);
-    expect(all.tail.startsWith("User: m0")).toBe(true);
+    expect(buildCarryTail(long).count).toBe(30);
+    expect(buildCarryTail(long).tail.startsWith("User: m0")).toBe(true);
+    // A restored chat may have trimmed the summarized messages: the summary still leads.
+    expect(buildCarryTail(long.slice(0, 2), "earlier plan").tail.startsWith("Summary of the earlier messages: earlier plan\n\nUser: m0")).toBe(true);
     const many = Array.from({ length: 80 }, (_, i) => ({ role: "user", text: `m${i}` }));
     const cut = buildCarryTail(many, "  earlier plan ");
     expect(cut.count).toBe(60);
