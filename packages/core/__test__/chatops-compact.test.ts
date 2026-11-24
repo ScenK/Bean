@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compactHistory, formatSummaryBlock, HISTORY_BYTE_BUDGET, maybeCompact, summarize, summarizeTurns, SUMMARY_TURN_CHARS } from "../src/chatops/compact.js";
 import type { ChatTurn } from "../src/converse.js";
-import { formatAmbientBlock } from "../src/chatops/ambient.js";
+import { formatAmbientBlock, formatCarriedBlock } from "../src/chatops/ambient.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { closeDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
@@ -94,6 +94,22 @@ test("a /new reset while the summary is pending leaves the fresh conversation un
     { role: "user", content: "new0" },
     { role: "assistant", content: "new1" },
   ]);
+});
+
+test("summarize gives a desk-continue carry its whole tail but still clips ordinary turns (#1099)", async () => {
+  const tail = Array.from({ length: 150 }, (_, i) => `line ${i} ${"x".repeat(50)}`).join("\n") + "\nLAST CARRIED LINE";
+  const carry = formatCarriedBlock(tail, 150);
+  const ordinary = "y".repeat(9000);
+  expect(carry.length).toBeGreaterThan(9000);
+  let seen = "";
+  await summarize([{ role: "user", content: carry }, { role: "user", content: ordinary }], {
+    chat: async (req) => { seen = String(req.messages[1]!.content); return { content: "s", toolCalls: [] }; },
+    model: "m",
+  });
+  expect(seen).toContain(`user: ${carry}\n`);
+  expect(seen).toContain("> LAST CARRIED LINE");
+  expect(seen).toContain(`user: ${"y".repeat(SUMMARY_TURN_CHARS)}…`);
+  expect(seen).not.toContain("y".repeat(SUMMARY_TURN_CHARS + 1));
 });
 
 describe("compactHistory (desktop rolling summary, #975)", () => {
