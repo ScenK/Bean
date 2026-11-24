@@ -10,6 +10,7 @@ import { buildDeskContinueHandler } from "./desk-continue.js";
 import { BOT_ORDER, awaySurfaces, botLabel, chatopsMenuRows, setTrayAway, trayAwayOn } from "./chatops-tray-menu.js";
 import { installAvatarControls } from "./avatar-window.js";
 import { createAvatarLog } from "./avatar-log.js";
+import { createMainLog, teeConsole } from "./main-log.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, powerMonitor, screen, webContents } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
@@ -49,6 +50,20 @@ const QUIT_MEMORY_WAIT_MS = 10_000;
 // Literal, not pkg.build.appId: electron-builder strips `build` from the packaged package.json, so
 // that read threw at boot in the installed app (keep in sync with package.json build.appId).
 if (process.platform === "win32") app.setAppUserModelId("dev.scenk.bean");
+
+// Main-process errors to ~/Library/Logs/Bean/main.log (#1092), installed before anything else can
+// fail: a packaged app's stdout is kept by nobody. Same file for local and remote cores; the console
+// still prints (dev keeps its terminal). A --user-data-dir launch (e2e) keeps it inside that dir so
+// tests never write to the real user's logs.
+{
+  const logsDir = app.commandLine.hasSwitch("user-data-dir") ? join(app.getPath("userData"), "logs") : app.getPath("logs");
+  const mainLog = createMainLog(join(logsDir, "main.log"));
+  teeConsole(mainLog);
+  // Monitor only: Electron's own uncaught-exception handling (its error dialog) is unchanged.
+  process.on("uncaughtExceptionMonitor", (err, origin) => { mainLog("uncaught", [origin, err]); });
+  // Electron's main process warns (not throws) on these; a listener replaces that print, so print it here.
+  process.on("unhandledRejection", (reason) => { console.error("bean: unhandled rejection", reason); });
+}
 
 // Module-level so the Tray isn't garbage-collected (which removes it from the menu bar).
 let tray: Tray | undefined;

@@ -155,7 +155,14 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     const child = doSpawn(process.execPath, [entry], deps.repoRoot, {
       ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath, ELECTRON_RUN_AS_NODE: "1",
     });
-    child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
+    // Forwarded, prefixed, to the host's stderr: the desktop shell tees console.error into main.log
+    // (#1092); under bean-core it reaches the service manager. `lastErr` still drives liveness.
+    child.stderr?.on("data", (chunk) => {
+      const text = chunk.toString().trim();
+      if (!text) return;
+      lastErr = text;
+      console.error(`[${bot}] ${text}`);
+    });
     // A child process is a trust boundary: only well-formed activity gets through.
     child.on("message", (msg) => {
       const endpoint = parseTunnelEndpoint(msg);
