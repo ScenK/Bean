@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { basename } from "node:path";
 import { sendChunks } from "./chunk.js";
+import { renderTables } from "./tables.js";
 import { discordCards } from "./components.js";
 import { discordDestinations } from "./destinations.js";
 import { openContinueThread, ownerOnly } from "./desk-continue.js";
@@ -300,7 +301,7 @@ client.on("messageCreate", async (message) => {
     const here = message.channel;
     // Same channel/thread, never a new thread; nothing in it pings anyone.
     const postHere = async (text: string): Promise<void> => {
-      if ("send" in here) await here.send({ content: text, allowedMentions: { parse: [] } });
+      if ("send" in here) await here.send({ content: renderTables(text), allowedMentions: { parse: [] } });
     };
     const line = {
       // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
