@@ -166,7 +166,8 @@ const bots = configuredBots(dir);
 for (const bot of bots) host.bots.start(bot);
 
 const clis = host.enabledClis();
-const auth = clis.map((c) => `${c}=${cliAuthPresent(c, process.env, homedir()) ? "yes" : "no"}`).join(" ");
+const authWord = (v: boolean | undefined): string => (v === undefined ? "unknown" : v ? "yes" : "no");
+const auth = clis.map((c) => `${c}=${authWord(cliAuthPresent(c, process.env, homedir()))}`).join(" ");
 const routines = await loadRoutines(routinesDir(dir));
 console.log(
   `bean-core on: TZ=${process.env.TZ}, data ${dir}, clis: ${clis.join(", ") || "none"} (auth ${auth || "n/a"}), ` +

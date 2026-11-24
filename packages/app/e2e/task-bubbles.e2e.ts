@@ -5,7 +5,7 @@ import { makeBeanHome } from "./fixtures/bean-home.js";
 // The status bubbles (design 2a): a pushed job list renders above the bean, the avatar window
 // grows upward to hold the stack without moving the bean, and an empty list shrinks it back.
 test("status bubbles grow the avatar around a fixed bean and collapse when jobs clear", async () => {
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode", "agy"] });
   const app = await launchBean({ HOME: home.homeDir });
   try {
     const page = await app.firstWindow();
@@ -111,7 +111,7 @@ test("status bubbles grow the avatar around a fixed bean and collapse when jobs 
 // opens the Dashboard on the run's (folded, older) day, and an already-open Dashboard follows the
 // next click instead of keeping its old selection.
 test("a finished routine bubble opens its run in the Dashboard", async () => {
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode", "agy"] });
   const app = await launchBean({ HOME: home.homeDir });
   try {
     const page = await app.firstWindow();
@@ -154,7 +154,7 @@ test("a finished routine bubble opens its run in the Dashboard", async () => {
 // #965: Stop's label follows the live run count, so its pill keeps one width — a second run under a
 // held pointer mustn't grow it leftward over the bubble.
 test("an expanded sprout's Stop keeps its width as the run count changes", async () => {
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode", "agy"] });
   const app = await launchBean({ HOME: home.homeDir });
   try {
     const page = await app.firstWindow();

@@ -26,7 +26,7 @@ done
 `;
 
 test("live agent: Stop and Esc Esc interrupt the turn, the session stays; a single Esc does nothing", async () => {
-  const home = await makeBeanHome({ disabledClis: ["opencode", "codex"], autoMemory: false });
+  const home = await makeBeanHome({ disabledClis: ["opencode", "codex", "agy"], autoMemory: false });
   const bin = join(home.homeDir, "fake-bin");
   await mkdir(bin, { recursive: true });
   await writeFile(join(bin, "claude"), FAKE_CLAUDE, "utf8");

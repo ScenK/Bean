@@ -8,7 +8,7 @@ import { startStubOpenAI } from "./fixtures/stub-openai.js";
 // #612: the composer's agent chip picks a live agent's project and model; a chosen start reaches
 // the real spawn with --model, and a relaunched app's chip opens on the same picks.
 test("agent chip: pick project + model, start, relaunch — the chip restores both", async () => {
-  const home = await makeBeanHome({ disabledClis: ["opencode", "codex"], autoMemory: false });
+  const home = await makeBeanHome({ disabledClis: ["opencode", "codex", "agy"], autoMemory: false });
   const bin = join(home.homeDir, "fake-bin");
   await mkdir(bin, { recursive: true });
   // A fake claude: records its argv, then exits (the session ends; the picks were already saved).

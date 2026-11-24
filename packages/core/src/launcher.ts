@@ -6,7 +6,7 @@ import { chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
-export const CLI_NAMES = ["opencode", "claude", "codex"] as const;
+export const CLI_NAMES = ["opencode", "claude", "codex", "agy"] as const;
 export type CliName = (typeof CLI_NAMES)[number];
 export type LaunchMode = CliName | "open";
 
@@ -63,7 +63,7 @@ export interface LaunchRequest {
   // seeds this dir itself (no git clone/page fetch) — a URL the user typed is folded into
   // `prompt` instead, and the launched agent fetches/clones it itself if it needs to.
   projectPath: string;
-  prompt?: string; // required for "opencode"/"claude"/"codex", ignored for "open"
+  prompt?: string; // required for every CLI mode, ignored for "open"
   model?: string; // literal --model value (clis.json); ignored for "open"
 }
 
@@ -86,6 +86,10 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
       // `--` terminates option parsing: a prompt starting with "-"/"--" (a markdown bullet,
       // leftover "---" frontmatter, "--help") would otherwise be parsed as a codex flag.
       return { command: "codex", args: [...(req.model ? ["--model", req.model] : []), "--", req.prompt ?? ""] };
+    case "agy":
+      // Antigravity's Go flag parser: `--prompt-interactive=<text>` as one token keeps a "-"-leading
+      // prompt from being read as a flag (verified agy 1.5.14).
+      return { command: "agy", args: [...(req.model ? ["--model", req.model] : []), `--prompt-interactive=${req.prompt ?? ""}`] };
     case "open":
       // editorApp is the user-configured editor .app (Settings); empty = not configured yet,
       // caught by launchInTerminal before ever spawning. `.app` bundles aren't executables
@@ -111,12 +115,12 @@ const defaultScriptWriter: ScriptWriter = (path, content) => {
 };
 
 function fireAndForget(child: ChildProcess, onError: (err: Error) => void): void {
-  // Without this, an ENOENT (opencode/claude/codex/editor/open not on PATH) would surface as an
+  // Without this, an ENOENT (a CLI/editor/open not on PATH) would surface as an
   // unhandled 'error' event and crash the Electron main process.
   child.on("error", onError);
 }
 
-// Bean's job ends here: hand the command off and stop tracking it. "opencode"/"claude"/"codex"
+// Bean's job ends here: hand the command off and stop tracking it. The CLI modes
 // run inside a generated .command script — macOS's double-click-to-run-in-Terminal
 // convention, the same mechanism `open` uses on a real double click — so the user
 // watches/interacts with the real CLI directly. "open" (the configured editor) is already

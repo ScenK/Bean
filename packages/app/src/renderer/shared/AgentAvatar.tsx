@@ -7,13 +7,15 @@ export const AGENT_NAMES: Record<AgentId, string> = {
   claude: "Claude Code",
   codex: "Codex",
   opencode: "opencode",
+  agy: "Antigravity",
 };
 
 // Bean is the pet's own coffee-bean mark (geometry copied from BEAN_SVG in ../orb.ts, styled by
 // its orb.css classes — keep in sync); the CLIs use their official glyphs and colors (paths from
 // Lobe Icons, MIT). Claude's spark wears `--bean-agent-claude` (3:1 on every surface,
 // theme-contrast.test.ts); opencode's mark is monochrome, so it takes the text color; Codex is
-// its own color tile (white square, gradient mark).
+// its own color tile (white square, gradient mark). Antigravity is a simple monochrome arch in the
+// text color (already checked at 4.5:1), not an official glyph.
 const GLYPH = { stroke: "none", "fill-rule": "evenodd", "clip-rule": "evenodd" } as const;
 
 const MASCOTS: Record<AgentId, () => JSX.Element> = {
@@ -47,6 +49,9 @@ const MASCOTS: Record<AgentId, () => JSX.Element> = {
   },
   opencode: () => (
     <path {...GLYPH} fill="var(--bean-text)" d="M16 6H8v12h8V6zm4 16H4V2h16v20z" />
+  ),
+  agy: () => (
+    <path {...GLYPH} fill="var(--bean-text)" d="M12 2L2 22h5l5-11 5 11h5L12 2z" />
   ),
 };
 

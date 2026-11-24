@@ -4,7 +4,7 @@
 pass `DelegateRequest.browser`. `delegateCommand()` maps it: claude `--chrome`, else
 `--no-chrome` (headless claude 2.1.287 loads Claude in Chrome only with the flag; the explicit
 `--no-chrome` guards against a future default); codex unchanged (its `cua_repl` plugin already
-gives browser + computer on every run); opencode is refused in `runDelegate()` **before spawn**
+gives browser + computer on every run); agy unchanged (its browser tools are always on); opencode is refused in `runDelegate()` **before spawn**
 (synchronous `onError`, no timer, no `liveKills` entry). Combined with the permission bypass this
 hands an unattended agent the user's logged-in sessions, so:
 

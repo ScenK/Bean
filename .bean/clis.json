@@ -12,5 +12,16 @@
       "github-copilot/claude-sonnet-5.5"
     ]
   },
-  { "provider": "codex", "models": ["gpt-6.2-sol", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6-luna"] }
+  { "provider": "codex", "models": ["gpt-6.2-sol", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6-luna"] },
+  {
+    "provider": "agy",
+    "models": [
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-low",
+      "claude-sonnet-4-6",
+      "claude-opus-4-6-thinking",
+      "gpt-oss-120b-medium"
+    ]
+  }
 ]

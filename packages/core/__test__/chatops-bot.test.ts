@@ -1119,7 +1119,7 @@ test("proposedDelegate with no CLI detected posts an error and no card", async (
   const effects = fx();
   await bot.onMessage(msg, effects);
   expect(effects.cards).toHaveLength(0);
-  expect(effects.posted.some((p) => p.includes("`claude`, `opencode`, or `codex`"))).toBe(true);
+  expect(effects.posted.some((p) => p.includes("`claude`, `opencode`, `codex`, or `agy`"))).toBe(true);
 });
 
 test("run onError posts the failure message and updates the card", async () => {
@@ -1831,6 +1831,7 @@ test("parseResumeArg takes one valid id, prefers a pasted --resume span, and rej
   expect(parseResumeArg(" sess-1")).toEqual({ id: "sess-1" });
   expect(parseResumeArg(" `claude --resume sess-1`")).toEqual({ id: "sess-1" });
   expect(parseResumeArg(" step 1 (bean) — claude --resume sess-1")).toEqual({ id: "sess-1" });
+  expect(parseResumeArg(" `cd /p && agy --conversation c90b8b9c-97a9-44cb-a2cf-cf0e28b56144`")).toEqual({ id: "c90b8b9c-97a9-44cb-a2cf-cf0e28b56144" });
   expect(parseResumeArg(" --nope")).toEqual({ error: "Copy the session id from the resume line on the finished card." });
   expect(parseResumeArg("")).toEqual({ error: "Copy the session id from the resume line on the finished card." });
   // A pasted codex receipt and the routine digest's footer line.

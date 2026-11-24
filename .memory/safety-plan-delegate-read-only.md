@@ -18,8 +18,8 @@
   a saved `prefix_rule(..., decision="allow")` runs the command outside the sandbox (a `curl`
   rule got HTTP 200) — `--ignore-rules` is required. `exec resume` rejects `--sandbox`, so plan runs are
   fresh only and `runDelegate` drops `resume` up front (no fresh-retry notice).
-- **opencode:** refused in `runDelegate()` before spawn (`OPENCODE_PLAN_REFUSAL`);
-  `delegateCommand()` throws rather than fall back.
+- **opencode, agy:** refused in `runDelegate()` before spawn (`planRefusal(cli)`);
+  `delegateCommand()` throws rather than fall back. Any new CLI is refused until probed.
 
 Re-probe after a CLI upgrade before trusting it: ask the run to write a file, fetch a URL, call
 an MCP tool and write under `.git`; plant a project hook that touches a file (claude) and a saved

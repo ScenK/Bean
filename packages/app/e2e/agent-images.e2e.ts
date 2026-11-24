@@ -8,7 +8,7 @@ import { startStubOpenAI } from "./fixtures/stub-openai.js";
 // #628: an image dropped into an agent-mode composer becomes an `[Image #N]` label; the agent's
 // input carries the staged file's path, the transcript only the label.
 test("agent mode: a dropped PNG becomes [Image #1] and the agent gets its path", async () => {
-  const home = await makeBeanHome({ disabledClis: ["opencode", "codex"], autoMemory: false });
+  const home = await makeBeanHome({ disabledClis: ["opencode", "codex", "agy"], autoMemory: false });
   const bin = join(home.homeDir, "fake-bin");
   await mkdir(bin, { recursive: true });
   // A fake claude: copies its stream-json stdin to a file and never answers.

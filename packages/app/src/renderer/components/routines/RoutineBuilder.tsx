@@ -25,7 +25,7 @@ const TRY = [
   "Triage Jira tickets assigned to me",
   "Draft release notes every Friday 5pm",
 ];
-const CLI_LABEL: Record<string, string> = { claude: "Claude Code", codex: "Codex", opencode: "OpenCode" };
+const CLI_LABEL: Record<string, string> = { claude: "Claude Code", codex: "Codex", opencode: "OpenCode", agy: "Antigravity" };
 const cliLabel = (cli: string | undefined): string => (cli ? CLI_LABEL[cli] ?? cli : "your coding agent");
 
 interface CatalogProps {

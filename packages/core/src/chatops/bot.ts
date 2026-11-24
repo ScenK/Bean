@@ -353,14 +353,14 @@ const nameTaken = (name: string): string => `a sprout named "${name}" already ex
 
 const DESKTOP_ONLY =
   "That needs the Bean desktop app — from here I can only chat and run background delegate tasks. Ask me again and I'll run it as one.";
-const NO_CLI = "I can't run delegate tasks: no supported CLI (`claude`, `opencode`, or `codex`) is available on this machine.";
+const NO_CLI = "I can't run delegate tasks: no supported CLI (`claude`, `opencode`, `codex`, or `agy`) is available on this machine.";
 
 /** The session id in `/live-session resume <rest>`. Pasted `claude --resume <id>`,
- * `codex resume <id>` and `opencode -s <id>` / `--session <id>` spans win (also inside a routine
+ * `codex resume <id>`, `opencode -s <id>` / `--session <id>` and `agy --conversation <id>` spans win (also inside a routine
  * digest's footer line), all merged before the one-id check; otherwise every valid-looking token
  * counts, and exactly one is required. */
 export function parseResumeArg(rest: string): { id: string } | { error: string } {
-  const flagged = [...rest.matchAll(/(?:\bresume|(?<![^\s`])(?:-s|--session))\s+`?([^\s`]+)/g)].map((m) => m[1] ?? "");
+  const flagged = [...rest.matchAll(/(?:\bresume|(?<![^\s`])(?:-s|--session|--conversation))\s+`?([^\s`]+)/g)].map((m) => m[1] ?? "");
   const candidates = flagged.length > 0 ? flagged : rest.replace(/`/g, " ").split(/\s+/);
   const ids = [...new Set(candidates.filter(isValidSessionId))];
   if (ids.length === 0) return { error: BAD_SESSION_ID };

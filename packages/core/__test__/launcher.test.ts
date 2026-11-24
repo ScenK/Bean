@@ -44,6 +44,12 @@ test("launchCommand keeps a dash-leading codex prompt as text via the -- termina
   expect(launchCommand(req).args).toEqual(["--", "--- frontmatter-looking text"]);
 });
 
+test("launchCommand opens interactive agy with the prompt glued to --prompt-interactive", () => {
+  expect(launchCommand({ mode: "agy", projectPath: "/p", prompt: "--- frontmatter-looking text", model: "gemini-3.8-flash-high" }))
+    .toEqual({ command: "agy", args: ["--model", "gemini-3.8-flash-high", "--prompt-interactive=--- frontmatter-looking text"] });
+  expect(launchCommand({ mode: "agy", projectPath: "/p", prompt: "go" })).toEqual({ command: "agy", args: ["--prompt-interactive=go"] });
+});
+
 test("launchCommand omits --model when no model was picked", () => {
   const req: LaunchRequest = { mode: "claude", projectPath: "/p", prompt: "go" };
   expect(launchCommand(req).args).toEqual(["go"]);
@@ -61,7 +67,7 @@ test("launchCommand's open command has an empty editor arg when no editor is con
 
 test("detectClis reports which CLIs exist on PATH, in fixed opencode-first order", () => {
   const path = "/usr/local/bin:/opt/homebrew/bin";
-  expect(detectClis(path, () => true)).toEqual(["opencode", "claude", "codex"]);
+  expect(detectClis(path, () => true)).toEqual(["opencode", "claude", "codex", "agy"]);
   expect(detectClis(path, (p) => p.endsWith("/claude"))).toEqual(["claude"]);
   expect(detectClis(path, (p) => p === "/opt/homebrew/bin/opencode")).toEqual(["opencode"]);
   expect(detectClis(path, () => false)).toEqual([]);
@@ -70,8 +76,9 @@ test("detectClis reports which CLIs exist on PATH, in fixed opencode-first order
 
 test("detectClis includes codex when it is on PATH", () => {
   const path = "/usr/local/bin";
-  expect(detectClis(path, () => true)).toEqual(["opencode", "claude", "codex"]);
+  expect(detectClis(path, () => true)).toEqual(["opencode", "claude", "codex", "agy"]);
   expect(detectClis(path, (p) => p.endsWith("/codex"))).toEqual(["codex"]);
+  expect(detectClis(path, (p) => p.endsWith("/agy"))).toEqual(["agy"]);
 });
 
 test("resolveCliPath keeps process then shell PATH first and always ends with ~/.local/bin", () => {

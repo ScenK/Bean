@@ -1,6 +1,6 @@
 // Shared per-turn live-session engine for CLIs with no multi-turn stdin protocol (codex,
-// opencode): one spawn per turn, every turn resuming the same CLI session. Each CLI plugs in a
-// small TurnAdapter (codex-live-session.ts, opencode-live-session.ts); claude's long-lived
+// opencode, agy): one spawn per turn, every turn resuming the same CLI session. Each CLI plugs in a
+// small TurnAdapter (codex-, opencode-, agy-live-session.ts); claude's long-lived
 // stream-json process (live-session.ts) is separate. Unlike runDelegate, a rejected resume never
 // falls back to a fresh run. See .memory/project-live-sessions.md.
 
@@ -39,7 +39,8 @@ export interface TurnAdapter {
   args: (req: { prompt: string; model?: string; resume?: string }) => string[];
   /** Checked before spawning a resume; false → RESUME_REJECTED without a spawn. */
   validResume: (id: string) => boolean;
-  parse: (event: unknown) => TurnEvent;
+  /** A fresh stdout-event parser per turn (agy buffers prose deltas by step across events). */
+  parser: () => (event: unknown) => TurnEvent;
   /** The CLI's stderr when it refused the resume id. */
   rejected: RegExp;
   /** A replacement failure reason (e.g. signed out), from the turn's failure and stderr tail. */
@@ -126,6 +127,7 @@ export function startTurnLiveSession(
     let result = "";
     let stdoutBuf = "";
     let stderrBuf = "";
+    const parse = adapter.parser();
 
     const c = spawnFn(cli, adapter.args({ prompt, model: req.model, resume: sessionId }), req.projectPath);
     child = c;
@@ -145,7 +147,7 @@ export function startTurnLiveSession(
       } catch {
         return;
       }
-      const e = adapter.parse(event);
+      const e = parse(event);
       if (e.sessionId !== undefined) {
         sawSession = true;
         if (!sessionId) sessionId = e.sessionId;

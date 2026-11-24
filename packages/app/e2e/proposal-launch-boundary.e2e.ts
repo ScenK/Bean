@@ -8,7 +8,7 @@ import { startStubOpenAI } from "./fixtures/stub-openai.js";
 test("proposal (terminal target): confirming calls window.bean.launch, never a real process", async () => {
   // Guarantee one enabled provider even on a clean CI host. Disabling the other providers also
   // keeps a developer's login-shell PATH from changing the expected pair when this runs locally.
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex"] });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "agy"] });
   const fakeBin = await installFakeCli(home.homeDir, "opencode");
   // Pin the catalog: the repo default list changes with every model release.
   await writeFile(join(home.homeDir, ".bean", "clis.json"), JSON.stringify([

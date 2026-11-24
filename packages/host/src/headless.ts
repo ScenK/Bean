@@ -17,13 +17,15 @@ export const configuredBots = (dir: string, exists: (p: string) => boolean = exi
 export const tzProblem = (env: NodeJS.ProcessEnv): string | undefined =>
   env.TZ ? undefined : "bean-core: needs TZ set (e.g. TZ=America/Toronto) — cron sprouts and reminders fire in local time.";
 
-/** Best-effort "can this CLI log in" for the boot log: its token env var or its credentials file. */
-export function cliAuthPresent(cli: CliName, env: NodeJS.ProcessEnv, home: string, exists: (p: string) => boolean = existsSync): boolean {
+/** Best-effort "can this CLI log in" for the boot log: its token env var or its credentials file.
+ * undefined = can't tell from files (agy keeps its login in the OS keychain, on every platform). */
+export function cliAuthPresent(cli: CliName, env: NodeJS.ProcessEnv, home: string, exists: (p: string) => boolean = existsSync): boolean | undefined {
   if (cli === "claude") {
     return Boolean(env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) ||
       exists(join(env.CLAUDE_CONFIG_DIR ?? join(home, ".claude"), ".credentials.json"));
   }
   if (cli === "codex") return exists(join(env.CODEX_HOME ?? join(home, ".codex"), "auth.json"));
+  if (cli === "agy") return undefined;
   return exists(join(env.XDG_DATA_HOME ?? join(home, ".local", "share"), "opencode", "auth.json"));
 }
 

@@ -11,6 +11,7 @@ const LAUNCH_CHIPS: { mode: LaunchMode; label: string; needsPrompt: boolean }[] 
   { mode: "opencode", label: "opencode", needsPrompt: true },
   { mode: "claude", label: "claude", needsPrompt: true },
   { mode: "codex", label: "codex", needsPrompt: true },
+  { mode: "agy", label: "agy", needsPrompt: true },
   { mode: "open", label: "Open in Editor", needsPrompt: false },
 ];
 

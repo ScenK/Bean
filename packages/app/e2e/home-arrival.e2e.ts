@@ -15,7 +15,7 @@ const runNow = (page: Page, name: string): Promise<void> => page.evaluate((n) =>
 // bubble); its click appends and drains it. One landing while another chat is shown raises the bubble
 // and the Home row's dot until Home is opened.
 test("home: boot bubble, the pill on a shown Home, and the dot while another chat is shown", async () => {
-  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["claude", "codex", "opencode", "agy"] });
   const stub = await startStubOpenAI(); // nothing queued: the post's brief falls back to the step output
   const dir = join(home.homeDir, ".bean");
   await writeFile(join(dir, "routines", "poster.json"), JSON.stringify({
@@ -68,7 +68,7 @@ test("home: boot bubble, the pill on a shown Home, and the dot while another cha
 // #1001: the main conversation is named after the persona (a rename shows at the window's next focus),
 // a double-click on the avatar always opens it, and a dropped URL opens a separate task chat.
 test("main conversation: named after the persona, the avatar's default; a drop opens a task chat", async () => {
-  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["claude", "codex", "opencode", "agy"] });
   await writeFile(join(home.homeDir, ".bean", "persona.json"), JSON.stringify({ name: "Pip", tags: ["Warm"] }), "utf8");
   const app = await launchBean({ HOME: home.homeDir });
   type Bean = { bean: { openComponent: (k: string, p?: string) => void; savePersona: (p: unknown) => Promise<void> } };

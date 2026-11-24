@@ -33,8 +33,10 @@ One data directory runs one scheduler, so run one core per `~/.bean` (or per vol
 - Sends desktop notices (reminders without a chat target, `notify` sinks, failing watches,
   sprouts missed while it was down) to the owner's DM through the first configured bot (Discord,
   then Teams). With no bot, it logs them.
-- Finds CLIs (`claude`, `codex`, `opencode`) through the login shell's `PATH`, as the desktop app
-  does, because a service gets a minimal `PATH`.
+- Finds CLIs (`claude`, `codex`, `opencode`, `agy`) through the login shell's `PATH`, as the desktop app
+  does, because a service gets a minimal `PATH`. `agy` (Antigravity) has no credentials file to
+  check, so its auth reads `agy=unknown`; sign in by running `agy` once on that machine. agy on
+  headless Linux and in the Docker image is not verified yet (#1015), and the image doesn't install it.
 - Logs one boot line, for example
   `bean-core on: TZ=America/Toronto, data /data/.bean, clis: claude, codex (auth claude=yes codex=no), 2 sprout(s) (1 enabled), bots: discord, scheduler on`.
 

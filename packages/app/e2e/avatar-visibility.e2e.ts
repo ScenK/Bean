@@ -18,7 +18,7 @@ const openMenu = async (page: Page): Promise<void> => {
 };
 
 test("theme is ready at boot and failed theme IPC retains a visible fallback", { tag: "@ci" }, async () => {
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode", "agy"] });
   const app = await launchBean({ HOME: home.homeDir });
   try {
     const page = await app.firstWindow();
@@ -37,7 +37,7 @@ test("theme is ready at boot and failed theme IPC retains a visible fallback", {
 });
 
 test("all menu tiles fit at each screen corner and display recovery resets an expanded avatar", async () => {
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode", "agy"] });
   const app = await launchBean({ HOME: home.homeDir });
   try {
     const page = await app.firstWindow();
@@ -75,7 +75,7 @@ test("all menu tiles fit at each screen corner and display recovery resets an ex
 });
 
 test("long drag lists scroll and dropping selects the visible skill after scrolling", async () => {
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode", "agy"] });
   await mkdir(join(home.homeDir, ".bean", "skills"), { recursive: true });
   for (let i = 0; i < 16; i++) await writeFile(join(home.homeDir, ".bean", "skills", `visibility-${i}.md`),
     `---\nname: visibility-${i}\ndescription: Visibility fixture ${i}\ntarget: chat\n---\nSay hello.\n`);
@@ -134,7 +134,7 @@ for (const failure of ["early", "config"] as const) {
 }
 
 test("Bring Bean Back reloads a crashed avatar with its running job's bubble, without stopping the job", { tag: "@ci" }, async () => {
-  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"], autoMemory: false });
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode", "agy"], autoMemory: false });
   const stub = await startStubOpenAI();
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   // Read through main: Playwright's Page for the avatar doesn't survive its renderer dying.
