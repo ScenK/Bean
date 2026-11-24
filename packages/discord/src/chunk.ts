@@ -35,10 +35,12 @@ export function chunkText(text: string, limit = 2000): string[] {
     if (!fits([...cur, line], after)) {
       flush();
       if (!fits([...cur, line], after)) {
-        // A line too long for any chunk: hard-split it, each piece wrapped in the open fence.
-        const head = cur.length ? `${cur[0]}\n` : "";
-        const tail = fence ? `\n${fence.marker}` : "";
-        const step = limit - head.length - tail.length;
+        // A line too long for any chunk: hard-split it, each piece wrapped in the open fence —
+        // unless the fence's own lines leave no room, then the pieces go unwrapped.
+        let head = cur.length ? `${cur[0]}\n` : "";
+        let tail = fence ? `\n${fence.marker}` : "";
+        let step = limit - head.length - tail.length;
+        if (step < 1) [head, tail, step] = ["", "", limit];
         for (let i = 0; i < line.length; i += step) chunks.push(head + line.slice(i, i + step) + tail);
         continue;
       }
@@ -50,7 +52,8 @@ export function chunkText(text: string, limit = 2000): string[] {
   }
   // The last chunk ends as the text does; a lone reopen line carries nothing.
   if (cur.length && !carried) chunks.push(cur.join("\n"));
-  return chunks;
+  // Discord rejects a blank message (e.g. a split right before a trailing newline).
+  return chunks.filter((c) => c.trim());
 }
 
 /** Sends `text` (tables rendered for a phone, see tables.ts) as Discord-sized chunks in order and returns each send's result. A text that

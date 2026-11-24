@@ -62,6 +62,18 @@ describe("fence-aware chunkText", () => {
   });
 });
 
+test("an opening line too long to wrap pieces in still splits, every chunk under the limit", () => {
+  const out = chunkText(`\`\`\`${"i".repeat(93)}\n${"z".repeat(30)}`, 100);
+  expect(out.length).toBeGreaterThan(0);
+  for (const c of out) expect(c.length).toBeLessThanOrEqual(100);
+  expect(out.join("")).toContain("z".repeat(30));
+});
+
+test("a split before a trailing newline sends no blank chunk", () => {
+  expect(chunkText(`${"a".repeat(2000)}\n`)).toEqual(["a".repeat(2000)]);
+  expect(chunkText(`${"a".repeat(2000)}\n\n \n`)).toEqual(["a".repeat(2000)]);
+});
+
 describe("sendChunks", () => {
   const long = `${"a".repeat(2000)}\n${"b".repeat(2000)}\nc`;
   const sender = (failAt = -1) => {
