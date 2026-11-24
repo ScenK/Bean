@@ -17,7 +17,9 @@ export function createMainLog(file: string, now: () => Date = () => new Date()):
   return (level, args) => {
     try {
       let text = format(...args);
-      if (text.length > MAIN_LOG_LINE_MAX) text = `${text.slice(0, MAIN_LOG_LINE_MAX)} …[truncated]`;
+      const bytes = Buffer.from(text, "utf8");
+      // Cut in UTF-8 bytes; a character split at the cut decodes to U+FFFD, dropped.
+      if (bytes.length > MAIN_LOG_LINE_MAX) text = `${bytes.subarray(0, MAIN_LOG_LINE_MAX).toString("utf8").replace(/\uFFFD+$/, "")} …[truncated]`;
       if (!dirReady) {
         mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
         chmodSync(dirname(file), 0o700); // mkdir's mode is ignored for a dir that already existed

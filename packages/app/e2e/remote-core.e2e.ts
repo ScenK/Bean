@@ -7,7 +7,7 @@ import { CONTRACT_VERSION } from "@bean/host";
 import { launchBean } from "./fixtures/launch-app.js";
 import { startTaskChat } from "./fixtures/task-chat.js";
 
-type Bean = { bean: { openComponent: (k: string) => Promise<void> } };
+type Bean = { bean: { openComponent: (k: string) => Promise<void>; coreStatus: () => Promise<{ kind: string; state?: string }> } };
 
 // A stand-in for `ssh <host> bean-core attach`: speaks the attach wire (4-byte length + JSON) on its
 // stdio. A chat message drives it: "drop" kills the tunnel mid-turn, "takeover" is another machine
@@ -230,6 +230,12 @@ test("remote core: Home shows the owner's DM exchanges", async () => {
   try {
     const avatar = await app.firstWindow();
     await expect(avatar.locator("#bean")).toHaveAttribute("title", "Bean on me@box");
+    // Attached first: a chat opened while still connecting gets its Home read refused ("Not connected …
+    // reconnecting") and doesn't load it again once attached — the race that made this test flaky.
+    await expect.poll(() => avatar.evaluate(async () => {
+      const s = await (window as unknown as Bean).bean.coreStatus();
+      return s.state ?? s.kind;
+    })).toBe("attached");
     const [chat] = await Promise.all([
       app.waitForEvent("window"),
       avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("chat")),

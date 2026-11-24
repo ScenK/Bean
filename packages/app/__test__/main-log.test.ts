@@ -27,6 +27,15 @@ test("caps an entry at about 4 KB with a marker", () => {
   expect(line.length).toBeLessThan(MAIN_LOG_LINE_MAX + 100);
 });
 
+test("the cap counts UTF-8 bytes and never splits a character", () => {
+  const file = join(tmp(), "main.log");
+  createMainLog(file)("error", ["记".repeat(MAIN_LOG_LINE_MAX)]);
+  const line = readFileSync(file, "utf8");
+  expect(line).toMatch(/ error 记+ …\[truncated\]\n$/);
+  expect(line).not.toContain("\uFFFD");
+  expect(Buffer.byteLength(line)).toBeLessThan(MAIN_LOG_LINE_MAX + 100);
+});
+
 test("rotates to one .1 generation above the cap", () => {
   const file = join(tmp(), "main.log");
   writeFileSync(file, "x".repeat(MAIN_LOG_MAX_BYTES + 1));
