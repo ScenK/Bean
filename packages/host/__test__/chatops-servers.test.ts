@@ -104,6 +104,21 @@ describe("createChatopsServers", () => {
     expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: true, error: "boom: missing config" });
   });
 
+  it("forwards each stderr chunk to console.error with the bot's prefix", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const h = harness();
+      h.servers.start("teams");
+      h.procs[0]!.emit("data", Buffer.from("warn: token refresh failed\n  at x.js:1\n"));
+      h.procs[0]!.emit("data", Buffer.from("  \n"));
+      expect(spy.mock.calls).toEqual([["[teams] warn: token refresh failed\n  at x.js:1"]]);
+      h.procs[0]!.emit("exit", 1, null);
+      expect(h.sent.at(-1)).toEqual({ bot: "teams", running: false, enabled: true, error: "warn: token refresh failed\n  at x.js:1" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   // Both servers catch SIGTERM and exit(0), so an external `kill` is indistinguishable from a
   // clean shutdown by code alone — only our own flags can tell them apart.
   it("a code-0 exit we did not ask for is still a crash", () => {

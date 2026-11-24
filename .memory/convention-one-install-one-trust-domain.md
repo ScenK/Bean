@@ -13,3 +13,6 @@ Routine steps inherit relevance-selected memories at run time (#211, `stepMemori
 (`DelegateStepRequest.memories`, its own chat system part) and must never be concatenated
 into `instruction`, `StepResult`/`RunRecord`, `.state.json`, `delegate_runs`,
 `routine_step_attempts` (step-attempts.ts — stores only the step's own output), cards, or logs.
+
+The one exception for logs: the desktop `main.log` may hold raw error text — see
+[convention-main-log](convention-main-log.md).
