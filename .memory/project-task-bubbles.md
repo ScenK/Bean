@@ -7,7 +7,8 @@ one control: a running sprout's **Stop** (no Pause — a routine has no pause st
 
 - **Sprout Stop sits beside the bubble, not in it.** The bubble is a `<button>`, so the Stop
   button is its sibling inside `.bean-bubble-item`, overlaid on room the detail reserves
-  (`.bean-bubble-stop-room`). It stops by `TaskJob.routine` (the sprout's real name from the
+  (`.bean-bubble-stop-room`). A click on that room (a near miss beside Stop) is ignored, so it
+  can't toggle the bubble shut and take Stop with it (#1093). It stops by `TaskJob.routine` (the sprout's real name from the
   host's start event — `name` may be a todo's text), says "Stop all N runs" when N bubbles share
   it, and keeps keyboard focus across re-renders. The host's `createRoutineBubbles` (`task-status.ts`) flips the bubbles
   to "Stopping…" at once and drops step events until the finish; a `stopped` finish is non-sticky.
@@ -45,7 +46,8 @@ one control: a running sprout's **Stop** (no Pause — a routine has no pause st
 - **At most 4 bubbles show** (`MAX_VISIBLE`, renderer-only); older ones fold into a
   `.bean-bubble-more` pill at the far end ("+3 more · 1 failed") that toggles them open. The
   failed count is load-bearing: sticky errors are usually the oldest jobs, and the cap must not
-  hide them silently. A per-source Settings toggle was deliberately skipped — add it only if the
+  hide them silently. The open (expanded) bubble never folds: the oldest shown one folds in its
+  place, so a sprout's Stop survives new todo bubbles arriving (#1093). A per-source Settings toggle was deliberately skipped — add it only if the
   bubbles prove noisy in real use.
 - **The window grows; it isn't click-through.** The renderer reports the stack height
   (`bean:set-avatar-status-height`), and `avatar-window.ts` uses `statusLayout()` for
@@ -65,6 +67,12 @@ one control: a running sprout's **Stop** (no Pause — a routine has no pause st
   didn't cover the rotated tail. It overflowed by 1px, and non-overlay scrollbars (CI's macOS VM,
   any Mac without a trackpad) added 15px above the bean only. Overlay-scrollbar Macs never show
   it; `e2e/sprout-stop.e2e.ts` on CI does.
+- **No DOM writes while a button is pressed on the stack (#1093).** `render()` replaces the stack's
+  `innerHTML`, and a click only fires when pointerdown and pointerup hit the same node, so a push
+  landing mid-click (streamed lines, step events) silently ate Stop / open / expand. `update()` and
+  `setLayout()` only store while pressed; a window `pointerup`/`pointercancel` catches up on the
+  next task (after the click), and `pointerleave` / the `HOLD_MS` release clear a missed one.
+  Renders the click handler starts itself still run at once.
 - Menu/drag modes hide the bubbles with `opacity`, not `display:none`, so the measured height
   (and the window) doesn't jump under the tiles.
 - Guards: `task-status.test.ts` (incl. sticky/merge), the `statusLayout` + avatar-window unit tests, and
