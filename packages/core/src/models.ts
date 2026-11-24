@@ -3,7 +3,8 @@ import type { CliModels } from "./cli-models.js";
 
 /** A model id is the literal --model flag string from clis.json (e.g. "sonnet",
  * "github-copilot/gpt-5.5") — launchCommand/delegateCommand pass it verbatim. `label` is
- * derived (last `/` segment); `availableOn` lists the enabled CLIs whose config offers it
+ * derived (last `/` segment, or the full id when that segment is shared with another
+ * returned model, so pickers can tell providers apart); `availableOn` lists the enabled CLIs whose config offers it
  * (never empty — availableModels drops models no enabled CLI can run). */
 export type AvailableModel = { id: string; label: string; availableOn: CliName[] };
 export type CliModelSelection = { cli: CliName; model?: string };
@@ -28,6 +29,10 @@ export function availableModels(cliModels: CliModels[], detected: CliName[]): Av
         out.push({ id, label: modelLabel(id), availableOn: [entry.provider] });
       }
     }
+  }
+  // Two ids with the same last segment (openai/x vs github-copilot/x) would read identically.
+  for (const m of out) {
+    if (out.some((o) => o !== m && modelLabel(o.id) === modelLabel(m.id))) m.label = m.id;
   }
   return out;
 }
