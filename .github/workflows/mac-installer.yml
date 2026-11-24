@@ -40,6 +40,9 @@ jobs:
           security unlock-keychain -p "$kcpw" "$kc"
           security import "$RUNNER_TEMP/sign.p12" -k "$kc" -P "$MAC_SIGN_P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null
+          # codesign on the runner only finds identities in search-list keychains, --keychain
+          # alone fails with "no identity found".
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
           rm "$RUNNER_TEMP/sign.p12"
           id=$(security find-identity -p codesigning "$kc" | awk '/\)/{print $2; exit}')
           echo "BEAN_SIGN_IDENTITY=$id" >> "$GITHUB_ENV"
