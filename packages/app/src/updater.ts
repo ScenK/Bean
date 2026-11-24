@@ -56,9 +56,11 @@ export interface ExtractDeps {
   runCodesignAndDitto?: (cmd: string, args: string[]) => Promise<void>;
 }
 
-/** Extracts a downloaded update zip and ad-hoc re-signs the bundle (same command as
- * scripts/after-sign.mjs uses at build time) so macOS will execute it. Returns the path to
- * the extracted, signed Bean.app inside a fresh temp directory. */
+/** Extracts a downloaded update zip and returns the path to the extracted Bean.app inside a
+ * fresh temp directory. The release's own signature is kept when it verifies — re-signing would
+ * swap a stable self-signed requirement for an ad-hoc cdhash and reset the user's macOS privacy
+ * grants on every update (scripts/after-sign.mjs). Only a bundle that fails verification is
+ * ad-hoc re-signed, so macOS will still execute it. */
 export async function extractAndSign(zipBuffer: Buffer, deps: ExtractDeps = {}): Promise<string> {
   const mkdtemp = deps.mkdtemp ?? (() => mkdtempCb(join(tmpdir(), "bean-update-")));
   const writeFile = deps.writeFile ?? ((p, d) => writeFileCb(p, d));
@@ -69,7 +71,11 @@ export async function extractAndSign(zipBuffer: Buffer, deps: ExtractDeps = {}):
   await writeFile(zipPath, zipBuffer);
   await run("ditto", ["-x", "-k", zipPath, dir]);
   const appPath = join(dir, "Bean.app");
-  await run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+  try {
+    await run("codesign", ["--verify", "--deep", "--strict", appPath]);
+  } catch {
+    await run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+  }
   return appPath;
 }
 
