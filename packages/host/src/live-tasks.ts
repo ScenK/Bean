@@ -64,6 +64,16 @@ export const ASK_LIMIT = 32000;
 export const LABEL_LIMIT = 2000;
 // Upper bound on what main even looks at; the handoff keeps far fewer.
 const HISTORY_MAX = 200;
+/** Continue in Discord's own caps: the thread's model reads the carry as history, not a CLI's
+ * opening prompt, so it keeps far more than a handoff. Core's MAX_CONTINUE_TAIL bounds the sum. */
+export const CARRY_ITEMS = 60;
+export const CARRY_CHARS = 32000;
+export const CARRY_ITEM_CHARS = 4000;
+/** The desktop chat's own summary, carried when older messages didn't fit. */
+export const CARRY_SUMMARY_CHARS = 4000;
+interface Caps { items: number; chars: number; itemChars: number }
+const HANDOFF_CAPS: Caps = { items: HANDOFF_ITEMS, chars: HANDOFF_CHARS, itemChars: HANDOFF_ITEM_CHARS };
+const CARRY_CAPS: Caps = { items: CARRY_ITEMS, chars: CARRY_CHARS, itemChars: CARRY_ITEM_CHARS };
 
 /** At most this many sessions at once across every chat — they run with permissions bypassed.
  * Starting and stopping ones count. */
@@ -92,29 +102,34 @@ export function buildHandoff(history: readonly HandoffItem[], ask: string): { pr
   };
 }
 
-/** The newest items that fit the handoff caps, oldest first, each `Who: text` passed through `shape`. */
-function pickRecent(history: readonly HandoffItem[], shape: (entry: string) => string = (e) => e): string[] {
+/** The newest items that fit `caps`, oldest first, each `Who: text` passed through `shape`. */
+function pickRecent(history: readonly HandoffItem[], shape: (entry: string) => string = (e) => e, caps: Caps = HANDOFF_CAPS): string[] {
   const picked: string[] = [];
   let used = 0;
-  for (let i = history.length - 1; i >= 0 && picked.length < HANDOFF_ITEMS; i--) {
+  for (let i = history.length - 1; i >= 0 && picked.length < caps.items; i--) {
     const item = history[i]!;
     const text = item.text.trim();
     if (!text) continue;
-    const body = text.length > HANDOFF_ITEM_CHARS ? `${text.slice(0, HANDOFF_ITEM_CHARS)}…` : text;
+    const body = text.length > caps.itemChars ? `${text.slice(0, caps.itemChars)}…` : text;
     const who = item.role === "user" ? "User" : item.agent ? LIVE_AGENT_NAMES[item.agent] : "Bean";
     const entry = shape(`${who}: ${body}`);
-    if (used + entry.length > HANDOFF_CHARS) break;
+    if (used + entry.length > caps.chars) break;
     picked.unshift(entry);
     used += entry.length;
   }
   return picked;
 }
 
-/** Continue in Discord (#697): the recent chat as plain `Who: text` blocks, under the same caps as a
- * handoff — the bot quotes and frames it (core `formatCarriedBlock`). Untrusted renderer input. */
-export function buildCarryTail(raw: unknown): { tail: string; count: number } {
-  const picked = pickRecent(parseHistory(raw));
-  return { tail: picked.join("\n\n"), count: picked.length };
+/** Continue in Discord (#697): the recent chat as plain `Who: text` blocks under the carry caps,
+ * led by the desktop chat's summary when older messages didn't fit — the bot quotes and frames it
+ * (core `formatCarriedBlock`). `count` = messages carried (the summary isn't one). Untrusted renderer input. */
+export function buildCarryTail(raw: unknown, rawSummary?: unknown): { tail: string; count: number } {
+  const history = parseHistory(raw);
+  const picked = pickRecent(history, undefined, CARRY_CAPS);
+  const dropped = history.filter((it) => it.text.trim()).length > picked.length;
+  const summary = typeof rawSummary === "string" ? rawSummary.trim().slice(0, CARRY_SUMMARY_CHARS) : "";
+  const lead = picked.length > 0 && dropped && summary ? [`Summary of the earlier messages: ${summary}`] : [];
+  return { tail: [...lead, ...picked].join("\n\n"), count: picked.length };
 }
 
 // Renderer input is untrusted shape-wise: keep only well-formed items, at most HISTORY_MAX.

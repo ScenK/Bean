@@ -73,4 +73,17 @@ describe("desk-continue handler", () => {
       .toEqual({ tail: "Codex: done", count: 1 });
     expect(buildCarryTail(undefined)).toEqual({ tail: "", count: 0 });
   });
+
+  it("carries far more than a handoff, and leads with the summary only when older messages were dropped", () => {
+    const long = Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? "reply" : "user", text: `m${i} ${"x".repeat(900)}` }));
+    const all = buildCarryTail(long, "earlier plan");
+    expect(all.count).toBe(30);
+    expect(all.tail.startsWith("User: m0")).toBe(true);
+    const many = Array.from({ length: 80 }, (_, i) => ({ role: "user", text: `m${i}` }));
+    const cut = buildCarryTail(many, "  earlier plan ");
+    expect(cut.count).toBe(60);
+    expect(cut.tail.startsWith("Summary of the earlier messages: earlier plan\n\nUser: m20")).toBe(true);
+    expect(buildCarryTail(many, 42).tail.startsWith("User: m20")).toBe(true);
+    expect(buildCarryTail([], "s")).toEqual({ tail: "", count: 0 });
+  });
 });

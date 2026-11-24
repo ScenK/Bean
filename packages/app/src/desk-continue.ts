@@ -7,7 +7,8 @@ import { buildCarryTail, type LiveHandover, type LiveOwner } from "@bean/host";
 // an agent session stops it and waits for its exit before the bot resumes it (one owner at a time).
 
 /** What the renderer sends. `sessionId` = Bean's own id of this chat's live session (agent mode). */
-export interface DeskContinueRequest { channelId: string; title: string; history?: unknown; sessionId?: string }
+/** `summary` = the plain chat's latest summary, carried when its older messages don't fit. */
+export interface DeskContinueRequest { channelId: string; title: string; history?: unknown; summary?: unknown; sessionId?: string }
 
 /** The bot's ack, or why there was none. */
 export type DeskContinueReply = DeskContinueResult | { failed: string };
@@ -44,7 +45,7 @@ export function buildDeskContinueHandler(deps: DeskContinueDeps) {
           held.release();
         }
       }
-      const { tail, count } = buildCarryTail(req.history);
+      const { tail, count } = buildCarryTail(req.history, req.summary);
       if (count === 0) return failed("Nothing to carry over yet.");
       return await deps.deskContinue({ mode: "chat", channelId: channel.conversationId, title, tail, count });
     } catch (err) {

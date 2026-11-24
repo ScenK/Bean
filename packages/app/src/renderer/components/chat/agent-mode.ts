@@ -16,6 +16,8 @@ export const isLiveAgent = (a: unknown): a is LiveCli => LIVE_AGENTS.includes(a 
 
 /** Renderer copy of live-tasks' HANDOFF_ITEMS (that module is main-only) — for the placeholder's count. */
 export const HANDOFF_ITEMS = 20;
+/** Renderer copy of live-tasks' CARRY_ITEMS — Continue in Discord's count (an upper bound: the char cap may carry fewer). */
+export const CARRY_ITEMS = 60;
 /** An agent's final, as Bean's history sees it. */
 export const AGENT_FINAL_CHARS = 4000;
 /** An agent's final as memory extraction's (non-citable) context. */
