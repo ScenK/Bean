@@ -35,7 +35,7 @@ export const codexTurnAdapter: TurnAdapter = {
   args: codexExecArgs,
   // codex would treat a non-UUID id as a thread name and silently start a new thread.
   validResume: isCodexSessionId,
-  parse: parseCodex,
+  parser: () => parseCodex,
   rejected: /no rollout found/i,
   failureText: (failure, stderr) => (AUTH_ERROR.test(`${failure ?? ""}\n${stderr}`) ? CODEX_SIGNED_OUT : undefined),
   mismatch: CODEX_THREAD_MISMATCH,

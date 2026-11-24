@@ -114,6 +114,7 @@ export * from "./live-session.js";
 export { killTree, killPendingGroups, escalateKill } from "./kill-tree.js";
 export * from "./codex-live-session.js";
 export * from "./opencode-live-session.js";
+export * from "./agy-live-session.js";
 export * from "./turn-live-session.js";
 export * from "./chatops/live-sessions.js";
 export * from "./chatops/live-session-proposals.js";

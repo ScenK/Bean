@@ -1,6 +1,6 @@
 # Live sessions (chat-bridged interactive agent)
 
-Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and Teams.
+Chat-bridged multi-turn Claude Code, Codex, opencode or agy sessions on Discord and Teams.
 
 - `core/live-session.ts` = multi-turn sibling of `delegate.ts`: a long-lived
   `claude -p --input-format stream-json --output-format stream-json --verbose
@@ -227,9 +227,10 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   removed project → scratch. Offers use `offerLaunch()` (registered offer project wins, else the
   agent's remembered one) for both the card and Start. Only chip/slash fresh starts persist (model
   then project, awaited in order; a failed write doesn't fail the session) — not offers, not resumes.
-- **Shared per-turn engine (#238)**: codex and opencode both run `core/turn-live-session.ts`
+- **Shared per-turn engine (#238)**: codex, opencode and agy (#1079) run `core/turn-live-session.ts`
   `startTurnLiveSession(adapter, …)`; each CLI is a small `TurnAdapter` (`codexTurnAdapter`,
-  `opencodeTurnAdapter`) — argv, event parse → `{sessionId, completed, failure, result, tail, text}`,
+  `opencodeTurnAdapter`, `agyTurnAdapter`) — argv, a per-turn `parser()` (agy buffers prose deltas by
+  step, so parse state must not outlive a turn or be shared across sessions) → `{sessionId, completed, failure, result, tail, text}`,
   pre-spawn id check, resume-rejected stderr, mismatch notice, stop, end messages. The codex rules
   above (spawn after close, 4000-char merged queue `TURN_QUEUE_FULL`, bot-pid reservation, failed
   later turn stays bound, no fresh fallback) now hold for both. The registry dispatches by `cli`,
@@ -238,8 +239,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   - Spawn invariants for every per-turn CLI: stdin `ignore` (**opencode blocks forever on an open
     stdin pipe**), `detached`, env `PWD=projectPath` (opencode prefers an inherited `PWD` over the
     spawn cwd, #247).
-  - Stop: codex SIGINTs its own group; opencode SIGTERMs every group of its tree (it reaps tools
-    on neither signal). Both then `escalateKill` the snapshotted groups after 5s, deliberately not
+  - Stop: codex SIGINTs its own group; agy and opencode SIGTERM every group of their tree (both reap
+    tools on neither signal — agy 1.5.14 probed in #1079; agy's conversation stays resumable). Both then `escalateKill` the snapshotted groups after 5s, deliberately not
     cancelled on close (#246). Unit tests that stop a session must mock `execFileSync` (the `ps`
     snapshot) and call `killPendingGroups()` while `process.kill` is still mocked.
   - opencode: turn done = `step_finish` with `part.reason: "stop"` (`"tool-calls"` means another
