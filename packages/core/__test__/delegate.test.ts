@@ -863,6 +863,7 @@ describe("FAILED: sentinel", () => {
     expect(failedReason("  \nFAILED: x")).toBe("x");
     expect(failedReason("All good.\nFAILED: not really")).toBeUndefined();
     expect(failedReason("FAILED:")).toMatch(/could not complete/);
+    expect(failedReason("FAILED:")).not.toMatch(/delegate/); // chat steps share it
     expect(failedReason("")).toBeUndefined();
   });
 

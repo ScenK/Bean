@@ -1246,6 +1246,20 @@ describe("propose_routine", () => {
     expect(texts[2]).not.toContain("switch an existing sprout");
   });
 
+  it("steers bot-blocked or JavaScript pages to a browser-read delegate step on every surface (#1107)", async () => {
+    const texts: string[] = [];
+    const deps: ConverseDeps = { model: "m", chat: async ({ tools }) => {
+      texts.push((tools ?? []).find((t) => t.name === "propose_routine")?.description ?? "");
+      return { content: "", toolCalls: [] };
+    } };
+    await conv({ latestUserText: "x", deps, routineAuthoring: authoring });
+    await conv({ latestUserText: "x", deps, routineAuthoring: { transport: "desktop", existing: [], recipients: [] } });
+    for (const t of texts) {
+      expect(t).toContain('"skill": "browser-read"');
+      expect(t).toContain("Chrome open on the Mac running Bean");
+    }
+  });
+
   it("posts only in the channel it was drafted in — any other id could be a stranger's DM channel", async () => {
     const posting = (channel: string) => JSON.stringify({ ...routine, sinks: { chatops: [{ transport: "discord", channel }] } });
     const here = { ...authoring, channelId: "c1" };

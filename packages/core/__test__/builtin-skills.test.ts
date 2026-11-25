@@ -5,7 +5,7 @@ import { loadSkills } from "../src/skill-library.js";
 test("ships the built-in skills at <repo-root>/.bean/skills", async () => {
   const skills = await loadSkills(skillsDir(projectBeanDir()));
   expect(skills.map((s) => s.name).sort()).toEqual([
-    "ask-on-ticket", "bean", "build-routine", "generate-skill", "implement", "pr", "retro", "review", "ticket-lint"
+    "ask-on-ticket", "bean", "browser-read", "build-routine", "generate-skill", "implement", "pr", "retro", "review", "ticket-lint"
   ]);
 });
 
@@ -21,4 +21,13 @@ test("build-routine is a hidden terminal skill (runs on the delegate CLI, never 
   const skill = skills.find((s) => s.name === "build-routine");
   expect(skill?.hidden).toBe(true);
   expect(skill?.target).not.toBe("chat");
+});
+
+test("browser-read is a browser terminal skill kept off quick-launch (the sprout drafter's browser path)", async () => {
+  const skills = await loadSkills(skillsDir(projectBeanDir()));
+  const skill = skills.find((s) => s.name === "browser-read");
+  expect(skill).toMatchObject({ browser: true, quickLaunch: false, enabled: true, hidden: false });
+  expect(skill?.target).not.toBe("chat");
+  expect(skill?.description).toMatch(/^For sprout steps/);
+  expect(skill?.body).toContain("FAILED: <one-line reason>");
 });

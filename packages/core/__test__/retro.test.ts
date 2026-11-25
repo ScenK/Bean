@@ -190,3 +190,9 @@ test("the footer is Bean's line on both digests, only when something is waiting"
   expect(out.digest).toBe("d\n\n2 skill proposals waiting in Bean → Skills");
   expect(out.record.digest).toBe(out.digest);
 });
+
+test("a FAILED: retro saves no proposals, even with a valid proposals block (#1107)", async () => {
+  const { result, saved } = await retro([history, { content: "FAILED: run history unreadable\n" + block([proposal()]), toolCalls: [] }]);
+  expect(saved).toEqual([]);
+  expect(result.record.status).toBe("failed");
+});

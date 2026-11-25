@@ -28,14 +28,25 @@ export function setBeanGitIdentity(name: string, email: string): void {
   BEAN_GIT_IDENTITY.GIT_AUTHOR_EMAIL = BEAN_GIT_IDENTITY.GIT_COMMITTER_EMAIL = email.trim() || "bean@localhost";
 }
 
-// A headless run that can't do its job still exits 0, so the model must say so in-band:
-// runDelegate turns a final answer whose first line starts with `FAILED:` into onError.
-// Delegates only — a live session's user is present, so "fail instead of asking" is wrong there.
+// A headless run that can't do its job still exits 0 (a chat step still answers), so the model
+// must say so in-band: runDelegate and the routine runner's chat steps turn a final answer whose
+// first line starts with `FAILED:` into a failure (failedReason). Unattended runs only — a live
+// session's user is present, so "fail instead of asking" is wrong there.
 export const FAILED_SENTINEL_INSTRUCTION =
-  "\n\nIf you could not fully complete the task — including when browser tools are missing or the " +
-  "browser isn't reachable, or when you would need to ask the user anything (permission, login, " +
-  "which browser) — your final message's first line must be `FAILED: <one-line reason>`. " +
+  "\n\nIf you could not fully complete the task — including when you couldn't read a source the task " +
+  "needs (the page blocked you, needs JavaScript or a login, or a tool failed), when browser tools are " +
+  "missing or the browser isn't reachable, or when you would need to ask the user anything (permission, " +
+  "login, which browser) — your final message's first line must be `FAILED: <one-line reason>`. Never " +
+  "report \"nothing new\" for data you couldn't read. " +
   "A headless run ends when you answer; there are no background retries.";
+
+/** The reason after a first-line `FAILED:` (CRLF-safe), or undefined when the run succeeded.
+ * Only the final answer's first line counts — never tool output or intermediate messages. */
+export function failedReason(result: string): string | undefined {
+  const first = (result.trimStart().split(/\r?\n/, 1)[0] ?? "").trim();
+  if (!first.startsWith("FAILED:")) return undefined;
+  return first.slice("FAILED:".length).trim() || "the run reported it could not complete the task";
+}
 
 // The brain's `instructions` on every request: a fixed constant so OpenAI's prefix cache stays
 // byte-stable. Advisory only — Bean's delegates run with full permission bypass.

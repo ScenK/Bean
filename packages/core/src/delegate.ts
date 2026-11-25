@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import type { CliName } from "./launcher.js";
 import { escalateKill, killPendingGroups, killTree, signalGroups, treeGroups } from "./kill-tree.js";
 import { spawnEnv } from "./spawn-env.js";
-import { BEAN_GIT_IDENTITY, withCliRules } from "./agent-rules.js";
+import { BEAN_GIT_IDENTITY, failedReason, withCliRules } from "./agent-rules.js";
 import { isCodexSessionId } from "./delegate-runs.js";
 
 export interface DelegateRequest {
@@ -26,7 +26,7 @@ export interface DelegateRequest {
 }
 
 // Moved to agent-rules.ts; re-exported for existing importers.
-export { BEAN_GIT_IDENTITY, gitTrailerInstruction, FAILED_SENTINEL_INSTRUCTION } from "./agent-rules.js";
+export { BEAN_GIT_IDENTITY, gitTrailerInstruction, FAILED_SENTINEL_INSTRUCTION, failedReason } from "./agent-rules.js";
 
 export const OPENCODE_BROWSER_REFUSAL = "This skill needs the browser; opencode can't — pick a claude or codex model.";
 /** Read-only (`mode: "plan"`) runs exist only on claude and codex; every other CLI is refused. */
@@ -65,13 +65,6 @@ const CODEX_PLAN_ARGS = [
   "--disable", "plugins", "--disable", "apps",
   "--disable", "browser_use", "--disable", "computer_use", "--disable", "in_app_browser",
 ];
-
-/** The reason after a first-line `FAILED:` (CRLF-safe), or undefined when the run succeeded. */
-export function failedReason(result: string): string | undefined {
-  const first = (result.trimStart().split(/\r?\n/, 1)[0] ?? "").trim();
-  if (!first.startsWith("FAILED:")) return undefined;
-  return first.slice("FAILED:".length).trim() || "the delegate reported it could not complete the task";
-}
 
 /** `codex exec [resume <id>]` argv, shared by delegate runs and codex live sessions (one spawn
  * per turn). `prompt` is passed as-is — callers append their own rules (withCliRules). */
