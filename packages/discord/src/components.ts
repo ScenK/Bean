@@ -52,18 +52,19 @@ function proposalCard(input: ProposalCardInput): object {
     placeholder: "CLI",
     options: input.clis.map((c) => ({ label: c, value: c, default: c === input.defaultCli })),
   };
-  const modelSelect = {
-    type: STRING_SELECT,
-    custom_id: `bean:model:${input.proposalId}`,
-    placeholder: "Model",
-    options: input.models
-      .filter((m) => m.availableOn.length > 0)
-      .map((m) => ({
-        label: `${m.label} (${m.availableOn.join("/")})`,
-        value: m.id,
-        default: m.id === input.defaultModel,
-      })),
-  };
+  // Discord: 1–25 options, label ≤ 100 chars. The default is hoisted so the cap can't drop it.
+  const usable = input.models.filter((m) => m.availableOn.length > 0);
+  const modelOptions = [
+    ...usable.filter((m) => m.id === input.defaultModel),
+    ...usable.filter((m) => m.id !== input.defaultModel),
+  ].slice(0, 25).map((m) => ({
+    label: `${m.label} (${m.availableOn.join("/")})`.slice(0, 100),
+    value: m.id,
+    default: m.id === input.defaultModel,
+  }));
+  const modelRows = modelOptions.length > 0
+    ? [row([{ type: STRING_SELECT, custom_id: `bean:model:${input.proposalId}`, placeholder: "Model", options: modelOptions }])]
+    : [];
   const skillRows = skillSelectRows(`bean:skill:${input.proposalId}`, input.skills, input.skillName);
   // Same caps as skillSelectRows: values ≤ 100 chars (a longer path gets no option), ≤ 25
   // options, the picked project hoisted so truncation can't drop the default.
@@ -89,7 +90,7 @@ function proposalCard(input: ProposalCardInput): object {
       description: clampInstruction(input.instruction),
     }],
     // Discord caps a message at 5 action rows: project, skill, cli, model, buttons (the live card's order).
-    components: [...projectRows, ...skillRows, row([cliSelect]), row([modelSelect]), row(buttons)],
+    components: [...projectRows, ...skillRows, row([cliSelect]), ...modelRows, row(buttons)],
   };
 }
 
