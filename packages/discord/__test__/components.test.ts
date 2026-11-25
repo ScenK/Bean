@@ -93,6 +93,16 @@ test("delegate proposal: project select hoists the pick past the 25-option cap a
   expect(options.every((o) => o.value.length <= 100)).toBe(true);
 });
 
+test("delegate proposal: model select hoists the default past the 25-option cap; no models = no row", () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, label: `M${i}`, aliases: {}, availableOn: ["claude" as const] }));
+  const card = discordCards.proposalCard({ ...proposalInput, models: many, defaultModel: "m29" }) as SelectCard;
+  const options = card.components.flatMap((r) => r.components).find((c) => c.custom_id === "bean:model:prop-1")?.options ?? [];
+  expect(options).toHaveLength(25);
+  expect(options[0]).toMatchObject({ value: "m29", default: true });
+  const none = discordCards.proposalCard({ ...proposalInput, models: [] }) as SelectCard;
+  expect(JSON.stringify(none)).not.toContain("bean:model:prop-1");
+});
+
 test("running message carries cancel-run and the tail in a code block", () => {
   const s = JSON.stringify(discordCards.runningCard({
     projectName: "bean", instruction: "x", startedBy: "scen", tail: "▸ Bash", runId: "run-1",
