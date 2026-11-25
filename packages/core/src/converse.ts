@@ -218,6 +218,13 @@ export interface ConverseResult {
   /** The confirm card for proposedRoutine — set by the desktop handler (it keeps the draft for the
    * Save), never by converse() itself. */
   routineDraft?: RoutineDraftCard;
+  /** A `continue` proposal the desktop host matched to the chat's grant and started at once, with no
+   * card (epic #1111): its task id and the proposal as it runs (the grant's project, CLI, model and
+   * skill; no `continue`). Set by the host, never by converse() itself. */
+  continuedDelegate?: { taskId: string; proposal: ProposedDelegate };
+  /** Why a `continue` proposal fell back to a normal card (`GRANT_MISMATCH_TEXT`) — set by the
+   * desktop host, which shows it above `proposedDelegate`. */
+  delegateNotice?: string;
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
   /** A new rolling summary of the desktop chat (#975), covering the request's first `covers`

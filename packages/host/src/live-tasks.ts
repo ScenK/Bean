@@ -452,6 +452,10 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (s && owns(s, owner)) stopSession(s);
     },
 
+    /** A live session (any chat, a stopping one too) or a Discord hand-over holds this CLI session id. */
+    holds: (cliId: string): boolean =>
+      handingOver.has(cliId) || [...sessions.values()].some((x) => x.resumeId === cliId || x.cliId === cliId),
+
     /** The project this chat's live sessions ran in; undefined = none, or more than one. */
     projectOf: (mountId: string): string | undefined => mountProjects.get(mountId) ?? undefined,
 

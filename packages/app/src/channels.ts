@@ -61,6 +61,7 @@ export const IPC = {
   launch: "bean:launch",
   delegateStart: "bean:delegate-start",
   delegateCancel: "bean:delegate-cancel",
+  delegateRevoke: "bean:delegate-revoke",
   delegateEvent: "bean:delegate-event",
   chatSproutRun: "bean:chat-sprout-run",
   chatTodoDispatch: "bean:chat-todo-dispatch",

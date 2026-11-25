@@ -42,7 +42,7 @@ export interface GrantRequest {
 }
 
 export type GrantMismatch =
-  | "none" | "revoked" | "expired" | "stale"
+  | "none" | "revoked" | "expired" | "stale" | "busy"
   | "surface" | "scope" | "actor" | "project" | "cli" | "model" | "skill" | "browser";
 
 export type GrantMatch = { ok: true; grant: DelegateGrant } | { ok: false; reason: GrantMismatch };
@@ -53,6 +53,8 @@ export const GRANT_MISMATCH_TEXT: Record<GrantMismatch, string> = {
   revoked: "That agent session was closed, so this needs a new card.",
   expired: "That agent session sat idle for 30 minutes, so this needs a new card.",
   stale: "That agent session was replaced, so this needs a new card.",
+  // The host's check (matchGrant can't see runs): a running delegate or a live session holds it.
+  busy: "That agent session is still busy, so this needs a new card.",
   surface: "That agent session belongs to another chat, so this needs a new card.",
   scope: "That agent session belongs to another chat, so this needs a new card.",
   actor: "Only the person who started that agent session can continue it without a card.",

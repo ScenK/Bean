@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import {
   runDelegate, recordRun, releaseRun, updateRunPid, enqueueOutbox, outboxDir, dbFile,
-  interruptedRunNotice, BEAN_GIT_IDENTITY,
+  interruptedRunNotice, BEAN_GIT_IDENTITY, resumeRefusal,
   isValidSessionId, isLiveSessionId, isLiveCli, recordDelegateSession, resumeCommand, shQuote, spawnEnv,
 } from "@bean/core";
 import type { CliModelSelection, CliName, LiveCli, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
@@ -18,10 +18,24 @@ export type DelegateEvent = { mountId?: string } & (
   // projectPath/instruction label the avatar's status bubble (task-status.ts); chat ignores them.
   | { taskId: string; type: "started"; projectPath: string; instruction: string }
   | { taskId: string; type: "output"; line: string }
-  | { taskId: string; type: "done"; result: string; receipt?: DelegateReceipt }
-  | { taskId: string; type: "failed"; message: string; receipt?: DelegateReceipt }
-  | { taskId: string; type: "cancelled"; receipt?: DelegateReceipt }
+  // `granted` = the chat's live task grant (chat-sessions) anchors this run's session: its card may
+  // say follow-ups continue it. `resumeRefused` = a cardless continuation couldn't resume — nothing ran.
+  | { taskId: string; type: "done"; result: string; receipt?: DelegateReceipt; granted?: true }
+  | { taskId: string; type: "failed"; message: string; receipt?: DelegateReceipt; granted?: true; resumeRefused?: true }
+  | { taskId: string; type: "cancelled"; receipt?: DelegateReceipt; granted?: true }
 );
+
+/** Host-internal start options (chat-sessions) — never from the renderer's request. */
+export interface DelegateStartOpts {
+  /** A cardless continuation: resume this CLI session strictly (`strictResume`, never fresh). */
+  resume?: string;
+  /** False = no browser even if the skill now says `browser: true` (a continuation never widens). */
+  browserAllowed?: boolean;
+  /** The run reported a valid CLI session id: what a task grant anchors on. */
+  onSession?: (s: { sessionId: string; cli: CliName; model?: string; browser: boolean; projectPath: string }) => void;
+  /** The task settled (before its event is sent); true = a live grant anchors it (`granted`). */
+  onEnd?: (e: Extract<DelegateEvent, { type: "done" | "failed" | "cancelled" }>) => boolean;
+}
 
 export interface DelegateStartRequest {
   projectPath: string;
@@ -95,6 +109,9 @@ interface Task {
   instruction: string;
   mountId?: string;
   receipt: () => { receipt?: DelegateReceipt };
+  /** The CLI session it drives (a continuation's from the start) — busy for a continuation. */
+  sessionId?: string;
+  onEnd?: DelegateStartOpts["onEnd"];
 }
 
 export function createDelegateTasks(deps: DelegateTasksDeps) {
@@ -113,11 +130,14 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     // timeout that fired before Stop win (onError, never onCancelled), and that failure is
     // the only terminal event this run will ever get.
     if (task?.cancelling && !isTerminal(event)) return;
+    let granted = false;
     if (isTerminal(event)) {
       if (task) releaseRun(deps.dir, event.taskId);
       tasks.delete(event.taskId);
+      granted = task?.onEnd?.(event as Extract<DelegateEvent, { type: "done" | "failed" | "cancelled" }>) === true;
     }
-    deps.send(task?.mountId ? { ...event, mountId: task.mountId } : event);
+    const sent = granted ? { ...event, granted: true as const } : event;
+    deps.send(task?.mountId ? { ...sent, mountId: task.mountId } : sent);
   };
 
   const cancelWhere = (pick: (t: Task) => boolean): void => {
@@ -129,7 +149,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
   };
 
   return {
-    async start(asked: DelegateStartRequest): Promise<string> {
+    async start(asked: DelegateStartRequest, opts: DelegateStartOpts = {}): Promise<string> {
       const taskId = deps.newId();
       // "" = no project (a `/` terminal skill with none configured): run in Bean's scratch workspace.
       const req = { ...asked, projectPath: asked.projectPath || deps.scratchPath || "" };
@@ -139,7 +159,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       };
       if (!(await deps.projectAllowed(req.projectPath).catch(() => false))) return fail("That project isn't configured in Bean.");
       // Runs on one project overlap freely: each agent isolates itself in its own worktree.
-      const browser = req.skillName && deps.skillBrowser ? await deps.skillBrowser(req.skillName) : false;
+      const browser = opts.browserAllowed !== false && req.skillName && deps.skillBrowser ? await deps.skillBrowser(req.skillName) : false;
       const choice = deps.resolveCli(req.model, req.cli);
       if (!choice) return fail("No enabled delegate CLI found — enable one in Settings.");
       if (req.cli && choice.cli !== req.cli) {
@@ -159,11 +179,16 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
           prompt: req.prompt,
           ...(choice.model ? { model: choice.model } : {}),
           ...(browser ? { browser: true } : {}),
+          ...(opts.resume ? { resume: opts.resume, strictResume: true } : {}),
         },
         {
           onOutput: (line) => emit({ taskId, type: "output", line }),
           onDone: (result) => { settled = true; emit({ taskId, type: "done", result, ...receipt }); },
-          onError: (err) => { settled = true; emit({ taskId, type: "failed", message: err.message, ...receipt }); },
+          onError: (err) => {
+            settled = true;
+            const refused = opts.resume !== undefined && err.message === resumeRefusal(choice.cli);
+            emit({ taskId, type: "failed", message: err.message, ...receipt, ...(refused ? { resumeRefused: true as const } : {}) });
+          },
           onSessionStart: (_pid, sessionId) => {
             recordDelegateSession(dbFile(deps.dir), {
               surface: "desktop", cli: choice.cli, sessionId, projectPath: req.projectPath, instruction: req.offRecord ? "" : req.instruction,
@@ -175,6 +200,9 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
                 command: `cd ${shQuote(req.projectPath)} && ${resumeCommand(choice.cli, sessionId)}`,
                 ...(isLiveCli(choice.cli) && isLiveSessionId(choice.cli, sessionId) ? { sessionId, agent: choice.cli } : {}),
               } };
+              const t = tasks.get(taskId);
+              if (t) t.sessionId = sessionId;
+              opts.onSession?.({ sessionId, cli: choice.cli, ...(choice.model ? { model: choice.model } : {}), browser: !!browser, projectPath: req.projectPath });
             }
           },
         },
@@ -193,6 +221,8 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         cancel: handle.cancel,
         cancelling: false, projectPath: req.projectPath, instruction: req.instruction, mountId: req.mountId,
         receipt: () => receipt,
+        ...(opts.resume ? { sessionId: opts.resume } : {}),
+        ...(opts.onEnd ? { onEnd: opts.onEnd } : {}),
       });
       emit({ taskId, type: "started", projectPath: req.projectPath, instruction: req.instruction });
       return taskId;
@@ -207,6 +237,9 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     },
 
     cancelAll: (): void => cancelWhere(() => true),
+
+    /** A running (or stopping) task drives this CLI session — a second writer must not resume it. */
+    busy: (sessionId: string): boolean => [...tasks.values()].some((t) => t.sessionId === sessionId),
 
     /** A chat (mount) was released: stop just the tasks it started. */
     cancelMount: (mountId: string): void => cancelWhere((t) => t.mountId === mountId),

@@ -73,6 +73,8 @@ export type ChatItem =
   | { kind: "delegate"; id: string; proposal: ProposedDelegate;
       state: "pending" | "starting" | "running" | "done" | "failed" | "cancelled" | "dismissed" | "expired" | "interrupted";
       taskId?: string; tail: string[]; result?: string; error?: string;
+      // Started with no card: a follow-up the host resumed on the chat's task grant (epic #1111).
+      continued?: true;
       // The started CLI session's Copy chip (terminal states only) — never chat/loopback text.
       // sessionId + agent: set when the card may offer Continue live (DelegateReceipt).
       receipt?: { label: string; command: string; sessionId?: string; agent?: LiveCli } }

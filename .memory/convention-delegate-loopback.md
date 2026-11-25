@@ -7,7 +7,9 @@ via core's `runDelegate()`. True bypass is a deliberate decision
 prompts, an `--allowedTools` allowlist stalls unattended night routines on the first
 non-allowlisted action, and `--permission-mode auto` is no middle ground because its
 classifier doesn't run headless (verified on v2.1.214 — every would-ask action is denied,
-even in-cwd writes). The confirm-first proposal card is the authorization boundary.
+even in-cwd writes). The confirm-first proposal card is the authorization boundary — since #1113
+widened from one run to one **task**: a confirmed card's task grant lets that chat's follow-ups
+resume the same session with no card (see `convention-delegate-task-grant.md`).
 Revisit if a Claude Code release runs the auto classifier headless. `runDelegate()` lives in
 `delegate.ts` (pure/DI, sibling of the untouched `launcher.ts`). Unlike Terminal launches,
 Bean **does** track these: `host/src/delegate-tasks.ts` keeps a task registry and pushes
@@ -15,9 +17,12 @@ Bean **does** track these: `host/src/delegate-tasks.ts` keeps a task registry an
 push channel) to the chat's DelegateCard.
 
 Key contracts:
-- **Loopback:** on `done` the renderer auto-sends `[delegate result for "…"]: …` through the
-  normal chat flow (collapsed display label), so the model summarizes and the result enters
-  history for chaining.
+- **Loopback:** on `done`, `failed` and `cancelled` (#1113) the renderer auto-sends
+  `[delegate result|failed|cancelled for "…"]: …` once (deduped by settled task id) through the
+  normal chat flow (collapsed display label), so Bean knows how the task stands before it
+  continues it. A loopback turn (`source: "loopback"`) is never offered the session — it can't
+  start a run or refresh the grant. A refused cardless resume doesn't loop back: it re-offers its
+  instruction as a normal card.
 - **Tasks live for the chat window, not the shown chat — no ghosts:** switching chats keeps a
   chat with a running delegate mounted, hidden (#517); every event carries the starting chat's
   `mountId` (stamped by `delegate-tasks` from the task, set by the host's `chat-sessions.ts`) and the shell routes it there,

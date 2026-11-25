@@ -6,7 +6,7 @@ import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn, type DelegateEvent } from "../src/delegate-tasks.js";
-import { runDelegate, type CliModels, type CliName, type DelegateCallbacks, type DelegateHandle, type DelegateRequest } from "@bean/core";
+import { resumeRefusal, runDelegate, type CliModels, type CliName, type DelegateCallbacks, type DelegateHandle, type DelegateRequest } from "@bean/core";
 
 const CLI_MODELS: CliModels[] = [
   { provider: "claude", models: ["sonnet"] },
@@ -427,4 +427,49 @@ it("the resolved-PATH spawn sets PWD to the spawn cwd", async () => {
   child.stdout?.on("data", (d) => { out += String(d); });
   await new Promise((resolve) => child.on("close", resolve));
   expect(out).toBe(cwd);
+});
+
+describe("createDelegateTasks — cardless continuations (#1113)", () => {
+  const SESSION = "3f2a9c1e-0000-4000-8000-000000000001";
+
+  it("a continuation resumes strictly, is busy on its session from the start, and flags a refused resume", async () => {
+    const h = harness();
+    const ended = vi.fn(() => false);
+    const taskId = await h.tasks.start({ projectPath: "/p", prompt: "go on", instruction: "go on" }, { resume: SESSION, onEnd: ended });
+    expect(h.req()).toMatchObject({ resume: SESSION, strictResume: true });
+    expect(h.tasks.busy(SESSION)).toBe(true);
+    h.cbs().onError(new Error(resumeRefusal("claude")));
+    expect(h.sent.at(-1)).toMatchObject({ taskId, type: "failed", resumeRefused: true });
+    expect(h.sent.at(-1)).not.toHaveProperty("granted");
+    expect(ended).toHaveBeenCalledOnce();
+    expect(h.tasks.busy(SESSION)).toBe(false);
+  });
+
+  it("reports a confirmed run's session and marks its end `granted` when the grant anchors it", async () => {
+    const h = harness();
+    const onSession = vi.fn();
+    await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "go" }, { onSession, onEnd: () => true });
+    expect(h.req().resume).toBeUndefined();
+    h.cbs().onSessionStart?.(123, SESSION);
+    expect(onSession).toHaveBeenCalledWith({ sessionId: SESSION, cli: "claude", browser: false, projectPath: "/p" });
+    expect(h.tasks.busy(SESSION)).toBe(true);
+    h.cbs().onDone("ok");
+    expect(h.sent.at(-1)).toMatchObject({ type: "done", granted: true });
+    // Any other failure is not a refused resume.
+    await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "go" }, { resume: SESSION });
+    h.cbs().onError(new Error("boom"));
+    expect(h.sent.at(-1)).not.toHaveProperty("resumeRefused");
+  });
+
+  it("a continuation never widens browser access", async () => {
+    const reqs: DelegateRequest[] = [];
+    const tasks = createDelegateTasks({
+      projectAllowed: async () => true, resolveCli: () => ({ cli: "claude" }), send: () => {}, newId: () => "t", dir: tmp(),
+      skillBrowser: async () => true,
+      run: (req) => { reqs.push(req); return { cancel: () => {} } satisfies DelegateHandle; },
+    });
+    await tasks.start({ projectPath: "/p", prompt: "go", instruction: "go", skillName: "web" }, { resume: SESSION, browserAllowed: false });
+    await tasks.start({ projectPath: "/p", prompt: "go", instruction: "go", skillName: "web" }, { resume: SESSION, browserAllowed: true });
+    expect(reqs.map((r) => r.browser)).toEqual([undefined, true]);
+  });
 });

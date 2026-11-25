@@ -15,6 +15,7 @@ import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, linkedNoteData } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { CARD_LEAD } from "@bean/core/card-record";
+import { GRANT_IDLE_MS, GRANT_MISMATCH_TEXT } from "@bean/core/delegate-grant";
 import { dataUrlToAttachment, labelNoteImages } from "../../shared/note-images.js";
 import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, KeyedTurn, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
@@ -104,6 +105,7 @@ export function applyDelegateEventToItems(
   // A settled task takes no more events: a replayed `done` after a reconnect (#808) must not loop
   // its result back into the chat a second time — loopbacks are deduplicated by task id.
   if (!match || match.state === "done" || match.state === "failed" || match.state === "cancelled") return { items };
+  const refused = e.type === "failed" && e.resumeRefused === true;
   return {
     items: items.map((it) => {
       if (it.kind !== "delegate" || it.taskId !== e.taskId) return it;
@@ -113,13 +115,48 @@ export function applyDelegateEventToItems(
       if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message, ...receipt };
       if (e.type === "cancelled") return { ...it, state: "cancelled" as const, ...receipt };
       return it;
-    }),
-    loopback: e.type === "done" ? {
-      text: `[delegate result for "${match.proposal.instruction}"]: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`,
-      display: "📦 Delegate finished",
-      source: "loopback",
-    } : undefined,
+    }).concat(refused ? [{ kind: "delegate", id: newId(), proposal: retryProposal(match.proposal), state: "pending", tail: [] }] : []),
+    loopback: refused ? undefined : delegateLoopback(match.proposal.instruction, e),
   };
+}
+
+/** A continuation's card again, after its resume was refused: same instruction, a fresh session. */
+const retryProposal = ({ continue: _c, ...p }: ProposedDelegate): ProposedDelegate => p;
+
+/** A settled run's result turn, so Bean knows how the task stands before it continues it — done,
+ * failed or cancelled (#1113). Undefined for any other event. */
+function delegateLoopback(instruction: string, e: DelegateEvent): QueuedSend | undefined {
+  const head = `[delegate ${e.type === "done" ? "result" : e.type} for "${instruction}"]`;
+  if (e.type === "done") {
+    return { text: `${head}: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`, display: "📦 Delegate finished", source: "loopback" };
+  }
+  if (e.type === "failed") {
+    return { text: `${head}: ${e.message}\n\nBriefly tell the user it failed and why, in your own words.`, display: "📦 Delegate failed", source: "loopback" };
+  }
+  if (e.type === "cancelled") {
+    return { text: `${head}: stopped before it finished.\n\nBriefly acknowledge that, in your own words.`, display: "📦 Delegate stopped", source: "loopback" };
+  }
+  return undefined;
+}
+
+/** A continuation the host already started (`ConverseResult.continuedDelegate`): its running card,
+ * with any of its events that arrived before the chat reply replayed onto it. */
+export function continuedDelegateItems(
+  c: { taskId: string; proposal: ProposedDelegate }, id: string, buffered: DelegateEvent[],
+): { items: ChatItem[]; loopbacks: QueuedSend[] } {
+  const card: ChatItem = { kind: "delegate", id, proposal: c.proposal, state: "pending", tail: [], continued: true };
+  return attachDelegateTaskId([card], id, c.taskId, c.proposal.instruction, buffered);
+}
+
+/** The delegate card that announces the chat's task grant (its first, confirmed card), after a
+ * settled event: `granted` = the host's grant anchors that run. A continuation keeps the current
+ * card; a run without it ends the announcement if it was the grant's. */
+export function grantCardAfter(current: string | undefined, items: readonly ChatItem[], e: DelegateEvent): string | undefined {
+  if (e.type !== "done" && e.type !== "failed" && e.type !== "cancelled") return current;
+  const it = items.find((x): x is Extract<ChatItem, { kind: "delegate" }> => x.kind === "delegate" && x.taskId === e.taskId);
+  if (!it) return current;
+  if (e.granted) return it.continued ? current : it.id;
+  return it.continued || it.id === current ? undefined : current;
 }
 
 export function attachDelegateTaskId(
@@ -358,6 +395,22 @@ export function ChatSession({
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
   const [projects, setProjects] = useState<Project[]>([]);
   const [lastUsedModels, setLastUsedModels] = useState<Record<string, string>>({});
+  // The card announcing this chat's task grant, and when its idle clock last restarted (the host's
+  // grant is the authority; this only times the line out with it).
+  const [grant, setGrant] = useState<{ card: string; at: number } | undefined>(undefined);
+  useEffect(() => {
+    if (!grant) return;
+    const t = setTimeout(() => setGrant(undefined), Math.max(0, grant.at + GRANT_IDLE_MS - Date.now()));
+    return () => clearTimeout(t);
+  }, [grant]);
+  const noteGrant = (items: readonly ChatItem[], e: DelegateEvent): void => setGrant((g) => {
+    const card = grantCardAfter(g?.card, items, e);
+    return card === undefined ? undefined : card === g?.card && !("granted" in e && e.granted) ? g : { card, at: Date.now() };
+  });
+  const endGrant = (): void => {
+    setGrant(undefined);
+    window.bean.delegateRevoke(mountId);
+  };
   const [autoFocusDelegateId, setAutoFocusDelegateId] = useState<string | undefined>(undefined);
   // Full current skill list — passed to SkillCard so its "replaces existing" chip tracks
   // the user's live-edited name against real skills, not a stale server-computed flag.
@@ -786,6 +839,18 @@ export function ChatSession({
       }
       // Forgotten facts go to close catch-up as already handled, so closing doesn't re-save them.
       rejectedMemoriesRef.current.push(...(res.forgotten ?? []).map((m) => m.text));
+      // A follow-up the host already resumed: its running card, with any early events replayed.
+      let continued: { items: ChatItem[]; loopbacks: QueuedSend[] } | undefined;
+      if (res.continuedDelegate) {
+        const { taskId } = res.continuedDelegate;
+        const buffered = pendingDelegateEventsRef.current.get(taskId) ?? [];
+        pendingDelegateEventsRef.current.delete(taskId);
+        continued = continuedDelegateItems(res.continuedDelegate, newId(), buffered);
+        for (const e of buffered) noteGrant(continued.items, e);
+      }
+      // A notice that the grant itself is gone takes its line off the first card.
+      const gone = [GRANT_MISMATCH_TEXT.none, GRANT_MISMATCH_TEXT.revoked, GRANT_MISMATCH_TEXT.expired, GRANT_MISMATCH_TEXT.stale];
+      if (res.delegateNotice && gone.includes(res.delegateNotice)) setGrant(undefined);
 
       setItems((prev) => {
         const next = placeSummary(prev.flatMap((it) => (it.id === workingId ? []
@@ -815,7 +880,9 @@ export function ChatSession({
         if (res.sproutRun) next.push({ kind: "sprout", id: newId(), plan: res.sproutRun, state: "pending" });
         if (res.sendCard) next.push({ kind: "send", id: newId(), card: res.sendCard, state: "pending" });
         if (res.routineDraft) next.push({ kind: "routine", id: newId(), card: res.routineDraft, state: "pending" });
+        if (continued) next.push(...continued.items);
         if (res.proposedDelegate) {
+          if (res.delegateNotice) next.push({ kind: "status", id: newId(), text: res.delegateNotice, tone: "info" });
           next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
           const skillName = res.proposedDelegate.skillName;
           if (skillName) {
@@ -835,6 +902,7 @@ export function ChatSession({
         }
         return next;
       });
+      for (const l of continued?.loopbacks ?? []) void sendRef.current(l.text, l.display, true, undefined, l.source);
       flushRef.current = true;
       setStatus("idle");
       if (hiddenRef.current) onUnread();
@@ -877,6 +945,7 @@ export function ChatSession({
     const l = liveRef.current;
     if (!l) return;
     setLive(undefined);
+    endGrant(); // End closes the task: follow-ups get a card again
     clearPending((it) => it.pending === l.key);
     if (l.sessionId) window.bean.liveStop(l.sessionId, mountId);
     const row: ChatItem = {
@@ -1259,6 +1328,7 @@ export function ChatSession({
       const buffered = pendingDelegateEventsRef.current.get(taskId) ?? [];
       pendingDelegateEventsRef.current.delete(taskId);
       const result = attachDelegateTaskId(itemsRef.current, id, taskId, prompt, buffered);
+      for (const e of buffered) noteGrant(result.items, e);
       setItems(result.items);
       for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
     } catch (err) {
@@ -1307,6 +1377,7 @@ export function ChatSession({
   };
 
   const dismissDelegate = (id: string): void => {
+    endGrant(); // Dismiss closes the task: the next follow-up gets a card again
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "delegate" ? { ...it, state: "dismissed" as const } : it)));
   };
 
@@ -1592,6 +1663,7 @@ export function ChatSession({
       }
       pendingDelegateEventsRef.current.delete(e.taskId);
       flushRef.current = true;
+      noteGrant(itemsRef.current, e);
     }
     setItems((prev) => applyDelegateEventToItems(prev, e).items);
     if (loopback) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
@@ -1933,6 +2005,7 @@ export function ChatSession({
         autoFocusDelegateId={autoFocusDelegateId}
         onDelegateDismiss={dismissDelegate}
         onDelegateCancelTask={cancelDelegateTask}
+        grantCardId={grant?.card}
         onContinueLive={(id) => void continueLive(id)}
         onSaveToNotes={saveToNotes}
         onUnlink={() => setLinkedNote(undefined)}

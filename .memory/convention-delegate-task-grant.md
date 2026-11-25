@@ -15,3 +15,9 @@ card plus `GRANT_MISMATCH_TEXT[reason]`. Restart drops grants (fail closed).
   non-UUID/new conversation, codex plan, other project, busy thread), and the started session id
   must equal `resume`. Don't add a fresh retry under strict — "never start fresh" is the
   authorization boundary. Verified 2026-11: `claude -p --resume <id>` keeps the same session id.
+- Desktop (#1113): grants live in `host/src/chat-sessions.ts`, one per chat mount, created when a
+  confirmed `delegateStart` reports a valid session (`delegate-tasks` `onSession`), refreshed when
+  a run on it settles, revoked by Dismiss / End (`delegateRevoke`, a REMOTE_OP), dropped at mount
+  release. Busy = `delegateTasks.busy` or `liveTasks.holds` on the session id. A match starts the
+  run before the chat reply returns (`continuedDelegate`); the renderer replays its buffered
+  events. The card's grant line follows the host's `granted` flag on settled events — never saved.
