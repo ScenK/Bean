@@ -6,7 +6,7 @@ import type {
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CardBuilders,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -328,6 +328,7 @@ export function skillProposalCard(input: SkillProposalCardInput): object {
     body: [
       { type: "TextBlock", size: "medium", weight: "bolder", text: input.updating ? "Bean proposes a skill update" : "Bean proposes a new skill" },
       { type: "FactSet", facts: [{ title: "Skill", value: input.updating ? `${input.name} (replaces existing)` : input.name }] },
+      ...(input.browser ? [{ type: "TextBlock", text: SKILL_BROWSER_NOTES[input.browser], wrap: true, weight: "bolder" }] : []),
       { type: "TextBlock", text: input.body, wrap: true, fontType: "monospace" },
     ],
     actions: [

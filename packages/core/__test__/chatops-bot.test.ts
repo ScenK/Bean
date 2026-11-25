@@ -1253,6 +1253,27 @@ test("proposedSkill posts a skill proposal card and stores the pending draft", a
   expect(card.proposalId).toBeTruthy();
 });
 
+test("skill proposal card's browser line comes from the parsed body against the existing skill", async () => {
+  const propose = async (name: string, body: string): Promise<unknown> => {
+    const { deps } = makeDeps({
+      converseResult: { reply: "Drafted.", proposedSkill: { name, body, updating: true } },
+      // Disabled still counts: saving the replacement overrides it.
+      loadSkills: async () => [{ name: "web", description: "d", body: "b", enabled: false, browser: true }],
+    });
+    const effects = fx();
+    await buildTeamsBot(deps).onMessage(msg, effects);
+    return (effects.cards[0] as { browser?: string }).browser;
+  };
+  expect(await propose("new", "---\nbrowser: true\n---\n# N")).toBe("on");
+  expect(await propose("web", "---\ntarget: terminal\n---\n# W")).toBe("off");
+  expect(await propose("plain", "# P\n\nbrowser: true in prose only")).toBeUndefined();
+  // Save trims the body, so leading blank lines still parse as frontmatter.
+  expect(await propose("new", "\n---\nbrowser: true\n---\n# N")).toBe("on");
+  expect(await propose("web", "\n\n---\nbrowser: true\n---\n# W")).toBe("on");
+  // A toggle-only body is an overlay: the built-in keeps its body and its browser access.
+  expect(await propose("web", "---\nenabled: false\n---\n")).toBeUndefined();
+});
+
 test("save-skill action persists the skill and updates the card to saved", async () => {
   const { deps, savedSkills } = makeDeps();
   const bot = buildTeamsBot(deps);

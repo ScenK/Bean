@@ -36,7 +36,7 @@ import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type DelegateRunRow, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
-import { lastSaidLine, type CardBuilders, type NoContinueReason } from "./cards-api.js";
+import { lastSaidLine, skillBrowserChange, type CardBuilders, type NoContinueReason } from "./cards-api.js";
 import { formatAmbientBlock, formatCarriedBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
@@ -2444,8 +2444,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           if (!(await permitted("skillWrites", "save skills"))) return;
           const skill = result.proposedSkill;
           const pending = deps.skillProposals.add({ skill, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          // Every skill (built-ins and disabled ones too): a replacement overrides whichever exists.
+          const existing = (await deps.loadSkills()).find((s) => s.name === skill.name);
+          const browser = skillBrowserChange(skill.body, existing?.browser === true);
           const activityId = await fx.postCard(deps.cards.skillProposalCard({
             proposalId: pending.id, name: skill.name, body: skill.body, updating: skill.updating,
+            ...(browser ? { browser } : {}),
           }));
           deps.skillProposals.setCardActivityId(pending.id, activityId);
           recordCard(msg.conversationId, "skill", "pending", skill.name);
