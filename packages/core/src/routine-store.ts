@@ -387,6 +387,31 @@ export function isValidRoutine(v: unknown): v is Routine {
   return describeRoutineError(v) === null;
 }
 
+/** A chat draft's DM sinks with a recipient's display name where the id goes (the tool lists
+ * them as "Name (id)", and the model sometimes copies the name): an exact, case-insensitive,
+ * unique name match becomes that recipient's id. Anything else is left for chatRoutineProblem. */
+export function resolveSinkUsers(v: unknown, recipients: readonly { id: string; name: string }[]): unknown {
+  const chatops = (v as { sinks?: { chatops?: unknown } } | null)?.sinks?.chatops;
+  if (!Array.isArray(chatops)) return v;
+  const idOf = (user: unknown): string | undefined => {
+    if (typeof user !== "string" || recipients.some((p) => p.id === user)) return undefined;
+    const name = user.trim().replace(/^@/, "").toLowerCase();
+    const hits = recipients.filter((p) => p.name.toLowerCase() === name);
+    return hits.length === 1 ? hits[0]!.id : undefined;
+  };
+  const r = v as Routine;
+  return {
+    ...r,
+    sinks: {
+      ...r.sinks,
+      chatops: chatops.map((s: unknown) => {
+        const id = idOf((s as { user?: unknown } | null)?.user);
+        return id ? { ...(s as RoutineChatopsSink), user: id } : s;
+      }),
+    },
+  };
+}
+
 /** A routine the owner drafts in chat (#285): the store's validator, plus what chat may not
  * create — command steps/watches (same trust as hand-edited shell), delivery on any transport but
  * the drafting surface's own (#320) — and DMs only to `recipients`

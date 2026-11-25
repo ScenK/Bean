@@ -1217,6 +1217,35 @@ describe("propose_routine", () => {
       .toMatch(/command steps/);
   });
 
+  it("maps a recipient's display name in a DM sink to their id; an unknown name still fails", async () => {
+    const dm = (user: string) => call(JSON.stringify({ ...routine, sinks: { chatops: [{ transport: "discord", user }] } }));
+    for (const user of ["Scen", "scen", "@Scen"]) {
+      const res = await conv({ latestUserText: "x", deps: dm(user), routineAuthoring: authoring });
+      expect(res.proposedRoutine?.problem).toBeUndefined();
+      expect(res.proposedRoutine?.routine.sinks.chatops).toEqual([{ transport: "discord", user: "u1" }]);
+    }
+    const twins = { ...authoring, recipients: [{ id: "u1", name: "Sam" }, { id: "u2", name: "sam" }] };
+    expect((await conv({ latestUserText: "x", deps: dm("Sam"), routineAuthoring: twins })).proposedRoutine?.problem)
+      .toMatch(/user Sam isn't the owner or a member/);
+    expect((await conv({ latestUserText: "x", deps: dm("Nobody"), routineAuthoring: authoring })).proposedRoutine?.problem)
+      .toMatch(/isn't the owner or a member/);
+  });
+
+  it("tells the model to suggest enable/disable instead of drafting a toggle", async () => {
+    const texts: string[] = [];
+    const deps: ConverseDeps = { model: "m", chat: async ({ tools }) => {
+      texts.push((tools ?? []).find((t) => t.name === "propose_routine")?.description ?? "");
+      return { content: "", toolCalls: [] };
+    } };
+    await conv({ latestUserText: "x", deps, routineAuthoring: authoring });
+    await conv({ latestUserText: "x", deps, routineAuthoring: { transport: "desktop", existing: ["morning"], recipients: [] } });
+    await conv({ latestUserText: "x", deps, routineAuthoring: { ...authoring, existing: [] } });
+    expect(texts[0]).toContain("`disable <exact name>` or `enable <exact name>`");
+    expect(texts[1]).toContain("Sprouts panel");
+    expect(texts[1]).not.toContain("`disable");
+    expect(texts[2]).not.toContain("switch an existing sprout");
+  });
+
   it("posts only in the channel it was drafted in — any other id could be a stranger's DM channel", async () => {
     const posting = (channel: string) => JSON.stringify({ ...routine, sinks: { chatops: [{ transport: "discord", channel }] } });
     const here = { ...authoring, channelId: "c1" };
