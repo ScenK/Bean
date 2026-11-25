@@ -9,6 +9,9 @@ export interface PendingProposal {
   defaultCli: CliName;
   defaultModel?: string;
   cardActivityId?: string;
+  /** A fallback card for a `continue` that didn't match its grant (epic #1111): it launches a fresh
+   * session, never the thread's earlier one. */
+  fresh?: true;
   createdAt: number;
 }
 

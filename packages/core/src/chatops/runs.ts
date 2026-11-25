@@ -103,7 +103,7 @@ export class RunRegistry {
     }
     // Two live processes must never drive one CLI session: while this thread already has a run on
     // this CLI, the new one starts fresh (the thread pointer keeps whichever completes last).
-    if (req.resume && [...this.byId.values(), ...this.stopping].some((r) => r.cli === req.cli && r.meta.conversationId === meta.conversationId)) {
+    if (req.resume && this.busy(meta.conversationId, req.cli)) {
       if (req.strictResume) return this.refuse(callerEvents, `${resumeRefusal(req.cli)} This thread's other run is still going.`);
       const { resume: _busy, ...fresh } = req;
       req = fresh;
@@ -183,6 +183,12 @@ export class RunRegistry {
     }
     if (!run.released) this.byId.set(runId, run);
     return runId;
+  }
+
+  /** A run on this CLI from this conversation is still going (or still stopping) — it drives the
+   * conversation's session, so another run must not resume it. */
+  busy(conversationId: string, cli: DelegateRequest["cli"]): boolean {
+    return [...this.byId.values(), ...this.stopping].some((r) => r.cli === cli && r.meta.conversationId === conversationId);
   }
 
   /** `conversationId` set = cancel only if the run was started from that conversation. */

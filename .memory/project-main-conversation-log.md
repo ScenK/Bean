@@ -45,8 +45,10 @@ Without it every path below is skipped and Home runs on renderer history (#975) 
   catalog rows keep the real DM id. Appends carry `surface` (discord/teams).
 - **Bounded before each turn** with the desktop budget (core `boundMainLog`, shared with the host) —
   never `maybeCompact`, which clips the log's summary row like a turn.
-- **No implicit delegate resume:** owner-DM delegates neither read nor write `thread_sessions`; the
-  finished card's Continue live (`delegate_runs`) is the only resume. A bound live session doesn't
+- **No implicit delegate resume:** owner-DM delegates neither read nor write `thread_sessions`; a
+  card always starts fresh. The resumes are the task grant's cardless continuation (#1114, keyed
+  by the real DM id, never `main` — [convention-delegate-task-grant](convention-delegate-task-grant.md))
+  and the finished card's Continue live (`delegate_runs`). A bound live session doesn't
   reopen from text either: bare `continue` is a Bean turn, `/continue` posts the resume confirm card
   (`proposeResumeLive`) for the session last bound there — Start is the tap.
 - `/new` in the owner DM answers a fixed line naming the persona, no reset. Desk sends to a `dm` row
