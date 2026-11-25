@@ -15,9 +15,11 @@ test("the moved trailer and sentinel stay byte-identical", () => {
   expect(gitTrailerInstruction()).toBe(
     "\n\nIf this task involves a git commit, append this trailer to the commit message: Co-Authored-By: Bean <bean@localhost>");
   expect(FAILED_SENTINEL_INSTRUCTION).toBe(
-    "\n\nIf you could not fully complete the task — including when browser tools are missing or the " +
-    "browser isn't reachable, or when you would need to ask the user anything (permission, login, " +
-    "which browser) — your final message's first line must be `FAILED: <one-line reason>`. " +
+    "\n\nIf you could not fully complete the task — including when you couldn't read a source the task " +
+    "needs (the page blocked you, needs JavaScript or a login, or a tool failed), when browser tools are " +
+    "missing or the browser isn't reachable, or when you would need to ask the user anything (permission, " +
+    "login, which browser) — your final message's first line must be `FAILED: <one-line reason>`. Never " +
+    "report \"nothing new\" for data you couldn't read. " +
     "A headless run ends when you answer; there are no background retries.");
 });
 

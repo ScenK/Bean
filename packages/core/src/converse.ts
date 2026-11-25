@@ -521,7 +521,10 @@ function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
       "thing has one (the step judges each new item); otherwise a daily cron with webSearch: true. A chat step sees " +
       "only the public web (with webSearch) and Bean's own tools — never the owner's mail, calendar, accounts or " +
       "files; anything there needs a delegate step (its coding agent has the owner's connectors), with the same " +
-      "route. Put the owner's " +
+      "route. A public page that blocks bots or renders with JavaScript (carrier or registration tracking, many " +
+      'retail and bank pages) needs a delegate step with "skill": "browser-read", with the same route; tell the ' +
+      "owner it needs Chrome open on the Mac running Bean, and mention a notification email or official API " +
+      "instead when one exists. Put the owner's " +
       "own words and today's date in description. Set until only to an end the owner named — with none, it stops " +
       `after ${COMMITMENT_DAYS} days. Command steps and command watches can't be set up from chat. ` +
       (live.length > 0 ? `Existing sprouts: ${live.join(", ")}. ` : "") +

@@ -630,3 +630,65 @@ describe("step attempts", () => {
     expect(attempts).toEqual([expect.objectContaining({ ok: false, cli: "codex", output: "codex is not enabled" })]);
   });
 });
+
+describe("chat steps: the FAILED: contract and tool-round exhaustion (#1107)", () => {
+  /** Step calls answer from `answers` in order; the digest call (no "executing step") gets "digest". */
+  const scripted = (answers: { content: string; toolCalls?: { id?: string; name: string; args: unknown }[] }[]) => {
+    const systems: string[] = [];
+    const fn: RoutineRunnerDeps["chat"] = async (a) => {
+      const sys = String(a.messages[0]?.content ?? "");
+      if (!sys.includes("executing step")) return { content: "digest", toolCalls: [] };
+      systems.push(sys);
+      const next = answers.shift() ?? { content: "ok" };
+      return { content: next.content, toolCalls: next.toolCalls ?? [] };
+    };
+    return { fn, systems };
+  };
+  const watch = (): Routine => routine([{ kind: "chat", id: "check", instruction: "check the tracking page",
+    route: { paths: [{ when: "found", goto: "done" }, { when: "nothing", goto: "quiet" }] } }]);
+
+  it("puts the sentinel in the chat step's system prompt", async () => {
+    const { fn, systems } = scripted([{ content: "found it\nROUTE: found" }]);
+    await runRoutine(watch(), baseDeps(fn));
+    expect(systems[0]).toContain("`FAILED: <one-line reason>`");
+    expect(systems[0]).toContain("couldn't read a source the task needs");
+  });
+
+  it("a blocked source fails the run instead of taking the quiet route", async () => {
+    const { fn } = scripted([{ content: "FAILED: the page returned Access Denied\nROUTE: nothing" }]);
+    const res = await runRoutine(watch(), baseDeps(fn));
+    expect(res.record.status).toBe("failed");
+    expect(res.record.quiet).toBeUndefined();
+    expect(res.results[0]).toMatchObject({ ok: false, output: "the page returned Access Denied" });
+    expect(res.results[0]!.chose).toBeUndefined();
+  });
+
+  it("a FAILED: answer naming the done route doesn't end the sprout", async () => {
+    const { fn } = scripted([{ content: "FAILED: login wall\nROUTE: found" }]);
+    const res = await runRoutine(watch(), baseDeps(fn));
+    expect(res.record.status).toBe("failed");
+    expect(res.ending).toBeUndefined();
+  });
+
+  it("FAILED: off the first line is ordinary text", async () => {
+    const { fn } = scripted([{ content: "Checked, nothing new.\nFAILED: not really\nROUTE: nothing" }]);
+    const res = await runRoutine(watch(), baseDeps(fn));
+    expect(res.record).toMatchObject({ status: "ok", quiet: expect.stringContaining("nothing new") });
+  });
+
+  it("a plain pipeline runs the later steps and ends failed", async () => {
+    const { fn } = scripted([{ content: "FAILED: blocked" }, { content: "second ran" }]);
+    const res = await runRoutine(routine([{ kind: "chat", instruction: "one" }, { kind: "chat", instruction: "two" }]), baseDeps(fn));
+    expect(res.results.map((r) => r.ok)).toEqual([false, true]);
+    expect(res.record.status).toBe("failed");
+  });
+
+  it("running out of tool rounds fails the step rather than passing intermediate text off as a report", async () => {
+    const call = { id: "c", name: "fetch_url", args: { url: "https://example.com" } };
+    const { fn } = scripted(Array.from({ length: 5 }, () => ({ content: "still looking", toolCalls: [call] })));
+    const tool = { spec: { name: "fetch_url", description: "", parameters: {} }, run: async () => "page" } as ActionTool;
+    const res = await runRoutine(watch(), baseDeps(fn, { tools: [tool] }));
+    expect(res.record.status).toBe("failed");
+    expect(res.results[0]).toMatchObject({ ok: false, output: "step 1 ran out of tool rounds before a final report" });
+  });
+});
