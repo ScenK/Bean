@@ -26,8 +26,19 @@ export const SKILL_BROWSER_NOTES: Record<SkillBrowserChange, string> = {
 };
 
 export function skillBrowserChange(body: string, existingBrowser: boolean): SkillBrowserChange | undefined {
-  if (parseFrontmatter(body).browser?.toLowerCase() === "true") return "on";
-  return existingBrowser ? "off" : undefined;
+  const saved = formatSkillBody(body); // parse what Save writes, not the untrimmed draft
+  if (parseFrontmatter(saved).browser?.toLowerCase() === "true") return "on";
+  // A toggle overlay keeps the built-in's own body (and its `browser:`) — nothing changes.
+  return existingBrowser && !isToggleOverlay(saved) ? "off" : undefined;
+}
+
+// The flags a toggle overlay may carry; skill-library's fingerprint ignores them too.
+export const TOGGLE_KEYS = ["enabled", "quick-launch"];
+
+// A user file holding nothing but toggle frontmatter: a built-in's enable/quick-launch state,
+// layered onto whatever body the built-in currently ships (#877). Written by saveSkill.
+export function isToggleOverlay(body: string): boolean {
+  return stripFrontmatter(body).trim() === "" && Object.keys(parseFrontmatter(body)).every((k) => TOGGLE_KEYS.includes(k));
 }
 
 export function parseDescription(text: string, fm: Record<string, string>): string {

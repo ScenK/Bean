@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Skill } from "./types.js";
-import { formatSkillBody, parseDescription, parseFrontmatter, setFrontmatter, stripFrontmatter } from "./frontmatter.js";
+import { TOGGLE_KEYS, formatSkillBody, isToggleOverlay, parseDescription, parseFrontmatter, setFrontmatter, stripFrontmatter } from "./frontmatter.js";
 
 // Re-exported so node-side consumers (and the barrel) still reach it from here.
 export { setFrontmatter, stripFrontmatter, formatSkillBody } from "./frontmatter.js";
@@ -35,17 +35,10 @@ function toSkill(name: string, body: string): Skill {
 
 // Content fingerprint ignoring the toggle flags — so flipping a built-in skill on/off isn't
 // mistaken for the user actually customizing it.
-const TOGGLE_KEYS = ["enabled", "quick-launch"];
 function fingerprint(body: string): string {
   const fm = parseFrontmatter(body);
   const fmKeys = Object.keys(fm).filter((k) => !TOGGLE_KEYS.includes(k)).sort();
   return `${fmKeys.map((k) => `${k}:${fm[k]}`).join("\n")}\n---\n${stripFrontmatter(body).trim()}`;
-}
-
-// A user file holding nothing but toggle frontmatter: a built-in's enable/quick-launch state,
-// layered onto whatever body the built-in currently ships (#877). Written by saveSkill.
-function isToggleOverlay(body: string): boolean {
-  return stripFrontmatter(body).trim() === "" && Object.keys(parseFrontmatter(body)).every((k) => TOGGLE_KEYS.includes(k));
 }
 
 // Merges the repo-shipped built-in skills (projectDir) with the user's ~/.bean/skills

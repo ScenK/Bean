@@ -1267,6 +1267,11 @@ test("skill proposal card's browser line comes from the parsed body against the 
   expect(await propose("new", "---\nbrowser: true\n---\n# N")).toBe("on");
   expect(await propose("web", "---\ntarget: terminal\n---\n# W")).toBe("off");
   expect(await propose("plain", "# P\n\nbrowser: true in prose only")).toBeUndefined();
+  // Save trims the body, so leading blank lines still parse as frontmatter.
+  expect(await propose("new", "\n---\nbrowser: true\n---\n# N")).toBe("on");
+  expect(await propose("web", "\n\n---\nbrowser: true\n---\n# W")).toBe("on");
+  // A toggle-only body is an overlay: the built-in keeps its body and its browser access.
+  expect(await propose("web", "---\nenabled: false\n---\n")).toBeUndefined();
 });
 
 test("save-skill action persists the skill and updates the card to saved", async () => {
