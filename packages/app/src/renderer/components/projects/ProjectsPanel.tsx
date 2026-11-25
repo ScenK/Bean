@@ -6,6 +6,7 @@ import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { copyPath, useCapabilities } from "../../shared/capabilities.js";
 import { countOf, sproutsByProject, withProjectSkill } from "./project-members.js";
+import { useNewShortcut } from "../../shared/new-shortcut.js";
 
 const LAUNCH_CHIPS: { mode: LaunchMode; label: string; needsPrompt: boolean }[] = [
   { mode: "opencode", label: "opencode", needsPrompt: true },
@@ -89,6 +90,7 @@ export function ProjectsPanel({
     setSaveError(undefined);
     setEditing({ original: undefined, form: { ...EMPTY_FORM } });
   };
+  useNewShortcut(startAdd);
 
   const startEdit = (p: Project): void => {
     setSaveError(undefined);
