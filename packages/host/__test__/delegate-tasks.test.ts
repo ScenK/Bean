@@ -461,6 +461,29 @@ describe("createDelegateTasks — cardless continuations (#1113)", () => {
     expect(h.sent.at(-1)).not.toHaveProperty("resumeRefused");
   });
 
+  it("a continuation holds its session from the call on — before its async checks — and its started push carries its card", async () => {
+    let allow!: (ok: boolean) => void;
+    const sent: DelegateEvent[] = [];
+    const tasks = createDelegateTasks({
+      projectAllowed: () => new Promise<boolean>((r) => { allow = r; }), resolveCli: () => ({ cli: "claude" }),
+      send: (e) => { sent.push(e); }, newId: () => "t", dir: tmp(),
+      run: () => ({ cancel: () => {} }) satisfies DelegateHandle,
+    });
+    const card = { projectPath: "/p", instruction: "go on", composedPrompt: "go on", cli: "claude" as const };
+    const started = tasks.start({ projectPath: "/p", prompt: "go on", instruction: "go on" }, { resume: SESSION, continued: card });
+    expect(tasks.busy(SESSION)).toBe(true); // still awaiting projectAllowed
+    allow(true);
+    await started;
+    expect(tasks.busy(SESSION)).toBe(true);
+    expect(sent[0]).toMatchObject({ type: "started", continued: card });
+    // A refused start frees it.
+    const refused = tasks.start({ projectPath: "/x", prompt: "go", instruction: "go" }, { resume: "other" });
+    expect(tasks.busy("other")).toBe(true);
+    allow(false);
+    await refused;
+    expect(tasks.busy("other")).toBe(false);
+  });
+
   it("a continuation never widens browser access", async () => {
     const reqs: DelegateRequest[] = [];
     const tasks = createDelegateTasks({

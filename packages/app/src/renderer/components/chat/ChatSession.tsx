@@ -148,6 +148,22 @@ export function continuedDelegateItems(
   return attachDelegateTaskId([card], id, c.taskId, c.proposal.instruction, buffered);
 }
 
+/** A continuation's `started` push (#1113) for a task this chat has no card for yet: its card. The push
+ * is replayed after a remote reconnect, so the card (Stop, outcome) exists even if the chat reply that
+ * named it was lost. Undefined = not a continuation, or the card already exists (replays are no-ops). */
+export function adoptContinued(items: readonly ChatItem[], e: DelegateEvent, id: string): ChatItem[] | undefined {
+  if (e.type !== "started" || !e.continued) return undefined;
+  if (items.some((it) => it.kind === "delegate" && it.taskId === e.taskId)) return undefined;
+  return [...items, ...continuedDelegateItems({ taskId: e.taskId, proposal: e.continued }, id, []).items];
+}
+
+/** The chat reply's continuation lands after Bean's sentence: a card its push already made moves
+ * there; otherwise the reply's own card (with its buffered events) is appended. */
+export function placeContinued(next: ChatItem[], taskId: string, fresh: readonly ChatItem[]): ChatItem[] {
+  const i = next.findIndex((it) => it.kind === "delegate" && it.taskId === taskId);
+  return i < 0 ? [...next, ...fresh] : [...next.slice(0, i), ...next.slice(i + 1), next[i]!];
+}
+
 /** The delegate card that announces the chat's task grant (its first, confirmed card), after a
  * settled event: `granted` = the host's grant anchors that run. A continuation keeps the current
  * card; a run without it ends the announcement if it was the grant's. */
@@ -841,7 +857,8 @@ export function ChatSession({
       rejectedMemoriesRef.current.push(...(res.forgotten ?? []).map((m) => m.text));
       // A follow-up the host already resumed: its running card, with any early events replayed.
       let continued: { items: ChatItem[]; loopbacks: QueuedSend[] } | undefined;
-      if (res.continuedDelegate) {
+      const contTask = res.continuedDelegate?.taskId;
+      if (res.continuedDelegate && !itemsRef.current.some((it) => it.kind === "delegate" && it.taskId === contTask)) {
         const { taskId } = res.continuedDelegate;
         const buffered = pendingDelegateEventsRef.current.get(taskId) ?? [];
         pendingDelegateEventsRef.current.delete(taskId);
@@ -880,7 +897,7 @@ export function ChatSession({
         if (res.sproutRun) next.push({ kind: "sprout", id: newId(), plan: res.sproutRun, state: "pending" });
         if (res.sendCard) next.push({ kind: "send", id: newId(), card: res.sendCard, state: "pending" });
         if (res.routineDraft) next.push({ kind: "routine", id: newId(), card: res.routineDraft, state: "pending" });
-        if (continued) next.push(...continued.items);
+        if (contTask !== undefined) next.splice(0, next.length, ...placeContinued(next, contTask, continued?.items ?? []));
         if (res.proposedDelegate) {
           if (res.delegateNotice) next.push({ kind: "status", id: newId(), text: res.delegateNotice, tone: "info" });
           next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
@@ -1652,6 +1669,15 @@ export function ChatSession({
   };
 
   const applyDelegateEvent = (e: DelegateEvent): void => {
+    const adopted = adoptContinued(itemsRef.current, e, newId());
+    if (adopted) {
+      const buffered = pendingDelegateEventsRef.current.get(e.taskId) ?? [];
+      pendingDelegateEventsRef.current.delete(e.taskId);
+      itemsRef.current = adopted;
+      setItems((prev) => adoptContinued(prev, e, adopted.at(-1)!.id) ?? prev);
+      for (const b of buffered) applyDelegateEvent(b);
+      return;
+    }
     const { loopback } = applyDelegateEventToItems(itemsRef.current, e);
     if (!itemsRef.current.some((it) => it.kind === "delegate" && it.taskId === e.taskId)) {
       pendingDelegateEventsRef.current.set(e.taskId, [...(pendingDelegateEventsRef.current.get(e.taskId) ?? []), e]);

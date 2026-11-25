@@ -53,6 +53,7 @@ export interface TodoDispatchAnswer { jobId: string; outcome: "running" | "next"
 export const SPROUT_UNRECORDED = "Started — see the Dashboard for how it went";
 
 const NOT_LIVE = "Agent sessions run from the chat window.";
+const DELEGATE_HOLDS = "A background run is still working in that session — wait for it to finish.";
 /** The desktop is its owner's machine: one actor confirms and continues every chat's tasks. */
 const DESKTOP_ACTOR = "owner";
 /** Turns that may continue a task: what the user typed or ran — never a loopback (epic #1111). */
@@ -135,7 +136,7 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       projectPath: g.projectPath, prompt: plain.composedPrompt, instruction: plain.instruction, cli: g.cli,
       ...(g.model ? { model: g.model } : {}), ...(g.skillName ? { skillName: g.skillName } : {}),
       offRecord: deps.memory.isIncognito(k), mountId: k,
-    }, { resume: g.sessionId, browserAllowed: g.browser, onEnd: (e) => touch(k, g.sessionId, e) });
+    }, { resume: g.sessionId, continued: proposal, browserAllowed: g.browser, onEnd: (e) => touch(k, g.sessionId, e) });
     const taskId = await (deps.track ? deps.track(started) : started);
     // Released while it started (the release's cancelMount ran before the task existed).
     if (mounts.holder(k) === undefined) deps.delegateTasks.cancelMount(k);
@@ -409,6 +410,8 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       const o = liveOwner(client, mountId);
       const refused = deps.refuseStart?.();
       if (refused) return { error: refused };
+      // Never two writers on one session: a delegate (a continuation, even still starting) holds it.
+      if (typeof sessionId === "string" && deps.delegateTasks.busy(sessionId)) return { error: DELEGATE_HOLDS };
       return o ? deps.liveTasks.resume(o, sessionId) : { error: NOT_LIVE };
     },
   };

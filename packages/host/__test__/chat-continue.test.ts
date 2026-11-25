@@ -42,7 +42,7 @@ function setup() {
     memory: { release: vi.fn(), isIncognito: () => false, setIncognito: vi.fn(), noteTurn: () => false } as never,
     threads,
     delegateTasks,
-    liveTasks: { stopMount: vi.fn(), holds: (id: string) => held.has(id) } as never,
+    liveTasks: { stopMount: vi.fn(), holds: (id: string) => held.has(id), resume: vi.fn(() => ({ sessionId: "live-1" })) } as never,
     push: vi.fn(),
     now: () => clock,
   });
@@ -81,7 +81,7 @@ describe("desktop cardless continuation (#1113)", () => {
     });
     const { req, opts } = t.starts.at(-1)!;
     expect(req).toMatchObject({ projectPath: "/p", prompt: "now add a test", cli: "claude", mountId: A });
-    expect(opts).toMatchObject({ resume: SESSION, browserAllowed: false });
+    expect(opts).toMatchObject({ resume: SESSION, browserAllowed: false, continued: res.continuedDelegate!.proposal });
     // The next turn offers the continued instruction as the session's last one.
     t.answer({ reply: "ok" });
     await t.sessions.chat(CLIENT, A, typed());
@@ -104,6 +104,14 @@ describe("desktop cardless continuation (#1113)", () => {
     res = await t.sessions.chat(CLIENT, A, typed());
     expect(res.delegateNotice).toBe(GRANT_MISMATCH_TEXT.busy);
     expect(t.starts).toHaveLength(1); // only the confirmed card ever ran
+  });
+
+  it("Continue live is refused while a delegate holds that session (two writers never share one)", () => {
+    const t = setup();
+    t.busy.add(SESSION);
+    expect(t.sessions.liveResume(CLIENT, A, SESSION)).toEqual({ error: expect.stringMatching(/still working in that session/) });
+    t.busy.clear();
+    expect(t.sessions.liveResume(CLIENT, A, SESSION)).toEqual({ sessionId: "live-1" });
   });
 
   it("30 idle minutes, a revoke (Dismiss / End) or a refused resume end the grant", async () => {

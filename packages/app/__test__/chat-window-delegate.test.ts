@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  addDelegateProposal, applyDelegateEventToItems, attachDelegateTaskId, continuedDelegateItems, grantCardAfter, hasActiveDelegates, markDelegateStarting,
+  addDelegateProposal, adoptContinued, applyDelegateEventToItems, attachDelegateTaskId, continuedDelegateItems, grantCardAfter, hasActiveDelegates,
+  markDelegateStarting, placeContinued,
 } from "../src/renderer/components/chat/ChatSession.js";
 import { insertDroppedPath, type ChatItem } from "../src/renderer/shared/chat-types.js";
 import type { DelegateEvent } from "@bean/host";
@@ -103,6 +104,25 @@ describe("desktop cardless continuation (#1113)", () => {
     ]);
     expect(items).toEqual([expect.objectContaining({ id: "d2", taskId: "t2", continued: true, state: "failed", error: "boom" })]);
     expect(loopbacks).toHaveLength(1);
+  });
+
+  it("a dropped chat reply: the replayed started push alone gives the card, once, and its outcome loops back once", () => {
+    const proposal = { projectPath: "/p", instruction: "add a test", composedPrompt: "add a test", cli: "claude" as const };
+    const started = { taskId: "t2", type: "started", projectPath: "/p", instruction: "add a test", continued: proposal } satisfies DelegateEvent;
+    const items = adoptContinued([delegate], started, "d2")!;
+    expect(items[1]).toMatchObject({ id: "d2", kind: "delegate", taskId: "t2", state: "running", continued: true });
+    expect(adoptContinued(items, started, "d3")).toBeUndefined(); // replayed after reconnect
+    expect(adoptContinued([delegate], { ...started, continued: undefined }, "d4")).toBeUndefined(); // a carded run
+    const done = applyDelegateEventToItems(items, { taskId: "t2", type: "done", result: "ok" });
+    expect(done.loopback).toBeDefined();
+    expect(applyDelegateEventToItems(done.items, { taskId: "t2", type: "done", result: "ok" }).loopback).toBeUndefined();
+  });
+
+  it("the reply's continuation lands after Bean's sentence: a pushed card moves there, else the reply's own is added", () => {
+    const card = { ...delegate, id: "d2", taskId: "t2", continued: true } satisfies ChatItem;
+    const reply = { kind: "reply", id: "r", text: "On it." } satisfies ChatItem;
+    expect(placeContinued([card, reply], "t2", []).map((i) => i.id)).toEqual(["r", "d2"]);
+    expect(placeContinued([reply], "t2", [card]).map((i) => i.id)).toEqual(["r", "d2"]);
   });
 
   it("a refused resume ends the compact card and offers the same instruction as a normal card, no loopback", () => {

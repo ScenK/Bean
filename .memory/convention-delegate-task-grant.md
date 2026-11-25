@@ -18,6 +18,8 @@ card plus `GRANT_MISMATCH_TEXT[reason]`. Restart drops grants (fail closed).
 - Desktop (#1113): grants live in `host/src/chat-sessions.ts`, one per chat mount, created when a
   confirmed `delegateStart` reports a valid session (`delegate-tasks` `onSession`), refreshed when
   a run on it settles, revoked by Dismiss / End (`delegateRevoke`, a REMOTE_OP), dropped at mount
-  release. Busy = `delegateTasks.busy` or `liveTasks.holds` on the session id. A match starts the
-  run before the chat reply returns (`continuedDelegate`); the renderer replays its buffered
-  events. The card's grant line follows the host's `granted` flag on settled events — never saved.
+  release. Busy = `delegateTasks.busy` (a continuation reserves its id from the call, before its
+  async checks) or `liveTasks.holds`; `liveResume` refuses a delegate-held id too — check both
+  directions. A match starts the run before the chat reply returns (`continuedDelegate`); its
+  `started` push also carries the card (`continued`), so a remote shell whose reply was lost still
+  gets it from the reconnect replay (`adoptContinued`, idempotent by task id). The card's grant line follows the host's `granted` flag on settled events — never saved.
