@@ -19,6 +19,10 @@ hands an unattended agent the user's logged-in sessions, so:
 - Terminal launches and the routine builder deliberately don't get `--chrome`. Claude **live
   sessions always do** (#597, every surface) — they're steered turn by turn, so a `browser: true`
   skill sent into one must find the browser; see project-live-sessions for the war-room exposure.
+- Skill proposal cards (desktop `SkillCard`, Discord/Teams `skillProposalCard`) disclose the
+  change before Save via `skillBrowserChange(body, existing.browser)` in `frontmatter.ts`: "on"
+  while the parsed body has `browser: true`, "off" when it drops it from an existing (incl.
+  built-in/disabled) browser skill (#1108). Same frontmatter rule, never model prose.
 
 **FAILED: sentinel.** A headless run that couldn't do its job still exits 0. Every delegate
 prompt ends with `FAILED_SENTINEL_INSTRUCTION`; on exit 0, a final result whose first line

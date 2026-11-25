@@ -414,3 +414,11 @@ test("finished/ended cards say what Continue live resumes, or why it's missing, 
   // started/cancelled cards stay bare.
   expect(embedOf(discordCards.liveSessionResultCard({ projectName: "bean", startedBy: "scen", outcome: "started", agent: "codex" })).fields).toBeUndefined();
 });
+
+test("skill proposal card shows the browser line for on and off, and none otherwise", () => {
+  const card = (browser?: "on" | "off") =>
+    JSON.stringify(discordCards.skillProposalCard({ proposalId: "s", name: "web", body: "# W", updating: true, ...(browser ? { browser } : {}) }));
+  expect(card("on")).toContain("🌐 uses your browser (and computer on codex)");
+  expect(card("off")).toContain("🌐 no longer uses your browser");
+  expect(card()).not.toContain("🌐");
+});

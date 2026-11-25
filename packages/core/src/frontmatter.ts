@@ -13,6 +13,23 @@ export function parseFrontmatter(text: string): Record<string, string> {
   return out;
 }
 
+/** Picker disclosure for a `browser: true` skill; codex's browser tools also control the computer. */
+export const BROWSER_SKILL_NOTE = "🌐 uses your browser (and computer on codex)";
+
+/** Skill proposal card disclosure (#1108): "on" while the draft's parsed frontmatter has
+ * `browser: true`, "off" when a replacement drops it from an existing browser skill. Derived from
+ * the body only, never from model prose — saving the body stays the only switch. */
+export type SkillBrowserChange = "on" | "off";
+export const SKILL_BROWSER_NOTES: Record<SkillBrowserChange, string> = {
+  on: BROWSER_SKILL_NOTE,
+  off: "🌐 no longer uses your browser",
+};
+
+export function skillBrowserChange(body: string, existingBrowser: boolean): SkillBrowserChange | undefined {
+  if (parseFrontmatter(body).browser?.toLowerCase() === "true") return "on";
+  return existingBrowser ? "off" : undefined;
+}
+
 export function parseDescription(text: string, fm: Record<string, string>): string {
   if (fm.description) return fm.description;
   const first = text

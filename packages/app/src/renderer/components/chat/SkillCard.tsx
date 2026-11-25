@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import type { ProposedSkill, Skill } from "@bean/core";
+import { SKILL_BROWSER_NOTES, skillBrowserChange } from "@bean/core/frontmatter";
 
 /** Draft-skill confirm card: name and body editable until confirmed. `collides` (live,
  * recomputed from the current `name` against the real skills list) drives the "replaces
@@ -25,13 +26,17 @@ export function SkillCard({
   const trimmedName = name.trim();
   // Same traversal guard as SkillsPanel's saveNew/the shared saveSkill writer.
   const nameInvalid = !trimmedName || /[/\\]|\.\./.test(trimmedName);
-  const collides = !nameInvalid && skills.some((s) => s.name === trimmedName);
+  const existing = nameInvalid ? undefined : skills.find((s) => s.name === trimmedName);
+  const collides = existing !== undefined;
+  // Live from the edited body's parsed frontmatter, like the save itself (#1108).
+  const browser = skillBrowserChange(body, existing?.browser === true);
 
   return (
     <div class="bean-card">
       <div class="bean-card-chips">
         <span class="bean-chip">{collides ? "update skill" : "draft skill"}</span>
         {collides ? <span class="bean-chip">replaces existing</span> : null}
+        {browser ? <span class="bean-chip">{SKILL_BROWSER_NOTES[browser]}</span> : null}
       </div>
       <input
         class="bean-input bean-input--boxed"

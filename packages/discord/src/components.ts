@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -261,7 +261,10 @@ function skillProposalCard(input: SkillProposalCardInput): object {
     embeds: [{
       title: input.updating ? "Bean proposes a skill update" : "Bean proposes a new skill",
       description: noteDescription(input.name, `\`\`\`markdown\n${input.body}\n\`\`\``),
-      fields: [{ name: "Skill", value: input.updating ? `${input.name} (replaces existing)` : input.name, inline: true }],
+      fields: [
+        { name: "Skill", value: input.updating ? `${input.name} (replaces existing)` : input.name, inline: true },
+        ...(input.browser ? [{ name: "Browser", value: SKILL_BROWSER_NOTES[input.browser], inline: true }] : []),
+      ],
     }],
     components: [row([
       { type: BUTTON, style: 3, label: input.updating ? "Update skill" : "Save skill", custom_id: `bean:save-skill:${input.proposalId}` },

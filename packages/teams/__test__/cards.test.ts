@@ -160,6 +160,14 @@ test("skill proposal card badges an update to an existing skill", () => {
   expect(s).toContain("replaces existing");
 });
 
+test("skill proposal card shows the browser line for on and off, and none otherwise", () => {
+  const card = (browser?: "on" | "off") =>
+    flatten(skillProposalCard({ proposalId: "s", name: "web", body: "# W", updating: true, ...(browser ? { browser } : {}) }));
+  expect(card("on")).toContain("🌐 uses your browser (and computer on codex)");
+  expect(card("off")).toContain("🌐 no longer uses your browser");
+  expect(card()).not.toContain("🌐");
+});
+
 test("skill result card reports outcome and actor", () => {
   const s = flatten(skillResultCard({ name: "changelog", savedBy: "alice", outcome: "saved" }));
   expect(s).toContain("Skill saved");
