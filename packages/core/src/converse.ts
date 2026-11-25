@@ -9,7 +9,7 @@ import { categoriesBlock } from "./memory/extract.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 import { isLiveCli, type LiveCli } from "./live-session.js";
-import { chatRoutineProblem, withDefaultUntil, COMMITMENT_DAYS, type Routine } from "./routine-store.js";
+import { chatRoutineProblem, resolveSinkUsers, withDefaultUntil, COMMITMENT_DAYS, type Routine } from "./routine-store.js";
 import type { Destination, SendCard } from "./destinations.js";
 import type { RoutineDraftCard } from "./chatops/routine-proposals.js";
 import type { CliModels } from "./cli-models.js";
@@ -525,6 +525,11 @@ function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
       "own words and today's date in description. Set until only to an end the owner named — with none, it stops " +
       `after ${COMMITMENT_DAYS} days. Command steps and command watches can't be set up from chat. ` +
       (live.length > 0 ? `Existing sprouts: ${live.join(", ")}. ` : "") +
+      (live.length > 0
+        ? "Never call this tool just to switch an existing sprout on or off. " +
+          (desktop ? "Tell the owner to use its switch in the Sprouts panel. "
+            : "Tell the owner to send `disable <exact name>` or `enable <exact name>` here, using the name as listed. ")
+        : "") +
       (archived.length > 0 ? `Archived sprouts (reusing a name replaces it): ${archived.join(", ")}. ` : "") +
       "Nothing is saved until the card is confirmed. " +
       "The user calls these sprouts; this tool's name is internal — always say sprout.",
@@ -1130,6 +1135,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       // A commitment the owner gave no end stops after COMMITMENT_DAYS — dated here, on the core's
       // clock, so the card shows the real date.
       parsed = withDefaultUntil(parsed, now());
+      parsed = resolveSinkUsers(parsed, routineAuthoring.recipients);
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.
       const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId, routineAuthoring.destinations);
       return card({
