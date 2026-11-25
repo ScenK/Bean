@@ -6,7 +6,7 @@ import type {
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CardBuilders,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -57,6 +57,7 @@ export function proposalCard(input: ProposalCardInput): object {
         ...(input.defaultModel ? { value: input.defaultModel } : {}),
         choices: modelChoices.map((m) => ({ title: `${m.label} (${m.availableOn.join("/")})`, value: m.id })),
       },
+      { type: "TextBlock", text: DELEGATE_GRANT_LINE, wrap: true, isSubtle: true, size: "small" },
     ],
     actions: [
       {
@@ -77,13 +78,16 @@ export function runningCard(input: RunningCardInput): object {
     type: "AdaptiveCard",
     version: "1.4",
     body: [
-      { type: "TextBlock", weight: "bolder", text: `Running in ${input.projectName}… (started by ${input.startedBy})` },
+      {
+        type: "TextBlock", weight: "bolder", text: input.continued
+          ? `↻ Continuing in ${input.projectName}… (asked by ${input.startedBy})`
+          : `Running in ${input.projectName}… (started by ${input.startedBy})`,
+      },
       { type: "TextBlock", text: input.instruction, wrap: true, isSubtle: true },
       ...(input.tail ? [{ type: "TextBlock", text: input.tail, wrap: true }] : []),
     ],
-    actions: [
-      { type: "Action.Submit", title: "Cancel run", data: { beanAction: "cancel-run", runId: input.runId } },
-    ],
+    // No Cancel until the run has an id (a continuation's card is posted just before it starts).
+    actions: input.runId ? [{ type: "Action.Submit", title: "Cancel run", data: { beanAction: "cancel-run", runId: input.runId } }] : [],
   };
 }
 

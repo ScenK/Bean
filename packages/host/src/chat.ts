@@ -2,13 +2,14 @@ import {
   converse, checkPdfAttachment, isArchived, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
   checkImageAttachments, compactHistory, gapMarkerLine, availableModels, planSproutRun, homeDestination, makeBackgroundWorkTool, makeSproutReadTools, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona, type HomeDms,
-  type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
+  type ActiveAgentSession, type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
   DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, DEFAULT_PERSONA, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
   CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, boundMainLog, type ChatTurn, type ConversationStore, type KeyedTurn,
   mainSince, homeMainCursor, setHomeMainCursor, type MainSince,
 } from "@bean/core";
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import type { ClientId } from "./shell-ops.js";
 
@@ -80,9 +81,14 @@ function appendDelta(log: ConversationStore, turns: readonly KeyedTurn[]): void 
   }
 }
 
+/** The chat's live task grant as converse() is offered it (chat-sessions); the name is looked up here. */
+export type OfferedSession = Omit<ActiveAgentSession, "projectName">;
+
 export function buildChatHandler(deps: ChatHandlerDeps) {
   // signal = the turn's Stop (registerIpc's per-mount controller); converse() then resolves `stopped`.
-  return async (req: ChatRequest, clientId?: ClientId, mountId?: string, signal?: AbortSignal): Promise<ConverseResult> => {
+  return async (
+    req: ChatRequest, clientId?: ClientId, mountId?: string, signal?: AbortSignal, active?: OfferedSession,
+  ): Promise<ConverseResult> => {
     const arrived = new Date(); // the gap marker's time (#977): when the message came, not after compaction
     // The renderer's imageFileGuard is UX only; main re-checks before anything reaches OpenAI (#733).
     if (req.images !== undefined) checkImageAttachments(req.images);
@@ -185,6 +191,9 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       runAvailable: clientId === undefined || (deps.runAvailable?.(clientId) ?? true),
       sendAvailable: deps.proposeSend !== undefined,
       ...(drafts ? { routineAuthoring: drafts.authoring(allRoutines) } : {}),
+      ...(active ? { activeSession: {
+        ...active, projectName: projects.find((p) => p.path === active.projectPath)?.name ?? (basename(active.projectPath) || "scratch"),
+      } } : {}),
       signal,
     });
     if (newSummary) result.summary = newSummary;

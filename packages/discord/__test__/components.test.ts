@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { DELEGATE_GRANT_LINE } from "@bean/core";
 import { discordCards } from "../src/components.js";
 
 const models = [
@@ -421,4 +422,13 @@ test("skill proposal card shows the browser line for on and off, and none otherw
   expect(card("on")).toContain("🌐 uses your browser (and computer on codex)");
   expect(card("off")).toContain("🌐 no longer uses your browser");
   expect(card()).not.toContain("🌐");
+});
+
+test("delegate proposal states its task grant; a continuation's compact card has Cancel only once it has a run id", () => {
+  expect(JSON.stringify(discordCards.proposalCard(proposalInput))).toContain(DELEGATE_GRANT_LINE);
+  const base = { projectName: "bean", instruction: "and the tests too", startedBy: "scen", continued: true as const };
+  const posted = discordCards.runningCard({ ...base, runId: "" }) as { embeds: { title: string }[]; components: unknown[] };
+  expect(posted.embeds[0]!.title).toBe("↻ Continuing in bean… (asked by scen)");
+  expect(posted.components).toEqual([]);
+  expect(JSON.stringify(discordCards.runningCard({ ...base, runId: "run-2" }))).toContain("bean:cancel-run:run-2");
 });

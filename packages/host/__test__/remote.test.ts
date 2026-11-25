@@ -307,10 +307,10 @@ describe("remote attach over the unix socket", () => {
     b.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION + 1 });
     expect(await b.next((m) => m.type === "error")).toMatchObject({ handshake: { contract: CONTRACT_VERSION } });
     await b.closed;
-    // A v4 shell (pre-#1000: its core would refuse the DM pull) is refused too.
-    expect(CONTRACT_VERSION).toBe(5);
+    // A v5 shell (pre-#1113: it would leave a cardless continuation invisible) is refused too.
+    expect(CONTRACT_VERSION).toBe(6);
     const c = shellOverBridge(path);
-    c.send({ type: "attach", shellId: SHELL, contract: 4 });
+    c.send({ type: "attach", shellId: SHELL, contract: 5 });
     expect(await c.next((m) => m.type === "error")).toMatchObject({ message: expect.stringMatching(/mismatch/) });
     await c.closed;
   });

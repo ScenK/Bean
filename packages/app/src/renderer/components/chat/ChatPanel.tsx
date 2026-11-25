@@ -137,6 +137,7 @@ export function ChatPanel({
   autoFocusDelegateId,
   onDelegateDismiss,
   onDelegateCancelTask,
+  grantCardId,
   onContinueLive,
   onSaveToNotes,
   onUnlink,
@@ -239,6 +240,8 @@ export function ChatPanel({
   autoFocusDelegateId?: string;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
+  /** The delegate card whose task grant is live: it says follow-ups continue its session. */
+  grantCardId?: string;
   onContinueLive: (id: string) => void;
   onSaveToNotes: () => void;
   onUnlink: () => void;
@@ -1006,6 +1009,7 @@ export function ChatPanel({
                 onConfirm={(edited, choice) => onDelegateConfirm(it.id, edited, choice)}
                 onDismiss={() => onDelegateDismiss(it.id)}
                 onCancelTask={() => onDelegateCancelTask(it.id)}
+                granted={it.id === grantCardId}
                 onContinueLive={!continued && canContinueLive(it, clis, !!live) ? () => onContinueLive(it.id) : undefined}
               />
             );
