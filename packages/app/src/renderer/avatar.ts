@@ -295,9 +295,11 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
       if (notes.length > 0 && tile) tile.insertAdjacentHTML("beforeend", `<span class="bean-petal-badge bean-petal-badge--end">${notes.length}</span>`);
     });
     // Sprouts tile badge: every sprout but archived ones — on-demand sprouts are off yet still in
-    // use. Archived is the core's call (core time), as in the Sprouts panel.
-    void Promise.all([window.bean.routinesList(), window.bean.routinesState()]).then(([routines, states]) => {
-      const live = routines.filter((r) => !states[r.name]?.ended?.archived).length;
+    // use. Archived is the core's call (core time), as in the Sprouts panel. States carry run
+    // history and can fail (a remote frame cap): then count archived ones too rather than nothing.
+    const statesP = window.bean.routinesState().catch(() => undefined);
+    void Promise.all([window.bean.routinesList(), statesP]).then(([routines, states]) => {
+      const live = routines.filter((r) => !states?.[r.name]?.ended?.archived).length;
       const tile = menu.querySelector('.bean-petal--menu[data-kind="routines"]');
       if (live > 0 && tile) tile.insertAdjacentHTML("beforeend", `<span class="bean-petal-badge bean-petal-badge--end">${live}</span>`);
     });
