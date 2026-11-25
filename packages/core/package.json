@@ -41,6 +41,10 @@
       "types": "./dist/watch-window.d.ts",
       "default": "./dist/watch-window.js"
     },
+    "./delegate-grant": {
+      "types": "./dist/delegate-grant.d.ts",
+      "default": "./dist/delegate-grant.js"
+    },
     "./card-record": {
       "types": "./dist/card-record.d.ts",
       "default": "./dist/card-record.js"
