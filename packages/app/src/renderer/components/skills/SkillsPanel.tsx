@@ -8,6 +8,7 @@ import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { ProposalsInbox, type ProposalLists } from "./ProposalsInbox.js";
 import { useCoreStatus } from "../../shared/core-status.js";
+import { useNewShortcut } from "../../shared/new-shortcut.js";
 
 /** The Run button's Plan-card seed. No linked project → projectPath omitted, so the card opens
  * on "no project" (scratch). Same composePrompt() the drag-drop-onto-petal flow uses, so both
@@ -217,6 +218,7 @@ export function SkillsPanel({
     setSaveError(undefined);
     setMode("add");
   };
+  useNewShortcut(startAdd);
 
   const cancelAdd = (): void => {
     setMode("view");

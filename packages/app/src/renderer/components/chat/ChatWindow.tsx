@@ -12,6 +12,7 @@ import type { SyncedChatListing } from "../../../synced-chats.js";
 import type { CoreStatus } from "../../../channels.js";
 import { useCoreStatus } from "../../shared/core-status.js";
 import { modKey } from "../../shared/mod-key.js";
+import { useNewShortcut } from "../../shared/new-shortcut.js";
 import { FindBar } from "./FindBar.js";
 
 /** A remote core's bar over the chat (#811): reconnecting (the composer is read-only meanwhile) or taken
@@ -362,20 +363,7 @@ export function ChatWindow() {
   // The mount-once listeners above need the current render's openThread (it reads synced/activeId).
   const openThreadRef = useRef(openThread);
   openThreadRef.current = openThread;
-  // `n` = New chat, only while nothing takes typing (the composer, a search box, an editor).
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== "n" || e.repeat || e.isComposing || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || busyRef.current) return;
-      const el = e.target;
-      if (el instanceof HTMLElement && (el.isContentEditable || el.closest("input, textarea, select"))) return;
-      e.preventDefault();
-      openThreadRef.current("new");
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  useNewShortcut(() => openThreadRef.current("new"), busy);
   // Control+` folds/unfolds the shown chat's terminal, Cmd+T / Cmd+1…4 / Cmd+Shift+[ ] drive its
   // tabs, Cmd/Ctrl+F opens (or refocuses) find — capture phase, so they win over the shell's own
   // keydown (xterm would send NUL) and work from the composer or the terminal alike.

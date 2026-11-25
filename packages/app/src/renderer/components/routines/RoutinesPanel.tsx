@@ -16,6 +16,7 @@ import { stepProblemsText } from "./step-ids.js";
 import { BuildPane, DescribePane, ExampleChips, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
 import { ARCHIVED, NEEDS_FIXING, derivedSectionLabel, folderName, isListedUnder, sproutSections, toggleListedUnder, type SproutRow } from "./sprout-sections.js";
 import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
+import { useNewShortcut } from "../../shared/new-shortcut.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number): string => String(n).padStart(2, "0");
@@ -429,6 +430,7 @@ export function RoutinesPanel() {
   const startNew = (): void => {
     setSelected(undefined); setSelectedBuild(undefined); setCreating(false); setBriefSeed(undefined); setDescribing(true); setError("");
   };
+  useNewShortcut(startNew);
   const startBlank = (): void => {
     setDescribing(false); setSelected(undefined); setCreating(true); setDraft(emptyRoutine()); setError("");
   };

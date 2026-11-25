@@ -6,6 +6,7 @@ import { imageFileGuard } from "../../shared/chat-types.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import type { Note, Project } from "@bean/core";
+import { useNewShortcut } from "../../shared/new-shortcut.js";
 
 type Mode = "view" | "edit" | "add";
 
@@ -222,6 +223,7 @@ export function NotesPanel() {
     setSaveError(undefined);
     setMode("add");
   };
+  useNewShortcut(startAdd);
 
   const save = async (): Promise<void> => {
     try {
