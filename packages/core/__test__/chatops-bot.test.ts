@@ -45,6 +45,7 @@ import { LiveSessionProposalStore } from "../src/chatops/live-session-proposals.
 import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest } from "../src/live-session.js";
 import { TURN_QUEUE_FULL } from "../src/turn-live-session.js";
 import { OPENCODE_BROWSER_REFUSAL } from "../src/delegate.js";
+import { GRANT_MISMATCH_TEXT } from "../src/delegate-grant.js";
 import type { CliName } from "../src/launcher.js";
 
 const fakeCards = {
@@ -456,6 +457,236 @@ test("/new while a delegate runs: its session is not stored afterwards", async (
   delegateCalls[0]?.cb.onDone("late result", "pre-reset-sess");
   await vi.waitFor(() => expect(effects.posted).toContain("late result"));
   expect(deps.conversations.threadSession("c1", "claude")).toBeUndefined();
+});
+
+/** A chat fn that proposes a delegate — with `continue: true` once the turn offers an active session. */
+function grantChat(seen: string[][], args: Record<string, unknown> = {}): TeamsBotDeps["chat"] {
+  return async ({ messages }) => {
+    seen.push(messages.map((m) => String(m.content)));
+    const offered = messages.some((m) => String(m.content).startsWith("Active agent session"));
+    return { content: "on it", toolCalls: [{ name: "propose_delegate", args: {
+      project: "/p/bean", instruction: "and the tests too", ...(offered ? { continue: true } : {}), ...args,
+    } }] };
+  };
+}
+
+describe("task grant: the confirmer's follow-ups continue without a card (#1114)", () => {
+  // u1 (alice) confirms a card in thread c1; its run reports sess-1 and finishes.
+  const confirmed = async (args: Record<string, unknown> = {}, over: Partial<TeamsBotDeps> = {}, pick: Record<string, string> = {}) => {
+    const made = makeDeps({
+      converseResult: delegateResult,
+      loadProjects: async () => [{ name: "bean", path: "/p/bean" }, { name: "web", path: "/p/web" }],
+      ...over,
+    });
+    const bot = buildTeamsBot(made.deps);
+    const effects = fx();
+    await bot.onMessage(msg, effects);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
+    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude", ...pick } }, effects);
+    made.delegateCalls[0]!.cb.onSessionStart?.(1, "sess-1");
+    made.delegateCalls[0]!.cb.onDone("first pass", "sess-1");
+    await vi.waitFor(() => expect(effects.posted).toContain("first pass"));
+    const seen: string[][] = [];
+    made.deps.chat = grantChat(seen, args);
+    return { ...made, bot, seen };
+  };
+  const followUp = { ...msg, text: "now the tests" };
+
+  test("the confirmer continues the same session strictly, with a compact card and no proposal", async () => {
+    const { bot, delegateCalls, seen } = await confirmed();
+    const effects = fx();
+    await bot.onMessage(followUp, effects);
+    expect(seen[0]!.join("\n")).toContain('"lastInstruction":"fix it"');
+    expect(delegateCalls).toHaveLength(2);
+    expect(delegateCalls[1]!.req).toMatchObject({ cli: "claude", projectPath: "/p/bean", resume: "sess-1", strictResume: true });
+    expect(effects.cards).toEqual([expect.objectContaining({ kind: "running", continued: true, runId: "" })]);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "running", continued: true, startedBy: "alice" });
+    expect((effects.updates.at(-1)?.card as { runId: string }).runId).not.toBe("");
+    // It settled on the session: the grant holds, so the next follow-up continues too.
+    delegateCalls[1]!.cb.onSessionStart?.(2, "sess-1");
+    delegateCalls[1]!.cb.onDone("tests pass", "sess-1");
+    await vi.waitFor(() => expect(effects.posted).toContain("tests pass"));
+    await bot.onMessage(followUp, fx());
+    expect(delegateCalls[2]!.req).toMatchObject({ resume: "sess-1", strictResume: true });
+  });
+
+  test("anyone else in the thread gets the normal card; the session is never offered to their turn", async () => {
+    const { bot, delegateCalls, seen } = await confirmed();
+    const effects = fx();
+    await bot.onMessage({ ...followUp, fromId: "u2", fromName: "bob" }, effects);
+    expect(seen[0]!.join("\n")).not.toContain("Active agent session");
+    expect(effects.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+    expect(delegateCalls).toHaveLength(1);
+  });
+
+  test("another project gets the card with its reason, and that card starts fresh", async () => {
+    const { bot, deps, delegateCalls } = await confirmed({ project: "/p/web" });
+    const effects = fx();
+    await bot.onMessage(followUp, effects);
+    expect(effects.posted).toContain(GRANT_MISMATCH_TEXT.project);
+    const card = effects.cards[0] as { kind: string; proposalId: string };
+    expect(card.kind).toBe("proposal");
+    expect(deps.conversations.threadSession("c1", "claude")).toBe("sess-1");
+    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: card.proposalId, cli: "claude" } }, effects);
+    expect(delegateCalls[1]!.req.resume).toBeUndefined();
+    expect(delegateCalls[1]!.req.strictResume).toBeUndefined();
+  });
+
+  test("a follow-up while the continuation still runs gets the card: busy", async () => {
+    const { bot, delegateCalls } = await confirmed();
+    await bot.onMessage(followUp, fx());
+    const effects = fx();
+    await bot.onMessage(followUp, effects);
+    expect(effects.posted).toContain(GRANT_MISMATCH_TEXT.busy);
+    expect(effects.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+    expect(delegateCalls).toHaveLength(2);
+  });
+
+  test("a continuation the CLI couldn't resume ends the grant", async () => {
+    const { bot, delegateCalls } = await confirmed();
+    const effects = fx();
+    await bot.onMessage(followUp, effects);
+    delegateCalls[1]!.cb.onError(new Error("Couldn't resume the earlier claude session — nothing ran."));
+    await vi.waitFor(() => expect(effects.posted.some((p) => p.startsWith("Delegate run failed"))).toBe(true));
+    const next = fx();
+    await bot.onMessage(followUp, next);
+    expect(next.posted).toContain(GRANT_MISMATCH_TEXT.revoked);
+    expect(next.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+  });
+
+  test("30 idle minutes: the card again, with the reason", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { bot, seen, delegateCalls } = await confirmed();
+      vi.setSystemTime(Date.now() + 30 * 60_000);
+      const effects = fx();
+      await bot.onMessage(followUp, effects);
+      expect(seen[0]!.join("\n")).not.toContain("Active agent session");
+      expect(effects.posted).toContain(GRANT_MISMATCH_TEXT.expired);
+      expect(effects.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+      // That card starts fresh, not on the thread's earlier session.
+      const id = (effects.cards[0] as { proposalId: string }).proposalId;
+      await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+      expect(delegateCalls[1]!.req.resume).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** fx() whose next postCard (the compact card) waits until released. */
+  const heldPost = () => {
+    const effects = fx();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const post = effects.postCard;
+    let posting!: () => void;
+    const posted = new Promise<void>((r) => { posting = r; });
+    effects.postCard = async (c) => { posting(); await gate; return post(c); };
+    return { effects, release, posted };
+  };
+
+  test("a /new while the compact card posts: nothing runs, and it says why", async () => {
+    const { bot, delegateCalls } = await confirmed();
+    const h = heldPost();
+    const turn = bot.onMessage(followUp, h.effects);
+    await h.posted;
+    await bot.onMessage({ ...msg, text: "/new" }, fx());
+    h.release();
+    await turn;
+    expect(delegateCalls).toHaveLength(1);
+    expect(h.effects.posted).toContain(`${GRANT_MISMATCH_TEXT.revoked} Nothing ran — ask me again.`);
+    expect(h.effects.updates.at(-1)?.card).toMatchObject({ kind: "finished", outcome: "cancelled" });
+  });
+
+  test("losing delegate rights before dispatch: nothing runs", async () => {
+    let role: "owner" | "member" = "owner";
+    const { bot, deps, delegateCalls } = await confirmed();
+    deps.roles = { ...deps.roles, roleOf: () => role };
+    const h = heldPost();
+    const turn = bot.onMessage(followUp, h.effects);
+    await h.posted;
+    role = "member";
+    h.release();
+    await turn;
+    expect(delegateCalls).toHaveLength(1);
+    expect(h.effects.posted.at(-1)).toContain("Nothing ran");
+  });
+
+  test("a live session bound while the compact card posts: nothing runs", async () => {
+    const { bot, deps, delegateCalls } = await confirmed();
+    const h = heldPost();
+    const turn = bot.onMessage(followUp, h.effects);
+    await h.posted;
+    vi.spyOn(deps.liveSessions, "has").mockReturnValue(true);
+    h.release();
+    await turn;
+    expect(delegateCalls).toHaveLength(1);
+    expect(h.effects.posted).toContain(`${GRANT_MISMATCH_TEXT.busy} Nothing ran — ask me again.`);
+  });
+
+  test("a /new after the tap, while the run is still being prepared: no grant when it settles", async () => {
+    const made = makeDeps({ converseResult: delegateResult });
+    const bot = buildTeamsBot(made.deps);
+    const effects = fx();
+    await bot.onMessage(msg, effects);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
+    // Hold startRun's project load: the tap is in, the run isn't launched yet.
+    const load = made.deps.loadProjects;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let loading!: () => void;
+    const loadStarted = new Promise<void>((r) => { loading = r; });
+    made.deps.loadProjects = async () => { loading(); await gate; return load(); };
+    const tap = bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    await loadStarted;
+    made.deps.loadProjects = load;
+    await bot.onMessage({ ...msg, text: "/new" }, fx());
+    release();
+    await tap;
+    made.delegateCalls[0]!.cb.onSessionStart?.(1, "sess-1");
+    made.delegateCalls[0]!.cb.onDone("first pass", "sess-1");
+    await vi.waitFor(() => expect(effects.posted).toContain("first pass"));
+    made.deps.chat = grantChat([]);
+    const next = fx();
+    await bot.onMessage({ ...msg, text: "now the tests" }, next);
+    expect(next.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+    expect(made.delegateCalls).toHaveLength(1);
+    expect(made.deps.conversations.threadSession("c1", "claude")).toBeUndefined();
+  });
+
+  test("a skill that gained browser access since the grant: nothing runs", async () => {
+    let browser = false;
+    const { bot, delegateCalls, deps } = await confirmed({}, {
+      loadSkills: async () => [{ name: "fix-bug", description: "d", body: "b", enabled: true, ...(browser ? { browser: true } : {}) }],
+    }, { skillName: "fix-bug" });
+    // The turn sees the skill without browser; the launch reloads it with browser on.
+    const load = deps.loadSkills;
+    let calls = 0;
+    deps.loadSkills = async () => { if (++calls > 1) browser = true; return load(); };
+    const effects = fx();
+    await bot.onMessage(followUp, effects);
+    expect(delegateCalls).toHaveLength(1);
+    expect(effects.posted).toContain(`${GRANT_MISMATCH_TEXT.browser} Nothing ran — ask me again.`);
+  });
+
+  test("/new revokes the grant, and a run that finishes after it doesn't grant again", async () => {
+    const { bot, delegateCalls } = await confirmed();
+    await bot.onMessage({ ...msg, text: "/new" }, fx());
+    const effects = fx();
+    await bot.onMessage(followUp, effects);
+    expect(effects.posted).toContain(GRANT_MISMATCH_TEXT.revoked);
+    // Confirm that card, /new while it runs, then it finishes: no grant from the late completion.
+    const id = (effects.cards[0] as { proposalId: string }).proposalId;
+    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    await bot.onMessage({ ...msg, text: "/new" }, fx());
+    delegateCalls[1]!.cb.onSessionStart?.(2, "sess-2");
+    delegateCalls[1]!.cb.onDone("late", "sess-2");
+    await vi.waitFor(() => expect(effects.posted).toContain("late"));
+    const after = fx();
+    await bot.onMessage(followUp, after);
+    expect(after.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+    expect(delegateCalls).toHaveLength(2);
+  });
 });
 
 test("confirm re-composes the prompt from the skill picked on the card", async () => {
@@ -5147,6 +5378,43 @@ describe("owner DMs share the main conversation's history (#998)", () => {
     expect(deps.conversations.threadSession(MAIN_CONVERSATION_ID, "claude")).toBe("main-sess");
     expect(m.rows(MAIN_CONVERSATION_ID).at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed", surface: "discord" });
     expect(m.rows("d1")).toEqual([]);
+  });
+  test.each(["discord", "teams"] as const)("%s owner DM: confirm once, then a follow-up continues the same session with no card (#1114)", async (surface) => {
+    const m = mainBots({ converseResult: delegateResult });
+    const { deps, delegateCalls, bot } = m[surface];
+    const dm = surface === "discord" ? ownerDm : teamsOwnerDm;
+    const effects = fx();
+    await bot.onMessage(dm, effects);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
+    await bot.onCardAction({ conversationId: dm.conversationId, fromId: dm.fromId, ...("fromAltId" in dm ? { fromAltId: dm.fromAltId } : {}), fromName: "Scen", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    expect(delegateCalls[0]?.req.resume).toBeUndefined();
+    delegateCalls[0]!.cb.onSessionStart?.(1, "sess-9");
+    delegateCalls[0]!.cb.onDone("all fixed", "sess-9");
+    await vi.waitFor(() => expect(effects.posted).toContain("all fixed"));
+    deps.chat = grantChat([]);
+    const next = fx();
+    await bot.onMessage({ ...dm, text: "now the tests" }, next);
+    expect(delegateCalls[1]?.req).toMatchObject({ resume: "sess-9", strictResume: true });
+    expect(next.cards).toEqual([expect.objectContaining({ kind: "running", continued: true })]);
+    // The grant is the real DM's, never the shared main id's.
+    expect(deps.conversations.threadSession(MAIN_CONVERSATION_ID, "claude")).toBeUndefined();
+  });
+  test("owner DM: a run confirmed before /new doesn't grant when it settles after it (#1114)", async () => {
+    const m = mainBots({ converseResult: delegateResult });
+    const { deps, delegateCalls, bot } = m.discord;
+    const effects = fx();
+    await bot.onMessage(ownerDm, effects);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
+    await bot.onCardAction({ conversationId: "d1", fromId: "u1", fromName: "Scen", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    await bot.onMessage({ ...ownerDm, text: "/new" }, fx());
+    delegateCalls[0]!.cb.onSessionStart?.(1, "sess-9");
+    delegateCalls[0]!.cb.onDone("all fixed", "sess-9");
+    await vi.waitFor(() => expect(effects.posted).toContain("all fixed"));
+    deps.chat = grantChat([]);
+    const next = fx();
+    await bot.onMessage({ ...ownerDm, text: "now the tests" }, next);
+    expect(next.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+    expect(delegateCalls).toHaveLength(1);
   });
   test("a bound owner-DM live session never reopens from `continue`: bare is a Bean turn, slashed posts the confirm card", async () => {
     const m = mainBots();

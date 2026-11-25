@@ -35,7 +35,14 @@ export interface RunningCardInput {
   tail?: string;
   /** RunRegistry id the Cancel button carries. */
   runId: string;
+  /** A follow-up continuing the confirmed task's agent session with no card (epic #1111): the
+   * compact card. */
+  continued?: true;
 }
+
+/** The delegate proposal card's grant line (epic #1111): what confirming it allows. */
+export const DELEGATE_GRANT_LINE =
+  "Run it and your follow-ups here continue this agent session without a new card — until /new or 30 idle minutes.";
 
 export interface FinishedCardInput {
   projectName: string;

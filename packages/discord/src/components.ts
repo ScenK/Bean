@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -88,6 +88,7 @@ function proposalCard(input: ProposalCardInput): object {
     embeds: [{
       title: "Bean proposes a delegate run",
       description: clampInstruction(input.instruction),
+      footer: { text: DELEGATE_GRANT_LINE },
     }],
     // Discord caps a message at 5 action rows: project, skill, cli, model, buttons (the live card's order).
     components: [...projectRows, ...skillRows, row([cliSelect]), ...modelRows, row(buttons)],
@@ -108,12 +109,17 @@ function clampTail(tail: string): string {
 function runningCard(input: RunningCardInput): object {
   return {
     embeds: [{
-      title: `Running in ${input.projectName}… (started by ${input.startedBy})`,
+      title: input.continued
+        ? `↻ Continuing in ${input.projectName}… (asked by ${input.startedBy})`
+        : `Running in ${input.projectName}… (started by ${input.startedBy})`,
       description: clampInstruction(input.instruction),
       ...(input.tail ? { fields: [{ name: "Progress", value: clampTail(input.tail) }] } : {}),
     }],
-    // cancel-run carries the run id in the customId's id slot (self-contained, no adapter state).
-    components: [row([{ type: BUTTON, style: 4, label: "Cancel run", custom_id: `bean:cancel-run:${input.runId}` }])],
+    // cancel-run carries the run id in the customId's id slot (self-contained, no adapter state);
+    // none until the run has one (a continuation's card is posted just before it starts).
+    components: input.runId
+      ? [row([{ type: BUTTON, style: 4, label: "Cancel run", custom_id: `bean:cancel-run:${input.runId}` }])]
+      : [],
   };
 }
 

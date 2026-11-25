@@ -16,7 +16,11 @@ exit 1 on an unknown id; `runDelegate` treats "non-zero exit before the session-
 as a rejected resume and re-spawns fresh once (result prefixed with a notice). A resumed run's reservation stays on the bot's own pid
 until the session-started event (`onSessionStart`), because a rejected first child dies and
 would make the project reclaimable mid-run — don't armor that with ownership checks — never fail the run for it. `/new` clears the
-thread's sessions too, and a run launched before the `/new` doesn't store its id afterwards. Routine `DelegateStepRequest.resume` is not wired yet (follow-up). A follow-up on another project starts fresh on **every** CLI (#558): `RunRegistry.start` keeps
+thread's sessions too, and a run launched before the `/new` doesn't store its id afterwards.
+The confirmer's follow-ups continue without a card on the task grant (#1114,
+[convention-delegate-task-grant](convention-delegate-task-grant.md)): strict, so the fresh
+fallbacks below never apply to them — a mismatch, a busy run or a bound live session gets the
+normal card with its reason, and that fallback card starts fresh (never `thread_sessions`). Routine `DelegateStepRequest.resume` is not wired yet (follow-up). A follow-up on another project starts fresh on **every** CLI (#558): `RunRegistry.start` keeps
 a resume only when the session's newest `delegate_runs` row is for the same project (no row = fresh)
 and prefixes a path-free "earlier <cli> session was on another project" notice. claude and codex
 *do* resume across folders (carrying the old project's paths into a permission-bypassing run, and
