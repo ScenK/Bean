@@ -294,11 +294,12 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
       const tile = menu.querySelector('.bean-petal--menu[data-kind="notes"]');
       if (notes.length > 0 && tile) tile.insertAdjacentHTML("beforeend", `<span class="bean-petal-badge bean-petal-badge--end">${notes.length}</span>`);
     });
-    // Routines tile badge: count of routines currently set to run automatically.
-    void window.bean.routinesList().then((routines) => {
-      const active = routines.filter((r) => r.enabled).length;
+    // Sprouts tile badge: every sprout but archived ones — on-demand sprouts are off yet still in
+    // use. Archived is the core's call (core time), as in the Sprouts panel.
+    void Promise.all([window.bean.routinesList(), window.bean.routinesState()]).then(([routines, states]) => {
+      const live = routines.filter((r) => !states[r.name]?.ended?.archived).length;
       const tile = menu.querySelector('.bean-petal--menu[data-kind="routines"]');
-      if (active > 0 && tile) tile.insertAdjacentHTML("beforeend", `<span class="bean-petal-badge bean-petal-badge--end">${active}</span>`);
+      if (live > 0 && tile) tile.insertAdjacentHTML("beforeend", `<span class="bean-petal-badge bean-petal-badge--end">${live}</span>`);
     });
   };
 
