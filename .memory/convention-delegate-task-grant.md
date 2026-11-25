@@ -25,7 +25,8 @@ card plus `GRANT_MISMATCH_TEXT[reason]`. Restart drops grants (fail closed).
   gets it from the reconnect replay (`adoptContinued`, idempotent by task id). The card's grant line follows the host's `granted` flag on settled events — never saved.
 - ChatOps (#1114): grants live in `chatops/bot.ts`, keyed by the real conversation id (never
   `historyId()`'s `main`), actor = the confirming tap's platform `fromId` (never the display name).
-  Created when a confirmed run settles with a session unless `/new` ran since launch; a continuation
+  Created when a confirmed run settles with a session unless `/new` ran since the card tap (counted
+  at `onCardAction` entry, before any await — not at launch); a continuation
   that settles on its session refreshes it, one that doesn't revokes it; a settle checks the
   generation it started on, so a late completion can't touch a revoked or newer grant. `/new`
   revokes and counts as a reset (the owner DM too, though its history doesn't reset). Offered to
@@ -34,5 +35,6 @@ card plus `GRANT_MISMATCH_TEXT[reason]`. Restart drops grants (fail closed).
   running card (no Cancel until it has a run id) and sends `composedPrompt` with `strictResume`.
   Else the normal card with `GRANT_MISMATCH_TEXT` and `PendingProposal.fresh`. After the last await
   (the card post), right before dispatch, it checks again: the speaker's current role, the grant's
-  generation/revocation, and the reloaded skill's browser — any change refuses visibly, never runs. A lapsed grant (idle, `/new`) also says
+  generation/revocation, a live session bound meanwhile, and the reloaded skill's browser — any
+  change refuses visibly, never runs. A lapsed grant (idle, `/new`) also says
   why on the speaker's next card. Role is the per-turn `permitted("delegate")` gate, not a grant field.

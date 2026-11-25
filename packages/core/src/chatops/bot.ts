@@ -648,14 +648,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (held?.conversationId === conversationId) recordCard(conversationId, kind, "expired", name);
   };
 
-  /** `actorId`: the confirming platform identity (never the display name) — a run that reports its
-   * session grants that person cardless follow-ups. `continued`: a cardless continuation of that
-   * grant — resumes its session strictly and posts the compact card itself. */
+  /** `confirmed`: the tap that confirmed the card — its platform identity (never the display name),
+   * whom a run that reports its session grants cardless follow-ups, and the conversation's `/new`
+   * count when it arrived (a `/new` after it means no grant and no thread pointer). `continued`: a
+   * cardless continuation of that grant — resumes its session strictly and posts the compact card itself. */
   async function startRun(
     p: Pick<PendingProposal, "proposal" | "conversationId" | "cardActivityId" | "fresh">, cli: CliName, model: string | undefined,
-    startedBy: string, fx: BotEffects, actorId?: string,
+    startedBy: string, fx: BotEffects, confirmed?: { actorId: string; resets: number },
     continued?: { grant: DelegateGrant; recheck: () => string | undefined },
   ): Promise<void> {
+    // Before any await: a `/new` from here on must not let this run store a session or grant.
+    const resetsAtLaunch = confirmed?.resets ?? resets.get(p.conversationId) ?? 0;
+    const actorId = confirmed?.actorId;
     const projects = await deps.loadProjects();
     // Shared channel: an unregistered project shows its folder name, never the absolute path.
     const projectName = delegateProjectLabel(p.proposal.projectPath, projects);
@@ -686,7 +690,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const onMain = historyId(p.conversationId) === MAIN_CONVERSATION_ID;
     const resume = continued ? continued.grant.sessionId
       : onMain || p.fresh ? undefined : deps.conversations.threadSession(p.conversationId, cli);
-    const resetsAtLaunch = resets.get(p.conversationId) ?? 0;
     const req: DelegateRequest = {
       cli,
       projectPath: p.proposal.projectPath,
@@ -831,10 +834,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const recheck = (): string | undefined => {
       const { role, scopeId } = speakerRole(msg);
       if (!can(role, "delegate")) return refusal(needs("delegate"), role, "run tasks", deps.roles, scopeId);
+      if (deps.liveSessions.has(conv)) return GRANT_MISMATCH_TEXT.busy; // bound while the card posted
       const now = matchGrant(grants.get(conv)?.grant, { surface: grantSurface, scopeKey: conv, actorId: msg.fromId, generation: g.generation }, Date.now());
       return now.ok ? undefined : GRANT_MISMATCH_TEXT[now.reason];
     };
-    await startRun({ proposal, conversationId: conv }, g.cli, g.model, msg.fromName, fx, msg.fromId, { grant: g, recheck });
+    await startRun({ proposal, conversationId: conv }, g.cli, g.model, msg.fromName, fx, undefined, { grant: g, recheck });
     return undefined;
   }
 
@@ -2684,6 +2688,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
     async onCardAction(action: CardAction, fx: BotEffects): Promise<void> {
       const { beanAction, proposalId, projectPath, runId } = action.value;
+      // When the tap arrived: a `/new` during the awaits before a confirmed run launches still counts.
+      const resetsAtTap = resets.get(action.conversationId) ?? 0;
       // Checked before any claim(), so a refused tap leaves the card usable for someone who may.
       const role = deps.roles.roleOf({ fromId: action.fromId, fromAltId: action.fromAltId, scopeId: action.scopeId });
       const need = cardActionNeeds(beanAction);
@@ -2891,7 +2897,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await fx.post(NO_CLI);
         return;
       }
-      await startRun(p, choice.cli, choice.model, action.fromName, fx, action.fromId);
+      await startRun(p, choice.cli, choice.model, action.fromName, fx, { actorId: action.fromId, resets: resetsAtTap });
     },
   };
   return bot;

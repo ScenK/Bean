@@ -612,6 +612,48 @@ describe("task grant: the confirmer's follow-ups continue without a card (#1114)
     expect(h.effects.posted.at(-1)).toContain("Nothing ran");
   });
 
+  test("a live session bound while the compact card posts: nothing runs", async () => {
+    const { bot, deps, delegateCalls } = await confirmed();
+    const h = heldPost();
+    const turn = bot.onMessage(followUp, h.effects);
+    await h.posted;
+    vi.spyOn(deps.liveSessions, "has").mockReturnValue(true);
+    h.release();
+    await turn;
+    expect(delegateCalls).toHaveLength(1);
+    expect(h.effects.posted).toContain(`${GRANT_MISMATCH_TEXT.busy} Nothing ran — ask me again.`);
+  });
+
+  test("a /new after the tap, while the run is still being prepared: no grant when it settles", async () => {
+    const made = makeDeps({ converseResult: delegateResult });
+    const bot = buildTeamsBot(made.deps);
+    const effects = fx();
+    await bot.onMessage(msg, effects);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
+    // Hold startRun's project load: the tap is in, the run isn't launched yet.
+    const load = made.deps.loadProjects;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let loading!: () => void;
+    const loadStarted = new Promise<void>((r) => { loading = r; });
+    made.deps.loadProjects = async () => { loading(); await gate; return load(); };
+    const tap = bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    await loadStarted;
+    made.deps.loadProjects = load;
+    await bot.onMessage({ ...msg, text: "/new" }, fx());
+    release();
+    await tap;
+    made.delegateCalls[0]!.cb.onSessionStart?.(1, "sess-1");
+    made.delegateCalls[0]!.cb.onDone("first pass", "sess-1");
+    await vi.waitFor(() => expect(effects.posted).toContain("first pass"));
+    made.deps.chat = grantChat([]);
+    const next = fx();
+    await bot.onMessage({ ...msg, text: "now the tests" }, next);
+    expect(next.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+    expect(made.delegateCalls).toHaveLength(1);
+    expect(made.deps.conversations.threadSession("c1", "claude")).toBeUndefined();
+  });
+
   test("a skill that gained browser access since the grant: nothing runs", async () => {
     let browser = false;
     const { bot, delegateCalls, deps } = await confirmed({}, {
