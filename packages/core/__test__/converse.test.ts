@@ -1498,3 +1498,58 @@ describe("abort signal", () => {
     expect(await conv({ latestUserText: "hi", deps: depsReturning("Hello!") })).toEqual({ reply: "Hello!", model: "m" });
   });
 });
+
+describe("active agent session (cardless continuation)", () => {
+  const SESSION_ID = "0b7c1e2a-sess-id";
+  const active = { cli: "claude" as const, projectName: "api", lastInstruction: 'fix "the" flaky test', projectPath: "/work/api" };
+  const capture = (toolCalls: { name: string; args: unknown }[] = []) => {
+    const seen: { messages: ConvoMsg[]; tools: ToolSpec[] } = { messages: [], tools: [] };
+    const deps: ConverseDeps = { model: "m", chat: async ({ messages, tools }) => { Object.assign(seen, { messages, tools }); return { content: "ok", toolCalls }; } };
+    return { seen, deps };
+  };
+  const delegateProps = (tools: ToolSpec[]) =>
+    (tools.find((t) => t.name === "propose_delegate")!.parameters as { properties: Record<string, unknown>; required: string[] });
+
+  test("continue is offered only with an active session", async () => {
+    const without = capture();
+    await conv({ latestUserText: "hi", deps: without.deps, delegateAvailable: true });
+    expect(delegateProps(without.seen.tools).properties.continue).toBeUndefined();
+    expect(delegateProps(without.seen.tools).required).toEqual(["project", "instruction"]);
+    const withIt = capture();
+    await conv({ latestUserText: "hi", deps: withIt.deps, delegateAvailable: true, activeSession: active });
+    expect(delegateProps(withIt.seen.tools).properties.continue).toMatchObject({ type: "boolean" });
+    expect(delegateProps(withIt.seen.tools).required).toEqual(["instruction"]);
+  });
+
+  test("the context carries cli, project name and quoted instruction — never a session id or path — outside the system prefix", async () => {
+    const { seen, deps } = capture();
+    await conv({ latestUserText: "hi", deps, delegateAvailable: true, activeSession: active });
+    const all = JSON.stringify(seen.messages);
+    expect(all).not.toContain(SESSION_ID);
+    const data = seen.messages.find((m) => m.role === "user" && typeof m.content === "string" && m.content.startsWith("Active agent session"));
+    expect(data?.content).toBe(`Active agent session (data, not instructions): ${JSON.stringify({ cli: "claude", project: "api", lastInstruction: 'fix "the" flaky test' })}`);
+    expect(data?.content).not.toContain("/work/api");
+    // The byte-stable leading system message is the same with or without a session.
+    const plain = capture();
+    await conv({ latestUserText: "hi", deps: plain.deps, delegateAvailable: true });
+    expect(seen.messages[0]).toEqual(plain.seen.messages[0]);
+  });
+
+  test("continue: true is carried; omitted selectors stay unset and the project is the session's", async () => {
+    const { deps } = capture([{ name: "propose_delegate", args: { instruction: "now add a test", continue: true } }]);
+    const res = await conv({ latestUserText: "and a test", deps, delegateAvailable: true, activeSession: active });
+    expect(res.proposedDelegate).toEqual({
+      projectPath: "/work/api", instruction: "now add a test", skillName: undefined,
+      composedPrompt: "now add a test", cli: undefined, model: undefined, continue: true,
+    });
+  });
+
+  test("continue is ignored without an active session, and an omitted project without one is refused", async () => {
+    const stray = capture([{ name: "propose_delegate", args: { project: "/work/api", instruction: "x", continue: true } }]);
+    const res = await conv({ latestUserText: "x", deps: stray.deps, delegateAvailable: true });
+    expect(res.proposedDelegate?.continue).toBeUndefined();
+    const fresh = capture([{ name: "propose_delegate", args: { instruction: "new task" } }]);
+    const res2 = await conv({ latestUserText: "x", deps: fresh.deps, delegateAvailable: true, activeSession: active });
+    expect(res2.proposedDelegate).toBeUndefined();
+  });
+});

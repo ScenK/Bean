@@ -14,6 +14,9 @@ export interface DelegateRequest {
   /** This CLI's own session id to continue (thread sessions); runDelegate falls back to a
    * fresh run if the CLI rejects it. */
   resume?: string;
+  /** Cardless continuations: never start fresh. A missing or unusable `resume`, a rejected id, or a
+   * session id that differs from `resume` settles as an error (`resumeRefusal`) with no re-spawn. */
+  strictResume?: boolean;
   /** From the resolved skill's `browser: true` frontmatter only — never from instruction text
    * or a renderer/model-supplied flag. claude gets `--chrome` (else `--no-chrome`); codex
    * and agy already have browser tools; opencode is refused before spawn. */
@@ -33,6 +36,8 @@ export const OPENCODE_BROWSER_REFUSAL = "This skill needs the browser; opencode 
 export const planRefusal = (cli: CliName): string =>
   `Read-only runs need claude or codex; ${cli} can't be locked down — pick a claude or codex model.`;
 const PLAN_CLIS: readonly CliName[] = ["claude", "codex"];
+/** A strict resume that couldn't continue the session (see `DelegateRequest.strictResume`). */
+export const resumeRefusal = (cli: CliName): string => `Couldn't resume the earlier ${cli} session — nothing ran.`;
 
 /** agy's sign-in failure, replacing its stderr (which carries the OAuth URL). */
 export const AGY_SIGNED_OUT = "Antigravity is signed out on the host — run `agy` once on that machine.";
@@ -355,6 +360,12 @@ export function runDelegate(
     resume = undefined;
     notice = freshNotice;
   }
+  const strict = req.strictResume === true;
+  if (strict && !resume) {
+    callbacks.onError(new Error(resumeRefusal(req.cli)));
+    return { pid: undefined, cancel: () => {} };
+  }
+  let refused = false; // strict: the CLI started another session than `resume`; stopping it
   let command = "";
   let child!: ChildProcess;
 
@@ -434,7 +445,7 @@ export function runDelegate(
   }, timeoutMs);
 
   const handleLine = (line: string): void => {
-    if (!line.trim() || settled || cancelling) return;
+    if (!line.trim() || settled || cancelling || refused) return;
     let event: unknown;
     try {
       event = JSON.parse(line);
@@ -445,6 +456,13 @@ export function runDelegate(
     }
     if (!sessionId) {
       sessionId = sessionIdOf(req.cli, event);
+      // agy (exit 0, new id in `init`) and any CLI that ignores the id: stop before it does work.
+      if (strict && sessionId && sessionId !== resume) {
+        refused = true;
+        clearTimeout(timer);
+        stop();
+        return;
+      }
       if (sessionId) callbacks.onSessionStart?.(child.pid, sessionId);
       // agy starts a fresh conversation (exit 0, its new id in `init`) on an id it doesn't have.
       if (sessionId && req.cli === "agy" && resume && sessionId !== resume) {
@@ -528,6 +546,10 @@ export function runDelegate(
         return;
       }
       if (stdoutBuf.trim()) handleLine(stdoutBuf);
+      if (refused || (strict && sessionId !== resume)) {
+        settle(() => callbacks.onError(new Error(resumeRefusal(req.cli))));
+        return;
+      }
       // Signed out: agy waits for an OAuth login, then fails. Its stderr carries the login URL, so
       // agy errors never append the stderr tail — and a resume retry would only wait again.
       if (req.cli === "agy" && AGY_AUTH_ERROR.test(`${agyFailure ?? ""}\n${stderrBuf}`)) {
@@ -565,7 +587,7 @@ export function runDelegate(
       cancelling = true;
       onCancelled = done;
       clearTimeout(timer);
-      stop();
+      if (!refused) stop(); // a refused run is already stopping; it settles as cancelled now
     },
   };
 }

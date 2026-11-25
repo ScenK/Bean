@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { DelegateCallbacks, DelegateRequest } from "../src/index.js";
 import { RunRegistry } from "../src/chatops/runs.js";
+import { resumeRefusal } from "../src/delegate.js";
 import { dbFile } from "../src/config.js";
 import { closeDb, openDb } from "../src/db.js";
 import { recordDelegateSession } from "../src/delegate-runs.js";
@@ -386,5 +387,26 @@ test("a cancelled run still keeps its thread's CLI busy until its child confirms
   confirm?.(); // …and so is the second's: the thread is free again
   await reg.start({ ...req, resume: "s-1" }, events(), meta);
   expect(calls[2]?.resume).toBe("s-1");
+  closeDb(dbFile(dir));
+});
+
+test("strictResume refuses instead of starting fresh: another project, a busy thread — nothing spawned or recorded", async () => {
+  const { fn, calls } = fakeRun();
+  const dir = tmp();
+  seed(dir, "s-1", "/p");
+  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
+  const moved = events();
+  await reg.start({ ...req, projectPath: "/other", resume: "s-1", strictResume: true }, moved, meta);
+  expect(calls).toHaveLength(0);
+  expect(moved.onError).toHaveBeenCalledWith(expect.stringContaining(resumeRefusal("claude")));
+  expect(moved.onError.mock.calls[0]?.[0]).toContain("another project");
+  expect(runFiles(dir)).toEqual([]);
+
+  await reg.start({ ...req, resume: "s-1", strictResume: true }, events(), meta); // matches: resumes
+  expect(calls[0]?.req.resume).toBe("s-1");
+  const busy = events();
+  await reg.start({ ...req, resume: "s-1", strictResume: true }, busy, meta);
+  expect(calls).toHaveLength(1);
+  expect(busy.onError.mock.calls[0]?.[0]).toContain("still going");
   closeDb(dbFile(dir));
 });

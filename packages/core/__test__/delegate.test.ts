@@ -23,6 +23,7 @@ import {
   FAILED_SENTINEL_INSTRUCTION,
   OPENCODE_BROWSER_REFUSAL,
   planRefusal,
+  resumeRefusal,
   failedReason,
   agyStream,
   agyResult,
@@ -1055,5 +1056,99 @@ describe("agy", () => {
     expect(errors).toEqual([planRefusal("agy")]);
     expect(delegateCommand({ cli: "agy", projectPath: "/p", prompt: "x", browser: true }))
       .toEqual(delegateCommand({ cli: "agy", projectPath: "/p", prompt: "x" }));
+  });
+});
+
+describe("runDelegate strictResume (cardless continuations never start fresh)", () => {
+  const AGY_ID = "11111111-2222-3333-4444-555555555555";
+  const started: Record<string, string> = {
+    claude: JSON.stringify({ type: "system", subtype: "init", session_id: "OTHER" }),
+    codex: JSON.stringify({ type: "thread.started", thread_id: "OTHER" }),
+    opencode: JSON.stringify({ type: "step_start", sessionID: "OTHER" }),
+    agy: JSON.stringify({ event: "init", conversation_id: "99999999-2222-3333-4444-555555555555" }),
+  };
+  const resumeId = (cli: string): string => (cli === "agy" ? AGY_ID : "s-1");
+
+  for (const cli of ["claude", "codex", "opencode", "agy"] as const) {
+    it(`${cli}: a rejected id settles as an error with zero fresh spawns`, () => {
+      const child = new FakeChild();
+      const spawnFn = vi.fn(() => asChild(child));
+      const { cbs, errors, dones } = collect();
+      runDelegate({ cli, projectPath: "/p", prompt: "go", resume: resumeId(cli), strictResume: true }, cbs, spawnFn);
+      child.stderr.emit("data", Buffer.from("no such session\n"));
+      child.emit("close", 1);
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+      expect(dones).toEqual([]);
+      expect(errors).toEqual([resumeRefusal(cli)]);
+    });
+
+    it(`${cli}: another session id than the requested one is stopped and refused`, () => {
+      const child = new FakeChild();
+      const spawnFn = vi.fn(() => asChild(child));
+      const starts: string[] = [];
+      const { cbs, errors, dones, outputs } = collect();
+      runDelegate(
+        { cli, projectPath: "/p", prompt: "go", resume: resumeId(cli), strictResume: true },
+        { ...cbs, onSessionStart: (_pid, id) => starts.push(id) },
+        spawnFn,
+      );
+      child.stdout.emit("data", Buffer.from(started[cli] + "\n"));
+      expect(child.killed).toBe(true);
+      child.emit("close", 0);
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+      expect(starts).toEqual([]);
+      expect(outputs).toEqual([]);
+      expect(dones).toEqual([]);
+      expect(errors).toEqual([resumeRefusal(cli)]);
+    });
+  }
+
+  it("the same session id runs to done, with no notice", () => {
+    const child = new FakeChild();
+    const sessions: (string | undefined)[] = [];
+    const { cbs, errors } = collect();
+    runDelegate(
+      { cli: "codex", projectPath: "/p", prompt: "go", resume: "t-1", strictResume: true },
+      { ...cbs, onDone: (r, id) => sessions.push(r, id) },
+      () => asChild(child),
+    );
+    child.stdout.emit("data", Buffer.from(
+      '{"type":"thread.started","thread_id":"t-1"}\n{"type":"item.completed","item":{"type":"agent_message","text":"more"}}\n',
+    ));
+    child.emit("close", 0);
+    expect(errors).toEqual([]);
+    expect(sessions).toEqual(["more", "t-1"]);
+  });
+
+  it("an exit 0 without any session start is refused, not reported done", () => {
+    const child = new FakeChild();
+    const { cbs, errors, dones } = collect();
+    runDelegate({ cli: "claude", projectPath: "/p", prompt: "go", resume: "c-1", strictResume: true }, cbs, () => asChild(child));
+    child.stdout.emit("data", Buffer.from(JSON.stringify({ type: "result", result: "ok", session_id: "c-1" }) + "\n"));
+    child.emit("close", 0);
+    expect(dones).toEqual([]);
+    expect(errors).toEqual([resumeRefusal("claude")]);
+  });
+
+  it("refuses before spawning: no resume, agy non-UUID id, codex plan (fresh-only)", () => {
+    const spawnFn = vi.fn(() => asChild(new FakeChild()));
+    const { cbs, errors } = collect();
+    runDelegate({ cli: "claude", projectPath: "/p", prompt: "go", strictResume: true }, cbs, spawnFn);
+    runDelegate({ cli: "agy", projectPath: "/p", prompt: "go", resume: "not-a-uuid", strictResume: true }, cbs, spawnFn);
+    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go", resume: "t-1", mode: "plan", strictResume: true }, cbs, spawnFn);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(errors).toEqual([resumeRefusal("claude"), resumeRefusal("agy"), resumeRefusal("codex")]);
+  });
+
+  it("a cancel while a refused run is stopping settles as cancelled, once", () => {
+    const child = new FakeChild();
+    const cancelled = vi.fn();
+    const { cbs, errors } = collect();
+    const handle = runDelegate({ cli: "codex", projectPath: "/p", prompt: "go", resume: "t-1", strictResume: true }, cbs, () => asChild(child));
+    child.stdout.emit("data", Buffer.from('{"type":"thread.started","thread_id":"t-2"}\n'));
+    handle.cancel(cancelled);
+    child.emit("close", null);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect(errors).toEqual([]);
   });
 });

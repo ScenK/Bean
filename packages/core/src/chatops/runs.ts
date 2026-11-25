@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "../delegate.js";
+import { resumeRefusal } from "../delegate.js";
 import { dbFile, outboxDir } from "../config.js";
 import { delegateRunProject, isValidSessionId, recordDelegateSession } from "../delegate-runs.js";
 import { enqueueOutbox } from "../outbox.js";
@@ -79,6 +80,12 @@ export class RunRegistry {
     return this.opts.newId?.() ?? randomUUID();
   }
 
+  /** Settles a refused run synchronously, like a spawn failure: nothing recorded, nothing spawned. */
+  private refuse(events: RunEvents, message: string): string {
+    events.onError(message);
+    return this.newId();
+  }
+
   // A run that fails to spawn settles synchronously: onError fires (and free() runs)
   // before start() ever reaches its map insert — `run.released` guards that hole.
   /** Resolves to the new run's id (for cancel()). */
@@ -86,8 +93,10 @@ export class RunRegistry {
     // A thread follow-up on another project starts fresh on every CLI: claude and codex would resume
     // across folders and carry the old project's context and paths; opencode hangs. A session with
     // no recorded project also starts fresh.
+    // strictResume (a cardless continuation) never starts fresh: either case settles as an error.
     let notice = "";
     if (req.resume && delegateRunProject(dbFile(this.opts.dir), req.resume) !== req.projectPath) {
+      if (req.strictResume) return this.refuse(callerEvents, `${resumeRefusal(req.cli)} Its session was on another project.`);
       const { resume: _stale, ...fresh } = req;
       req = fresh;
       notice = RunRegistry.projectSwitchNotice(req.cli);
@@ -95,6 +104,7 @@ export class RunRegistry {
     // Two live processes must never drive one CLI session: while this thread already has a run on
     // this CLI, the new one starts fresh (the thread pointer keeps whichever completes last).
     if (req.resume && [...this.byId.values(), ...this.stopping].some((r) => r.cli === req.cli && r.meta.conversationId === meta.conversationId)) {
+      if (req.strictResume) return this.refuse(callerEvents, `${resumeRefusal(req.cli)} This thread's other run is still going.`);
       const { resume: _busy, ...fresh } = req;
       req = fresh;
       notice = RunRegistry.BUSY_THREAD_NOTICE;
