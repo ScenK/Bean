@@ -28,9 +28,11 @@ card plus `GRANT_MISMATCH_TEXT[reason]`. Restart drops grants (fail closed).
   Created when a confirmed run settles with a session unless `/new` ran since launch; a continuation
   that settles on its session refreshes it, one that doesn't revokes it; a settle checks the
   generation it started on, so a late completion can't touch a revoked or newer grant. `/new`
-  revokes (the owner DM too, though its history doesn't reset). Offered to `converse()` only when
-  the speaker matches; a continuation re-checks the grant, the CLI's presence, the skill's browser
-  and busy (`RunRegistry.busy` + a bound live session), then posts the compact running card (no
-  Cancel until it has a run id) and sends `composedPrompt` with `strictResume`. Else the normal card
-  with `GRANT_MISMATCH_TEXT` and `PendingProposal.fresh`. A lapsed grant (idle, `/new`) also says
+  revokes and counts as a reset (the owner DM too, though its history doesn't reset). Offered to
+  `converse()` only when the speaker matches; a continuation re-checks the grant, the CLI's presence,
+  the skill's browser and busy (`RunRegistry.busy` + a bound live session), then posts the compact
+  running card (no Cancel until it has a run id) and sends `composedPrompt` with `strictResume`.
+  Else the normal card with `GRANT_MISMATCH_TEXT` and `PendingProposal.fresh`. After the last await
+  (the card post), right before dispatch, it checks again: the speaker's current role, the grant's
+  generation/revocation, and the reloaded skill's browser — any change refuses visibly, never runs. A lapsed grant (idle, `/new`) also says
   why on the speaker's next card. Role is the per-turn `permitted("delegate")` gate, not a grant field.

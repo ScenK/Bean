@@ -472,16 +472,17 @@ function grantChat(seen: string[][], args: Record<string, unknown> = {}): TeamsB
 
 describe("task grant: the confirmer's follow-ups continue without a card (#1114)", () => {
   // u1 (alice) confirms a card in thread c1; its run reports sess-1 and finishes.
-  const confirmed = async (args: Record<string, unknown> = {}) => {
+  const confirmed = async (args: Record<string, unknown> = {}, over: Partial<TeamsBotDeps> = {}, pick: Record<string, string> = {}) => {
     const made = makeDeps({
       converseResult: delegateResult,
       loadProjects: async () => [{ name: "bean", path: "/p/bean" }, { name: "web", path: "/p/web" }],
+      ...over,
     });
     const bot = buildTeamsBot(made.deps);
     const effects = fx();
     await bot.onMessage(msg, effects);
     const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
-    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude", ...pick } }, effects);
     made.delegateCalls[0]!.cb.onSessionStart?.(1, "sess-1");
     made.delegateCalls[0]!.cb.onDone("first pass", "sess-1");
     await vi.waitFor(() => expect(effects.posted).toContain("first pass"));
@@ -556,16 +557,74 @@ describe("task grant: the confirmer's follow-ups continue without a card (#1114)
   test("30 idle minutes: the card again, with the reason", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
-      const { bot, seen } = await confirmed();
+      const { bot, seen, delegateCalls } = await confirmed();
       vi.setSystemTime(Date.now() + 30 * 60_000);
       const effects = fx();
       await bot.onMessage(followUp, effects);
       expect(seen[0]!.join("\n")).not.toContain("Active agent session");
       expect(effects.posted).toContain(GRANT_MISMATCH_TEXT.expired);
       expect(effects.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+      // That card starts fresh, not on the thread's earlier session.
+      const id = (effects.cards[0] as { proposalId: string }).proposalId;
+      await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+      expect(delegateCalls[1]!.req.resume).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /** fx() whose next postCard (the compact card) waits until released. */
+  const heldPost = () => {
+    const effects = fx();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const post = effects.postCard;
+    let posting!: () => void;
+    const posted = new Promise<void>((r) => { posting = r; });
+    effects.postCard = async (c) => { posting(); await gate; return post(c); };
+    return { effects, release, posted };
+  };
+
+  test("a /new while the compact card posts: nothing runs, and it says why", async () => {
+    const { bot, delegateCalls } = await confirmed();
+    const h = heldPost();
+    const turn = bot.onMessage(followUp, h.effects);
+    await h.posted;
+    await bot.onMessage({ ...msg, text: "/new" }, fx());
+    h.release();
+    await turn;
+    expect(delegateCalls).toHaveLength(1);
+    expect(h.effects.posted).toContain(`${GRANT_MISMATCH_TEXT.revoked} Nothing ran — ask me again.`);
+    expect(h.effects.updates.at(-1)?.card).toMatchObject({ kind: "finished", outcome: "cancelled" });
+  });
+
+  test("losing delegate rights before dispatch: nothing runs", async () => {
+    let role: "owner" | "member" = "owner";
+    const { bot, deps, delegateCalls } = await confirmed();
+    deps.roles = { ...deps.roles, roleOf: () => role };
+    const h = heldPost();
+    const turn = bot.onMessage(followUp, h.effects);
+    await h.posted;
+    role = "member";
+    h.release();
+    await turn;
+    expect(delegateCalls).toHaveLength(1);
+    expect(h.effects.posted.at(-1)).toContain("Nothing ran");
+  });
+
+  test("a skill that gained browser access since the grant: nothing runs", async () => {
+    let browser = false;
+    const { bot, delegateCalls, deps } = await confirmed({}, {
+      loadSkills: async () => [{ name: "fix-bug", description: "d", body: "b", enabled: true, ...(browser ? { browser: true } : {}) }],
+    }, { skillName: "fix-bug" });
+    // The turn sees the skill without browser; the launch reloads it with browser on.
+    const load = deps.loadSkills;
+    let calls = 0;
+    deps.loadSkills = async () => { if (++calls > 1) browser = true; return load(); };
+    const effects = fx();
+    await bot.onMessage(followUp, effects);
+    expect(delegateCalls).toHaveLength(1);
+    expect(effects.posted).toContain(`${GRANT_MISMATCH_TEXT.browser} Nothing ran — ask me again.`);
   });
 
   test("/new revokes the grant, and a run that finishes after it doesn't grant again", async () => {
@@ -5297,6 +5356,23 @@ describe("owner DMs share the main conversation's history (#998)", () => {
     expect(next.cards).toEqual([expect.objectContaining({ kind: "running", continued: true })]);
     // The grant is the real DM's, never the shared main id's.
     expect(deps.conversations.threadSession(MAIN_CONVERSATION_ID, "claude")).toBeUndefined();
+  });
+  test("owner DM: a run confirmed before /new doesn't grant when it settles after it (#1114)", async () => {
+    const m = mainBots({ converseResult: delegateResult });
+    const { deps, delegateCalls, bot } = m.discord;
+    const effects = fx();
+    await bot.onMessage(ownerDm, effects);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
+    await bot.onCardAction({ conversationId: "d1", fromId: "u1", fromName: "Scen", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    await bot.onMessage({ ...ownerDm, text: "/new" }, fx());
+    delegateCalls[0]!.cb.onSessionStart?.(1, "sess-9");
+    delegateCalls[0]!.cb.onDone("all fixed", "sess-9");
+    await vi.waitFor(() => expect(effects.posted).toContain("all fixed"));
+    deps.chat = grantChat([]);
+    const next = fx();
+    await bot.onMessage({ ...ownerDm, text: "now the tests" }, next);
+    expect(next.cards).toEqual([expect.objectContaining({ kind: "proposal" })]);
+    expect(delegateCalls).toHaveLength(1);
   });
   test("a bound owner-DM live session never reopens from `continue`: bare is a Bean turn, slashed posts the confirm card", async () => {
     const m = mainBots();
