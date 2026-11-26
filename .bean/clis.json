@@ -2,30 +2,30 @@
   {
     "provider": "claude",
     "models": [
+      { "id": "fable", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "high" },
       { "id": "opus", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "high" },
       { "id": "sonnet", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "high" },
-      { "id": "haiku", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "medium" },
-      { "id": "fable", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "high" }
+      { "id": "haiku", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "medium" }
     ]
   },
   {
     "provider": "opencode",
     "models": [
+      { "id": "github-copilot/gpt-6.2-astra", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
+      { "id": "github-copilot/claude-opus-5.5", "efforts": ["low", "medium", "high", "max"], "defaultEffort": "high" },
       { "id": "github-copilot/gpt-6.2-sol", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
       { "id": "github-copilot/gpt-6.1-sol", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
-      { "id": "github-copilot/gpt-6.2-astra", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
+      { "id": "github-copilot/claude-sonnet-5.5", "efforts": ["low", "medium", "high", "max"], "defaultEffort": "high" },
       { "id": "github-copilot/gpt-6.1-terra", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" },
-      { "id": "github-copilot/gpt-6-luna", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" },
-      { "id": "github-copilot/claude-opus-5.5", "efforts": ["low", "medium", "high", "max"], "defaultEffort": "high" },
-      { "id": "github-copilot/claude-sonnet-5.5", "efforts": ["low", "medium", "high", "max"], "defaultEffort": "high" }
+      { "id": "github-copilot/gpt-6-luna", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" }
     ]
   },
   {
     "provider": "codex",
     "models": [
+      { "id": "gpt-6.2-astra", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
       { "id": "gpt-6.2-sol", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
       { "id": "gpt-6.1-sol", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
-      { "id": "gpt-6.2-astra", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
       { "id": "gpt-6.1-terra", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" },
       { "id": "gpt-6-luna", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" }
     ]
@@ -33,6 +33,16 @@
   {
     "provider": "agy",
     "models": [
+      {
+        "id": "gemini-4-carbon",
+        "efforts": ["low", "medium", "high"],
+        "defaultEffort": "medium",
+        "effortIds": {
+          "low": "gemini-4-carbon-low",
+          "medium": "gemini-4-carbon-medium",
+          "high": "gemini-4-carbon-high"
+        }
+      },
       {
         "id": "gemini-4-neon",
         "efforts": ["low", "medium", "high", "xhigh"],
@@ -42,16 +52,6 @@
           "medium": "gemini-4-neon-medium",
           "high": "gemini-4-neon-high",
           "xhigh": "gemini-4-neon-xhigh"
-        }
-      },
-      {
-        "id": "gemini-4-carbon",
-        "efforts": ["low", "medium", "high"],
-        "defaultEffort": "medium",
-        "effortIds": {
-          "low": "gemini-4-carbon-low",
-          "medium": "gemini-4-carbon-medium",
-          "high": "gemini-4-carbon-high"
         }
       },
       {
