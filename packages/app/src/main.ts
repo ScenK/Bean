@@ -170,13 +170,13 @@ app.whenReady().then(async () => {
     log: (event, fields) => avatarLog(event, event === "bring-back" ? { ...fields, version: pkg.version, os: release() } : fields),
     // Only runs after a reload, long after the host exists.
     replay: () => broadcastJobs(),
-    // Non-blocking: main keeps streaming delegates/sessions while this is open.
-    fail: () => void dialog.showMessageBox({
-      type: "warning",
-      message: "Bean couldn't bring the avatar back",
-      detail: "Recovery did not stop any running work. Relaunch Bean when it finishes."
-        + `\n\n${avatarLogOk ? `Log: ${avatarLogPath}` : "Log unavailable."}`,
-    }),
+    // A notification, not a dialog: a parentless showMessageBox is app-modal on macOS and freezes
+    // main (delegates, sessions, quit) until dismissed (#1121).
+    fail: () => new Notification({
+      title: "Bean couldn't bring the avatar back",
+      body: "Recovery did not stop any running work. Relaunch Bean when it finishes."
+        + ` ${avatarLogOk ? `Log: ${avatarLogPath}` : "Log unavailable."}`,
+    }).show(),
   });
   // e2e hook (avatar-visibility.e2e.ts): the tray menu item isn't reachable from Playwright.
   (globalThis as { beanBringBack?: () => void }).beanBringBack = avatarControls.bringBack;

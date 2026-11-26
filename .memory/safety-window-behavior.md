@@ -90,8 +90,8 @@ reports a URL and `isVisible() === true`, so moving + showing it does nothing �
 height 0, cursor-display spot), reloads with `did-finish-load` / `did-fail-load` (main frame) /
 `render-process-gone` / 10 s timeout listeners, then replays `taskStatus.list()`. While
 `reloading`, the move/mode/status-height IPC is ignored (the old document still passes the
-sender check) and main skips task-status pushes. Failure → non-blocking `showMessageBox`
-(never `showErrorBox`: running work must keep going). The Space hop is
+sender check) and main skips task-status pushes. Failure → a `Notification` (never a dialog: a parentless
+`showMessageBox` is app-modal on macOS and freezes main — safety-no-parentless-modal-in-main.md). The Space hop is
 `setVisibleOnAllWorkspaces(true→false)` with `skipTransformProcessType: true` on **both** calls —
 without it Electron flips the activation policy (the tray-parking trigger in
 safety-tray-tahoe-placement.md). `reveal()` (tray click on a hidden bean, second launch, Dock)
