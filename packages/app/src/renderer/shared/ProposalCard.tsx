@@ -67,7 +67,11 @@ export function ProposalCard({
   });
   const model = selection?.model;
   const cli = selection?.cli;
-  const effort = !isChat && cli && model ? pickEffort(models, cli, model, effortChoice, lastUsedEffort) : undefined;
+  // Interactive terminal launches of opencode (launchCommand) cannot pass --variant (only `opencode run` does).
+  const supportsEffort = (c: CliName): boolean => c !== "opencode";
+  const effort = !isChat && cli && model && supportsEffort(cli)
+    ? pickEffort(models, cli, model, effortChoice, lastUsedEffort ?? selection?.effort)
+    : undefined;
   const hasModelMenu = !isChat && models.length > 0;
   const showCliOnlyPicker = !isChat && !hasModelMenu && (cliOptions?.length ?? 0) > 1;
   const canConfirm = isChat || selection !== undefined;
@@ -158,9 +162,10 @@ export function ProposalCard({
                 selectedEffort={effort}
                 enabledClis={cliOptions}
                 showCliCaptions
+                supportsEffort={supportsEffort}
                 lastUsedModel={lastUsedModel}
                 lastUsedBadge={`LAST USED · ${run.skillName.toUpperCase()}`}
-                onPickModel={(id) => { setModelChoice(id); }}
+                onPickModel={(id) => { setModelChoice(id); if (id !== model) setEffortChoice(undefined); }}
                 onPickEffort={(eff) => { setEffortChoice(eff); }}
                 close={close}
               />

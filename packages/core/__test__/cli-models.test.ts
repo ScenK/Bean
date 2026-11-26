@@ -149,3 +149,43 @@ test("structured models parse efforts, defaultEffort, and effortIds while keepin
   expect(resolveWireModel(result, "agy", "gemini-4-neon")).toEqual({ model: "gemini-4-neon-high" });
   expect(resolveWireModel(result, "agy", "gemini-4-neon-low")).toEqual({ model: "gemini-4-neon-low" });
 });
+
+test("hiding every effortId alias of a model removes the model completely", async () => {
+  const d = await dir();
+  await writeFile(join(d, "default.json"), JSON.stringify([
+    {
+      provider: "agy",
+      models: [
+        {
+          id: "gemini-4-neon",
+          efforts: ["low", "high"],
+          defaultEffort: "high",
+          effortIds: { low: "gemini-4-neon-low", high: "gemini-4-neon-high" },
+        },
+        {
+          id: "gemini-4-carbon",
+          efforts: ["low", "high"],
+          defaultEffort: "high",
+          effortIds: { low: "gemini-4-carbon-low", high: "gemini-4-carbon-high" },
+        },
+      ],
+    },
+  ]));
+  await writeFile(join(d, "user.json"), JSON.stringify([
+    { provider: "agy", hide: ["gemini-4-neon-low", "gemini-4-neon-high"] },
+  ]));
+  const result = await loadCliModels(join(d, "default.json"), join(d, "user.json"));
+  expect(result).toEqual([
+    {
+      provider: "agy",
+      models: ["gemini-4-carbon"],
+      modelDetails: {
+        "gemini-4-carbon": {
+          efforts: ["low", "high"],
+          defaultEffort: "high",
+          effortIds: { low: "gemini-4-carbon-low", high: "gemini-4-carbon-high" },
+        },
+      },
+    },
+  ]);
+});

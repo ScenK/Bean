@@ -158,8 +158,12 @@ export function pickModel(
   choice?: string,
   lastUsed?: string,
 ): string | undefined {
-  const resolve = (id: string | undefined): string | undefined =>
-    matchAvailableModel(models, id, cli)?.model.id;
+  const resolve = (id: string | undefined): string | undefined => {
+    const hit = matchAvailableModel(models, id, cli);
+    // Keep matched legacy effortIds aliases verbatim so string-only callers (ChatOps
+    // resolveCliModel, IPC launch) preserve implied effort when calling resolveWireModel.
+    return hit ? (hit.impliedEffort ? id : hit.model.id) : undefined;
+  };
   return resolve(choice) ?? resolve(lastUsed) ?? models.find((m) => m.availableOn.includes(cli))?.id;
 }
 

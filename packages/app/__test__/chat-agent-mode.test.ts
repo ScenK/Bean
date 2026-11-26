@@ -839,17 +839,38 @@ describe("ChatWindow agent mode", () => {
       await mount({}, withEfforts as typeof models);
       await pickIn("agent", "Claude Code");
       expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · High ▾");
-      // Open model+effort once, switch to haiku (menu stays open!), pick Low (menu closes).
+      // Open model+effort once, switch to haiku (menu stays open and adopts haiku's default Medium), pick Low (menu closes).
       await openSeg("model");
       const haikuRow = modelRows().find((b) => b.textContent?.includes("haiku"))!;
       await act(async () => { haikuRow.click(); });
       await flush();
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · Medium ▴");
       expect(root.querySelectorAll(".bean-effort-btn").length).toBe(3); // popover stayed open with haiku's efforts
       const lowBtn = [...root.querySelectorAll<HTMLButtonElement>(".bean-effort-btn")].find((b) => b.textContent === "Low")!;
       await act(async () => { lowBtn.click(); });
       await flush();
       expect(root.querySelector(".bean-chip-menu-panel")).toBeNull();
       expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · Low ▾");
+      // Switching to opus restores opus's own default (High), not haiku's Low; picking Max on opus
+      // then switching back to haiku restores haiku's remembered Low.
+      await openSeg("model");
+      const opusRow = modelRows().find((b) => b.textContent?.includes("opus"))!;
+      await act(async () => { opusRow.click(); });
+      await flush();
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · High ▴");
+      const maxBtn = [...root.querySelectorAll<HTMLButtonElement>(".bean-effort-btn")].find((b) => b.textContent === "Max")!;
+      await act(async () => { maxBtn.click(); });
+      await flush();
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · Max ▾");
+      await openSeg("model");
+      const haikuRow2 = modelRows().find((b) => b.textContent?.includes("haiku"))!;
+      await act(async () => { haikuRow2.click(); });
+      await flush();
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · Low ▴");
+      // Close popover by clicking haiku again.
+      const haikuRow3 = modelRows().find((b) => b.textContent?.includes("haiku"))!;
+      await act(async () => { haikuRow3.click(); });
+      await flush();
       await send("go");
       expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", model: "haiku", effort: "low" }), expect.any(String));
       expect(liveSets()).toEqual([

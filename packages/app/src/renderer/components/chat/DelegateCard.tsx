@@ -5,7 +5,7 @@ import { ChipMenu } from "../../shared/ChipMenu.js";
 import { ModelEffortMenu } from "../../shared/ModelEffortMenu.js";
 import { AgentAvatar } from "../../shared/AgentAvatar.js";
 import type { CliName, Project } from "@bean/core";
-import { effortLabel, pickEffort, pickModel, resolveCliModelSelection } from "@bean/core/models";
+import { effortLabel, normalizeModelSelection, pickEffort, pickModel, resolveCliModelSelection } from "@bean/core/models";
 import { useCoreStatus } from "../../shared/core-status.js";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
@@ -98,8 +98,10 @@ export function DelegateCard({
     ...(preferred ? { cli: preferred } : {}), ...(lastUsedModel ? { lastUsed: lastUsedModel } : {}),
   })?.cli;
   const cliModels = cli ? models.filter((m) => m.availableOn.includes(cli)) : [];
-  const model = cli ? pickModel(models, cli, modelChoice, lastUsedModel) : undefined;
-  const effort = cli && model ? pickEffort(models, cli, model, effortChoice, lastUsedEffort) : undefined;
+  const pickedModel = cli ? pickModel(models, cli, modelChoice, lastUsedModel) : undefined;
+  const norm = cli ? normalizeModelSelection(models, cli, pickedModel) : {};
+  const model = norm.model;
+  const effort = cli && model ? pickEffort(models, cli, model, effortChoice, lastUsedEffort ?? norm.effort) : undefined;
   const modelLabel = model ? (models.find((m) => m.id === model)?.label ?? model) : "default model";
   // Once started, the card shows the project the run committed to (confirmDelegate writes it back).
   const shownPath = pending ? projectPath : item.proposal.projectPath;
@@ -180,7 +182,10 @@ export function DelegateCard({
                       onClick={() => {
                         setCliChoice(c);
                         // A pick the new CLI doesn't offer is cleared, not carried back on a later switch.
-                        if (modelChoice && !models.some((m) => m.id === modelChoice && m.availableOn.includes(c))) setModelChoice(undefined);
+                        if (modelChoice && !models.some((m) => m.id === modelChoice && m.availableOn.includes(c))) {
+                          setModelChoice(undefined);
+                          setEffortChoice(undefined);
+                        }
                         close();
                       }}
                     >
@@ -198,7 +203,7 @@ export function DelegateCard({
                     cli={cli}
                     selectedModel={model}
                     selectedEffort={effort}
-                    onPickModel={(id) => { setModelChoice(id); }}
+                    onPickModel={(id) => { setModelChoice(id); if (id !== model) setEffortChoice(undefined); }}
                     onPickEffort={(eff) => { setEffortChoice(eff); }}
                     close={close}
                   />

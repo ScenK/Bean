@@ -382,6 +382,7 @@ export function StepsEditor(props: {
                       selectedEffort={step.kind === "delegate" ? shownEffort : undefined}
                       topOption={{ label: "Bean picks the model", selected: !step.model }}
                       allowUnsetEffort={step.kind === "delegate"}
+                      supportsEffort={() => step.kind === "delegate"}
                       enabledClis={clis}
                       showCliCaptions
                       onPickModel={(id) => setModel(i, step, id)}

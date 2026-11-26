@@ -3,20 +3,20 @@ import { afterEach, describe, expect, it } from "vitest";
 import { h, render } from "preact";
 import { useState } from "preact/hooks";
 import { act } from "preact/test-utils";
-import type { RoutineStep } from "@bean/core";
+import type { AvailableModel, RoutineStep } from "@bean/core";
 import { StepsEditor } from "../src/renderer/components/routines/StepsEditor.js";
 import { moveStep, removeStep } from "../src/renderer/components/routines/step-ids.js";
 
 const d = (id: string, extra: Partial<RoutineStep> = {}): RoutineStep => ({ kind: "delegate", id, skill: "code", cli: "claude", instruction: id, ...extra } as RoutineStep);
 
 let latest: RoutineStep[] = [];
-const mount = (initial: RoutineStep[]): HTMLElement => {
+const mount = (initial: RoutineStep[], models: AvailableModel[] = []): HTMLElement => {
   const root = document.createElement("div");
   document.body.append(root);
   latest = initial;
   const Host = () => {
     const [steps, setSteps] = useState(initial);
-    return h(StepsEditor, { steps, onSteps: (next) => { latest = next; setSteps(next); }, skills: [], projects: [{ name: "Bean", path: "/p/bean" }], clis: ["claude", "codex"], models: [] });
+    return h(StepsEditor, { steps, onSteps: (next) => { latest = next; setSteps(next); }, skills: [], projects: [{ name: "Bean", path: "/p/bean" }], clis: ["claude", "codex"], models });
   };
   act(() => render(h(Host, null), root));
   return root;
@@ -86,5 +86,24 @@ describe("continue-session chip", () => {
     const [fresh] = open(cards(moved)[0]!);
     act(() => fresh!.click());
     expect("continues" in latest[0]!).toBe(false);
+  });
+
+  it("hides effort controls on chat steps while showing them on delegate steps", () => {
+    const models: AvailableModel[] = [
+      { id: "opus", label: "opus", availableOn: ["claude"], effortsByCli: { claude: { efforts: ["low", "high"], defaultEffort: "high" } } },
+    ];
+    const root = mount([
+      { kind: "chat", id: "c", model: "opus", instruction: "summarize" },
+      d("a", { model: "opus" }),
+    ], models);
+    const [chatCard, delCard] = cards(root);
+    const modelTrigger = (card: HTMLElement) =>
+      [...card.querySelectorAll<HTMLButtonElement>(".bean-chip-menu-trigger")].find((b) => b.textContent!.includes("opus"))!;
+
+    act(() => modelTrigger(chatCard!).click());
+    expect(chatCard!.querySelector(".bean-effort-section")).toBeNull();
+
+    act(() => modelTrigger(delCard!).click());
+    expect(delCard!.querySelector(".bean-effort-section")).not.toBeNull();
   });
 });

@@ -950,7 +950,14 @@ export function ChatSession({
   const pickModel = (model: string): void => {
     const agent = modeRef.current;
     if (!isLiveAgent(agent) || liveRef.current) return;
-    const resolved = resolveAgentSelection(runModels, agent, model, agentEffortRef.current, picksRef.current[agent]?.efforts);
+    const same = model === agentModelRef.current;
+    const resolved = resolveAgentSelection(
+      runModels,
+      agent,
+      model,
+      same ? agentEffortRef.current : undefined,
+      picksRef.current[agent]?.efforts,
+    );
     setAgentModel(resolved.model ?? "");
     setAgentEffort(resolved.effort);
     updatePick(agent, { model: resolved.model ?? "" });

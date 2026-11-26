@@ -21,6 +21,7 @@ export function ModelEffortMenu({
   lastUsedBadge,
   showCliCaptions = false,
   enabledClis,
+  supportsEffort,
 }: {
   models: readonly AvailableModel[];
   /** Active CLI when known; used to look up effort options for the selected model. */
@@ -41,16 +42,21 @@ export function ModelEffortMenu({
   lastUsedBadge?: string;
   showCliCaptions?: boolean;
   enabledClis?: readonly CliName[];
+  /** Optional gate restricting which CLIs can apply reasoning effort in this launch context. */
+  supportsEffort?: (cli: CliName) => boolean;
 }) {
+  const canEffort = (c: CliName | undefined): boolean => Boolean(c) && (supportsEffort ? supportsEffort(c!) : true);
   const effectiveCli = cli ?? models.find((m) => m.id === selectedModel)?.availableOn[0];
-  const effortInfo = effectiveCli && selectedModel ? modelEfforts(models, effectiveCli, selectedModel) : undefined;
+  const effortInfo = canEffort(effectiveCli) && selectedModel ? modelEfforts(models, effectiveCli!, selectedModel) : undefined;
   const efforts = effortInfo?.efforts ?? [];
 
   const pickModel = (m: AvailableModel): void => {
     if (disabled) return;
     const same = m.id === selectedModel;
-    const targetCli = cli ?? m.availableOn.find((c) => !enabledClis || enabledClis.includes(c)) ?? m.availableOn[0];
-    const nextEfforts = targetCli ? m.effortsByCli?.[targetCli]?.efforts : undefined;
+    const targetCli = (cli && m.availableOn.includes(cli) ? cli : undefined)
+      ?? m.availableOn.find((c) => !enabledClis || enabledClis.includes(c))
+      ?? m.availableOn[0];
+    const nextEfforts = canEffort(targetCli) ? m.effortsByCli?.[targetCli!]?.efforts : undefined;
     onPickModel(m.id);
     // Keep the menu open when switching to a model that has effort choices so model + effort
     // can be picked in a single open; close immediately when re-picking or when there are no efforts.

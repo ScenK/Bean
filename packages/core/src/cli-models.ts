@@ -137,26 +137,24 @@ function applyEntry(
 
   const push = (id: string, d?: CliModelDetails): void => {
     if (hide.has(id)) return;
-    if (!list.includes(id)) list.push(id);
-    if (d) {
+    let resolvedDetails: CliModelDetails | undefined = d;
+    if (d?.effortIds) {
       // Allow hiding an individual effortId (e.g. hiding "gemini-4-neon-low" drops that effort).
-      if (d.effortIds) {
-        const keptIds: Record<string, string> = {};
-        for (const [k, v] of Object.entries(d.effortIds)) {
-          if (!hide.has(v)) keptIds[k] = v;
-        }
-        const keptEfforts = d.efforts.filter((k) => !d.effortIds?.[k] || keptIds[k] !== undefined);
-        if (keptEfforts.length === 0) return;
-        const defaultEffort = d.defaultEffort && keptEfforts.includes(d.defaultEffort) ? d.defaultEffort : undefined;
-        details[id] = {
-          efforts: keptEfforts,
-          ...(defaultEffort ? { defaultEffort } : {}),
-          ...(Object.keys(keptIds).length > 0 ? { effortIds: keptIds } : {}),
-        };
-      } else {
-        details[id] = d;
+      const keptIds: Record<string, string> = {};
+      for (const [k, v] of Object.entries(d.effortIds)) {
+        if (!hide.has(v)) keptIds[k] = v;
       }
+      const keptEfforts = d.efforts.filter((k) => !d.effortIds?.[k] || keptIds[k] !== undefined);
+      if (keptEfforts.length === 0) return;
+      const defaultEffort = d.defaultEffort && keptEfforts.includes(d.defaultEffort) ? d.defaultEffort : undefined;
+      resolvedDetails = {
+        efforts: keptEfforts,
+        ...(defaultEffort ? { defaultEffort } : {}),
+        ...(Object.keys(keptIds).length > 0 ? { effortIds: keptIds } : {}),
+      };
     }
+    if (!list.includes(id)) list.push(id);
+    if (resolvedDetails) details[id] = resolvedDetails;
   };
 
   if (entry.models) {
