@@ -45,6 +45,15 @@ describe("runRoutine", () => {
     expect(seen).toEqual([180, undefined]);
   });
 
+  it("sends a chat step's own effort to Bean's model, and none for a step without one", async () => {
+    const seen: (string | undefined)[] = [];
+    await runRoutine(routine([
+      { kind: "chat", effort: "high", instruction: "think hard" },
+      { kind: "chat", instruction: "default" },
+    ]), baseDeps(async (a) => { seen.push(a.effort); return { content: "ok", toolCalls: [] }; }));
+    expect(seen.slice(0, 2)).toEqual(["high", undefined]);
+  });
+
   it("reports each step index via onStep as it starts", async () => {
     const { fn } = chatStub([{ content: "a" }, { content: "b" }, { content: "the digest" }]);
     const seen: number[] = [];

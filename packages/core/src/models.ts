@@ -23,23 +23,24 @@ function modelLabel(id: string): string {
   return seg !== undefined && seg.trim() !== "" ? seg : id;
 }
 
-/** Short display label for a reasoning effort level (`"low"` → `"Low"`, `"xhigh"` → `"XHigh"`). */
+/** Display label for a reasoning effort level: lowercase, like the model ids it sits beside. */
 export function effortLabel(effort: string): string {
-  switch (effort.toLowerCase()) {
-    case "none": return "None";
-    case "minimal": return "Min";
-    case "low": return "Low";
-    case "medium": return "Medium";
-    case "high": return "High";
-    case "xhigh": return "XHigh";
-    case "max": return "Max";
-    default: return effort;
-  }
+  return effort.toLowerCase();
 }
 
-/** Compact label for tight segmented buttons (`"medium"` → `"Med"`). */
+/** Efforts a sprout chat step offers for Bean's own (OpenAI) model when its model declares none. */
+export const BEAN_EFFORTS: readonly string[] = ["none", "low", "medium", "high", "xhigh"];
+
+/** Efforts Bean's own model offers: its declared efforts in clis.json, else BEAN_EFFORTS. */
+export function beanEfforts(models: readonly AvailableModel[], modelId: string | undefined): readonly string[] {
+  const hit = modelId ? matchAvailableModel(models, modelId) : undefined;
+  return (hit ? hit.model.effortsByCli?.[hit.cli]?.efforts : undefined) ?? BEAN_EFFORTS;
+}
+
+/** Compact label for tight segmented buttons (`"medium"` → `"med"`, `"minimal"` → `"min"`). */
 export function shortEffortLabel(effort: string): string {
-  return effort.toLowerCase() === "medium" ? "Med" : effortLabel(effort);
+  const e = effort.toLowerCase();
+  return e === "medium" ? "med" : e === "minimal" ? "min" : e;
 }
 
 /** Every model offered by an enabled (detected and not Settings-disabled) CLI, annotated with

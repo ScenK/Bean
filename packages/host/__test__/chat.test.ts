@@ -740,3 +740,24 @@ test("chat handler validates documents before converse: a real PDF reaches it, a
   await expect(handler({ history: [], message: "x", documents: [{ data: "A".repeat(14_000_000), filename: "c.pdf" }] })).rejects.toThrow(/10 MB/);
   expect(calls).toBe(1);
 });
+
+test("chat handler sends the request's effort on Bean's model call, and none without one", async () => {
+  const seen: (string | undefined)[] = [];
+  const handler = buildChatHandler({
+    loadSkills: async () => [],
+    loadProjects: async () => [],
+    loadPersona: async () => ({ name: "Ponyta", tags: [] }),
+    converse: async ({ effort }) => { seen.push(effort); return { content: "ok", toolCalls: [] }; },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [],
+    dbFile: "/b/memory.json",
+  });
+  await handler({ history: [], message: "think", effort: "high" });
+  await handler({ history: [], message: "plain" });
+  expect(seen).toEqual(["high", undefined]);
+});

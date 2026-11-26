@@ -80,13 +80,13 @@ test("converse adapter sends tools flat, not nested under function", async () =>
   expect(seen.args?.tool_choice).toBe("auto");
 });
 
-test("converse adapter omits reasoning unless an effort is configured", async () => {
+test("converse adapter omits reasoning unless the call pins an effort", async () => {
   const off = fakeResponses();
   await makeOpenAIConverseWithClient(off.client as never)({ model: "m", messages: [], tools: [] });
   expect(off.seen.args).not.toHaveProperty("reasoning");
 
   const on = fakeResponses();
-  await makeOpenAIConverseWithClient(on.client as never, "high")({ model: "m", messages: [], tools: [] });
+  await makeOpenAIConverseWithClient(on.client as never)({ model: "m", messages: [], tools: [], effort: "high" });
   expect(on.seen.args?.reasoning).toEqual({ effort: "high" });
 });
 

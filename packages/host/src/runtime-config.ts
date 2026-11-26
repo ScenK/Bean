@@ -2,7 +2,7 @@ import { setBeanGitIdentity, type ConverseDeps, type RankByMeaning } from "@bean
 import type { ConfigFields, ConfigUpdate } from "./config.js";
 
 export interface RuntimeConfigDeps {
-  makeConverse: (apiKey: string, reasoningEffort: string) => ConverseDeps["chat"];
+  makeConverse: (apiKey: string) => ConverseDeps["chat"];
   /** Recall by meaning for a key; absent = keyword recall only. */
   makeRankByMeaning?: (apiKey: string) => RankByMeaning;
   saveConfigFile: (update: ConfigFields) => Promise<void>;
@@ -18,7 +18,6 @@ export interface RuntimeConfig {
   getEditorApp: () => string;
   getDelegateCli: () => string;
   getSystemControls: () => boolean;
-  getReasoningEffort: () => string;
   getDisabledClis: () => string[];
   getWebSearch: () => boolean;
   getAutoMemory: () => boolean;
@@ -43,7 +42,6 @@ export function createRuntimeConfig(
   let editorApp = initial.editorApp;
   let delegateCli = initial.delegateCli;
   let systemControls = initial.systemControls;
-  let reasoningEffort = initial.reasoningEffort;
   let disabledClis = initial.disabledClis;
   let webSearch = initial.webSearch;
   let autoMemory = initial.autoMemory;
@@ -55,7 +53,7 @@ export function createRuntimeConfig(
   // ponytail: the OpenAI SDK throws in its constructor when apiKey is "", so building the
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
   // per-call instead; a missing key just surfaces as an auth error from the actual chat call.
-  let converseClient = apiKey ? deps.makeConverse(apiKey, reasoningEffort) : null;
+  let converseClient = apiKey ? deps.makeConverse(apiKey) : null;
   let rankClient = apiKey ? deps.makeRankByMeaning?.(apiKey) : undefined;
   // One save at a time (#812): each patch merges onto the result of the one before it, or two
   // overlapping saves would both start from the same snapshot and the later one undo the earlier.
@@ -73,7 +71,6 @@ export function createRuntimeConfig(
     getEditorApp: () => editorApp,
     getDelegateCli: () => delegateCli,
     getSystemControls: () => systemControls,
-    getReasoningEffort: () => reasoningEffort,
     getDisabledClis: () => disabledClis,
     getWebSearch: () => webSearch,
     getAutoMemory: () => autoMemory,
@@ -89,11 +86,11 @@ export function createRuntimeConfig(
 
   async function applyNow(patch: ConfigUpdate): Promise<void> {
     const update: ConfigFields = {
-      openaiApiKey: apiKey, model, terminalApp, editorApp, delegateCli, systemControls, reasoningEffort,
+      openaiApiKey: apiKey, model, terminalApp, editorApp, delegateCli, systemControls,
       disabledClis, webSearch, autoMemory, homeDiscordDm, homeTeamsDm, gitName, gitEmail,
     };
     for (const [k, v] of Object.entries(patch)) if (v !== undefined && Object.hasOwn(update, k)) (update as unknown as Record<string, unknown>)[k] = v;
-    const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
+    const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey) : null;
     const nextRankClient = update.openaiApiKey ? deps.makeRankByMeaning?.(update.openaiApiKey) : undefined;
     await deps.saveConfigFile(update);
     apiKey = update.openaiApiKey;
@@ -102,7 +99,6 @@ export function createRuntimeConfig(
     editorApp = update.editorApp;
     delegateCli = update.delegateCli;
     systemControls = update.systemControls;
-    reasoningEffort = update.reasoningEffort;
     disabledClis = update.disabledClis;
     webSearch = update.webSearch;
     autoMemory = update.autoMemory;

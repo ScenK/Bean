@@ -76,7 +76,6 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     editorApp: parsed.editorApp ?? "",
     delegateCli: parsed.delegateCli ?? "",
     systemControls: parsed.systemControls ?? false,
-    reasoningEffort: parsed.reasoningEffort ?? "",
     imageModel: parsed.imageModel ?? "gpt-image-2",
     gitName: parsed.gitName ?? "",
     gitEmail: parsed.gitEmail ?? "",
@@ -94,10 +93,10 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; gitName?: string; gitEmail?: string; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean; homeDiscordDm?: boolean; homeTeamsDm?: boolean; briefModel?: string },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; imageModel?: string; gitName?: string; gitEmail?: string; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean; homeDiscordDm?: boolean; homeTeamsDm?: boolean; briefModel?: string },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
-  // Settings has no toggle for some fields (e.g. reasoningEffort, imageModel), so a desktop
+  // Settings has no toggle for some fields (e.g. imageModel), so a desktop
   // Settings save omits them. Preserve any optional field a caller does not know about; only
   // a brand-new file falls back to defaults. (Current Settings does send
   // disabledClis, while older callers and first-launch bootstrap may omit it.)
@@ -111,7 +110,6 @@ export async function saveConfig(
     openaiApiKey: config.openaiApiKey, model: config.model,
     terminalApp: config.terminalApp ?? "", editorApp: config.editorApp ?? "", delegateCli: config.delegateCli ?? "",
     systemControls: config.systemControls ?? false,
-    reasoningEffort: config.reasoningEffort ?? existing.reasoningEffort ?? "",
     imageModel: config.imageModel ?? existing.imageModel ?? "gpt-image-2",
     gitName: config.gitName ?? existing.gitName ?? "",
     gitEmail: config.gitEmail ?? existing.gitEmail ?? "",

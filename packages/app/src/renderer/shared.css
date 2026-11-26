@@ -3770,7 +3770,7 @@ button, input, textarea, select, a {
   border: 1px solid var(--bean-border);
   border-radius: 8px;
 }
-.bean-chat-window .bean-agent-pill--disabled { opacity: 0.6; }
+.bean-chat-window .bean-agent-pill--disabled .bean-agent-seg { color: var(--bean-text-dim); }
 .bean-chat-window .bean-agent-seg {
   display: inline-flex;
   align-items: center;

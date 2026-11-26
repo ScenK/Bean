@@ -16,6 +16,7 @@ import { composePrompt, linkedNoteData } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { CARD_LEAD } from "@bean/core/card-record";
 import { GRANT_IDLE_MS, GRANT_MISMATCH_TEXT } from "@bean/core/delegate-grant";
+import { beanEfforts } from "@bean/core/models";
 import { dataUrlToAttachment, labelNoteImages } from "../../shared/note-images.js";
 import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, KeyedTurn, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
@@ -476,6 +477,11 @@ export function ChatSession({
   const [agentEffort, setAgentEffortState] = useState<string | undefined>(undefined);
   const agentEffortRef = useRef<string | undefined>(undefined);
   const setAgentEffort = (e: string | undefined): void => { agentEffortRef.current = e; setAgentEffortState(e); };
+  // Bean's own reasoning effort for this chat's turns (the pill's Bean segment); undefined = the
+  // model's default. Per chat, never remembered: there is no global effort (Settings has none).
+  const [beanEffort, setBeanEffortState] = useState<string | undefined>(undefined);
+  const beanEffortRef = useRef<string | undefined>(undefined);
+  const setBeanEffort = (e: string | undefined): void => { beanEffortRef.current = e; setBeanEffortState(e); };
   // Each agent's last project + model + per-model effort (#612): seeded at mount from model memory,
   // updated by chip picks, restored on a switch to that agent. Read synchronously — `/claude <ask>`
   // restores and starts in one tick.
@@ -867,7 +873,7 @@ export function ChatSession({
 
     try {
       const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
-      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), ...(delta ? { delta } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
+      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), ...(delta ? { delta } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId, ...(beanEffortRef.current ? { effort: beanEffortRef.current } : {}) }, mountId);
       // The host appended the delta, this turn and its reply.
       if (delta) ackKeys([...delta.map((x) => x.key), turnId, replyId]);
       if (res.model) setModel(res.model);
@@ -1049,9 +1055,10 @@ export function ChatSession({
     updatePick(agent, { model: resolved.model ?? "" });
   };
 
-  const pickEffort = (effort: string): void => {
+  const pickEffort = (effort: string | undefined): void => {
     const agent = modeRef.current;
-    if (!isLiveAgent(agent) || liveRef.current) return;
+    if (agent === "bean") { setBeanEffort(effort); return; }
+    if (!effort || !isLiveAgent(agent) || liveRef.current) return;
     const resolved = resolveAgentSelection(runModels, agent, agentModelRef.current, effort, picksRef.current[agent]?.efforts);
     setAgentEffort(resolved.effort);
     if (resolved.model && resolved.effort) {
@@ -2072,7 +2079,8 @@ export function ChatSession({
         mode={mode}
         agentProject={agentProject}
         agentModel={isLiveAgent(mode) ? resolveAgentSelection(runModels, mode, agentModel, agentEffort, picks[mode]?.efforts).model ?? "" : ""}
-        agentEffort={isLiveAgent(mode) ? resolveAgentSelection(runModels, mode, agentModel, agentEffort, picks[mode]?.efforts).effort : undefined}
+        agentEffort={isLiveAgent(mode) ? resolveAgentSelection(runModels, mode, agentModel, agentEffort, picks[mode]?.efforts).effort : beanEffort}
+        beanEfforts={beanEfforts(runModels, model)}
         live={live ? { agent: live.agent, projectPath: live.projectPath, model: live.model, effort: live.effort, busy: live.busy, continuing: live.continuing, stopping: live.stopping } : undefined}
         offerLaunch={(offerPath) => {
           const agent = offerAgent(clis);

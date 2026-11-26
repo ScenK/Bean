@@ -22,7 +22,7 @@ Gemini `defaultEffort` is `medium` (Antigravity's documented default), not `high
 Flash or the third-party models agy also serves (Claude, GPT-OSS). A free account's `agy models` lists none of the paid tiers, so read the IDs from
 antigravity.google/docs/models instead.
 Per-model reasoning effort is declared in `clis.json` (`{ id, efforts, defaultEffort?, effortIds? }`)
-alongside plain string entries; provider code maps `effort` to each CLI's native flag (`claude`
+alongside plain string entries; effort labels render lowercase like model ids (`opus · high`); Bean's own model takes `effort` per sprout chat step and per desktop chat (the pill's Bean segment, `ChatRequest.effort`, never remembered — there is no global effort); its options are `beanEfforts()` (the model's declared efforts, else `BEAN_EFFORTS`); provider code maps `effort` to each CLI's native flag (`claude`
 `--effort`, `codex` `-c model_reasoning_effort="…"`, `opencode` `--variant`, `agy` `effortIds` or `--effort`).
 Users keep an older one with `add` — prefer `add`/`hide` over `models`, which freezes the
 provider's list against future defaults. Dropping a model fails any sprout step pinned to it

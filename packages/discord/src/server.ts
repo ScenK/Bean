@@ -48,7 +48,7 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity:
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this channel has no idea what it's retrying.
 // Hoisted out of the bot deps so the outbox loop's compaction can reuse the same client.
-const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
+const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey);
 // onChange tells the desktop app a history changed (a conversation id only, never text).
 const conversations = new ConversationStore(dbFile(dir), { onChange: parentSavedSink });
 const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "discord", proseOnly: true });

@@ -88,22 +88,33 @@ describe("continue-session chip", () => {
     expect("continues" in latest[0]!).toBe(false);
   });
 
-  it("hides effort controls on chat steps while showing them on delegate steps", () => {
+  it("chat steps pin effort for Bean's own model: declared efforts on a pinned model, Bean's set otherwise", () => {
     const models: AvailableModel[] = [
-      { id: "opus", label: "opus", availableOn: ["claude"], effortsByCli: { claude: { efforts: ["low", "high"], defaultEffort: "high" } } },
+      { id: "gpt-x", label: "gpt-x", availableOn: ["codex"], effortsByCli: { codex: { efforts: ["low", "high"], defaultEffort: "high" } } },
     ];
     const root = mount([
-      { kind: "chat", id: "c", model: "opus", instruction: "summarize" },
-      d("a", { model: "opus" }),
+      { kind: "chat", id: "c", model: "gpt-x", instruction: "summarize" },
+      { kind: "chat", id: "b", instruction: "brief" },
     ], models);
-    const [chatCard, delCard] = cards(root);
-    const modelTrigger = (card: HTMLElement) =>
-      [...card.querySelectorAll<HTMLButtonElement>(".bean-chip-menu-trigger")].find((b) => b.textContent!.includes("opus"))!;
+    const trigger = (card: HTMLElement, text: string) =>
+      [...card.querySelectorAll<HTMLButtonElement>(".bean-chip-menu-trigger")].find((b) => b.textContent!.includes(text))!;
+    const effortBtns = (card: HTMLElement) => [...card.querySelectorAll<HTMLButtonElement>(".bean-effort-btn")];
 
-    act(() => modelTrigger(chatCard!).click());
-    expect(chatCard!.querySelector(".bean-effort-section")).toBeNull();
+    act(() => trigger(cards(root)[0]!, "gpt-x").click());
+    expect(effortBtns(cards(root)[0]!).map((b) => b.textContent)).toEqual(["default", "low", "high"]);
+    act(() => effortBtns(cards(root)[0]!)[2]!.click());
+    expect(latest[0]).toMatchObject({ kind: "chat", model: "gpt-x", effort: "high" });
+    expect(trigger(cards(root)[0]!, "gpt-x").textContent).toContain("gpt-x · high");
 
-    act(() => modelTrigger(delCard!).click());
-    expect(delCard!.querySelector(".bean-effort-section")).not.toBeNull();
+    act(() => trigger(cards(root)[1]!, "Bean picks model").click());
+    expect(effortBtns(cards(root)[1]!).map((b) => b.textContent)).toEqual(["default", "none", "low", "med", "high", "xhigh"]);
+    act(() => effortBtns(cards(root)[1]!)[2]!.click());
+    expect(latest[1]).toMatchObject({ kind: "chat", effort: "low" });
+    expect("model" in latest[1]!).toBe(false);
+
+    // Back to default drops the key rather than saving effort: undefined.
+    act(() => trigger(cards(root)[1]!, "Bean picks model").click());
+    act(() => effortBtns(cards(root)[1]!)[0]!.click());
+    expect("effort" in latest[1]!).toBe(false);
   });
 });

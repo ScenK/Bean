@@ -16,9 +16,10 @@ migration, not a bug. `/v1/responses` accepts every effort with tools.
 
 - `store: false` is required, not a preference. Responses defaults to `store: true`, which
   would persist every Bean conversation in the user's OpenAI account; chat.completions never did.
-- `reasoningEffort: ""` must send **no** `reasoning` key at all. Passing `reasoning.effort` to a
-  model without reasoning is a hard 400 (`Unsupported parameter`), so `""` is the safe default
-  for `gpt-4o-mini`/`gpt-5.4-nano`, not a stand-in for some effort value.
+- No effort = send **no** `reasoning` key at all (the model's own default). Passing
+  `reasoning.effort` to a model without reasoning is a hard 400 (`Unsupported parameter`). There
+  is no global effort setting (Settings' one was removed): a sprout chat step's `effort` or a
+  desktop chat's pill pick (`ChatRequest.effort` → `ConverseDeps.effort`) reaches the adapter per call.
 - Reasoning items in `output[]` are dropped. Verified against the live API: a follow-up call
   carrying only `function_call` + `function_call_output` is accepted and answers correctly, so
   converse()'s 3-round tool loop carries no encrypted reasoning state.

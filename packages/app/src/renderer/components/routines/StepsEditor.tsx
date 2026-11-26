@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate, StepRoute } from "@bean/core";
-import { effortLabel, matchAvailableModel, modelEfforts, stepAvailabilityProblem } from "@bean/core/models";
+import { BEAN_EFFORTS, beanEfforts, effortLabel, matchAvailableModel, modelEfforts, stepAvailabilityProblem } from "@bean/core/models";
 import { continueTargets, DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, DONE, QUIET, isDoneEnd, isQuietEnd, stepContinueCaptions, stepEdgeProblems, stepEdgeWarnings, stepGroupCaptions, stepGroups, stepLanes, stepPathCaptions, type StepGroup } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { ModelEffortMenu } from "../../shared/ModelEffortMenu.js";
@@ -137,8 +137,14 @@ export function StepsEditor(props: {
       setStep(i, { ...rest, model: id, ...(keepEffort ? { effort: keepEffort } : {}) });
       return;
     }
+    if (step.kind === "chat") {
+      const { effort, ...rest } = step;
+      setStep(i, { ...rest, model: id, ...(effort && beanEfforts(models, id).includes(effort) ? { effort } : {}) });
+      return;
+    }
     setStep(i, { ...step, model: id } as RoutineStep);
   };
+
   const setEffort = (i: number, step: RoutineStep & { kind: "delegate" }, effort?: string): void => {
     const hit = step.model ? matchAvailableModel(models, step.model, step.cli) : undefined;
     const canonicalModel = hit?.model.id ?? step.model;
@@ -166,10 +172,8 @@ export function StepsEditor(props: {
         const cli = step.kind === "delegate" ? step.cli : undefined;
         const matchedModel = step.kind !== "command" && step.model ? matchAvailableModel(models, step.model, cli) : undefined;
         const shownModelId = matchedModel?.model.id ?? (step.kind !== "command" ? step.model : undefined);
-        const shownEffort = step.kind === "delegate" ? (step.effort ?? matchedModel?.impliedEffort) : undefined;
-        const modelLabel = shownModelId
-          ? `${matchedModel?.model.label ?? shownModelId}${shownEffort ? ` · ${effortLabel(shownEffort)}` : ""}`
-          : "Bean picks model";
+        const shownEffort = step.kind === "delegate" ? (step.effort ?? matchedModel?.impliedEffort) : step.kind === "chat" ? step.effort : undefined;
+        const modelLabel = `${shownModelId ? (matchedModel?.model.label ?? shownModelId) : "Bean picks model"}${shownEffort ? ` · ${effortLabel(shownEffort)}` : ""}`;
         const problem = step.kind === "delegate" ? stepAvailabilityProblem(step, clis, models) : undefined;
         const onFail = step.gate?.onFail;
         const gotoIndex = typeof onFail === "object" ? indexOf(onFail.goto) : -1;
@@ -370,7 +374,7 @@ export function StepsEditor(props: {
 
                 {step.kind !== "command" ? (
                 <ChipMenu
-                  chipClass={step.model ? undefined : "bean-chip-menu-trigger--dashed"}
+                  chipClass={step.model || shownEffort ? undefined : "bean-chip-menu-trigger--dashed"}
                   chipLabel={<span class="bean-routines-chip-label">{modelLabel}</span>}
                   menuWidth={320}
                 >
@@ -379,14 +383,17 @@ export function StepsEditor(props: {
                       models={models.filter((m) => !cli || m.availableOn.includes(cli))}
                       cli={cli ?? matchedModel?.cli}
                       selectedModel={shownModelId}
-                      selectedEffort={step.kind === "delegate" ? shownEffort : undefined}
+                      selectedEffort={shownEffort}
                       topOption={{ label: "Bean picks the model", selected: !step.model }}
-                      allowUnsetEffort={step.kind === "delegate"}
-                      supportsEffort={() => step.kind === "delegate"}
+                      allowUnsetEffort
+                      fallbackEfforts={step.kind === "chat" ? BEAN_EFFORTS : undefined}
                       enabledClis={clis}
                       showCliCaptions
                       onPickModel={(id) => setModel(i, step, id)}
-                      onPickEffort={(eff) => { if (step.kind === "delegate") setEffort(i, step, eff); }}
+                      onPickEffort={(eff) => {
+                        if (step.kind === "delegate") setEffort(i, step, eff);
+                        else if (step.kind === "chat") { const { effort: _old, ...rest } = step; setStep(i, { ...rest, ...(eff ? { effort: eff } : {}) }); }
+                      }}
                       close={close}
                     />
                   )}

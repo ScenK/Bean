@@ -14,8 +14,9 @@ type Segment = "agent" | "project" | "model";
 /**
  * The chat composer's unified agent pill: visually one single bordered pill with `·` separators,
  * logically split into independent interactive segments:
- * - Bean mode: `[ 🫘 Bean ▾ ]` (no Project — Bean's brain has no filesystem).
- * - Agent mode: `[ ✦ Claude Code · Bean · opus · High ▾ ]` — clicking each segment opens only its
+ * - Bean mode: `[ 🫘 Bean · default ▾ ]` — no Project (Bean's brain has no filesystem); the second
+ *   segment is this chat's reasoning effort for Bean's own model.
+ * - Agent mode: `[ ✦ Claude Code · Bean · opus · high ▾ ]` — clicking each segment opens only its
  *   own focused popover (Agent / Project / combined Model + Effort).
  */
 export function AgentPill({
@@ -32,6 +33,7 @@ export function AgentPill({
   onPickProject,
   onPickModel,
   onPickEffort,
+  beanEfforts = [],
 }: {
   disabled?: boolean;
   mode: AgentId;
@@ -47,7 +49,10 @@ export function AgentPill({
   onPickAgent: (agent: AgentId) => void;
   onPickProject: (path: string) => void;
   onPickModel: (model: string) => void;
-  onPickEffort: (effort: string) => void;
+  /** Bean mode: `undefined` = the model's default. */
+  onPickEffort: (effort: string | undefined) => void;
+  /** Efforts Bean's own model offers (Bean mode's effort segment); empty = no segment. */
+  beanEfforts?: readonly string[];
 }) {
   const [open, setOpen] = useState<Segment | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -62,12 +67,12 @@ export function AgentPill({
   const shownProjectPath = live?.projectPath ?? agentProject;
   const projectName = projects.find((p) => p.path === shownProjectPath)?.name ?? "scratch";
   const modelLabel = model ? (runModels.find((m) => m.id === model)?.label ?? model) : undefined;
-  const hasModelSegment = agentMode && (models.length > 0 || !!modelLabel);
+  const hasModelSegment = agentMode ? models.length > 0 || !!modelLabel : beanEfforts.length > 0;
 
-  // If mode switches back to Bean while Project/Model popover was open, close it.
+  // A mode switch while the Project/Model popover is open closes it (its contents change).
   useEffect(() => {
-    if (!agentMode && (open === "project" || open === "model")) setOpen(null);
-  }, [agentMode, open]);
+    if (open === "project" || open === "model") setOpen(null);
+  }, [agentMode]);
 
   useEffect(() => {
     if (!open) return;
@@ -138,7 +143,7 @@ export function AgentPill({
         >
           <AgentAvatar agent={mode} size={16} />
           <span class="bean-agent-seg-text">{AGENT_NAMES[mode]}</span>
-          {!agentMode ? <>{" "}<span class="bean-chip-menu-caret">{open === "agent" ? "▴" : "▾"}</span></> : null}
+          {!agentMode && !hasModelSegment ? <>{" "}<span class="bean-chip-menu-caret">{open === "agent" ? "▴" : "▾"}</span></> : null}
         </button>
         {agentMode ? (
           <>
@@ -169,12 +174,14 @@ export function AgentPill({
               disabled={disabled}
               aria-haspopup="menu"
               aria-expanded={open === "model"}
-              aria-label={`Model: ${modelLabel ?? "default"}${effort ? `, effort ${effortLabel(effort)}` : ""}`}
+              aria-label={agentMode ? `Model: ${modelLabel ?? "default"}${effort ? `, effort ${effortLabel(effort)}` : ""}` : `Effort: ${effort ? effortLabel(effort) : "default"}`}
               title={live ? "End session to change model" : undefined}
               onClick={() => toggle("model")}
             >
               <span class="bean-agent-seg-text">
-                {modelLabel ?? "CLI default"}{effort ? ` · ${effortLabel(effort)}` : ""}
+                {agentMode
+                  ? <>{modelLabel ?? "CLI default"}{effort ? ` · ${effortLabel(effort)}` : ""}</>
+                  : effort ? effortLabel(effort) : "default"}
               </span>{" "}
               <span class="bean-chip-menu-caret">{open ? "▴" : "▾"}</span>
             </button>
@@ -232,7 +239,17 @@ export function AgentPill({
               onPickEffort={(eff) => { if (eff) onPickEffort(eff); }}
               close={close}
             />
-          ) : null}
+          ) : (
+            <ModelEffortMenu
+              models={[]}
+              selectedEffort={effort}
+              allowUnsetEffort
+              fallbackEfforts={beanEfforts}
+              onPickModel={() => {}}
+              onPickEffort={onPickEffort}
+              close={close}
+            />
+          )}
         </div>
       ) : null}
     </div>

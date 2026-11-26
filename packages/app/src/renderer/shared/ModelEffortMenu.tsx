@@ -16,12 +16,13 @@ export function ModelEffortMenu({
   headerHint,
   topOption,
   allowUnsetEffort = false,
-  unsetEffortLabel = "Default",
+  unsetEffortLabel = "default",
   lastUsedModel,
   lastUsedBadge,
   showCliCaptions = false,
   enabledClis,
   supportsEffort,
+  fallbackEfforts,
 }: {
   models: readonly AvailableModel[];
   /** Active CLI when known; used to look up effort options for the selected model. */
@@ -35,7 +36,7 @@ export function ModelEffortMenu({
   headerHint?: string;
   /** Optional "auto" row at the top (e.g. Sprouts' "Bean picks the model"). */
   topOption?: { label: string; selected: boolean };
-  /** Show a "Default" button in the effort bar (lets Sprouts leave effort unpinned). */
+  /** Show a "default" button in the effort bar (lets Sprouts leave effort unpinned). */
   allowUnsetEffort?: boolean;
   unsetEffortLabel?: string;
   lastUsedModel?: string;
@@ -44,11 +45,13 @@ export function ModelEffortMenu({
   enabledClis?: readonly CliName[];
   /** Optional gate restricting which CLIs can apply reasoning effort in this launch context. */
   supportsEffort?: (cli: CliName) => boolean;
+  /** Efforts shown when the selected model declares none (a sprout chat step on Bean's own model). */
+  fallbackEfforts?: readonly string[];
 }) {
   const canEffort = (c: CliName | undefined): boolean => Boolean(c) && (supportsEffort ? supportsEffort(c!) : true);
   const effectiveCli = cli ?? models.find((m) => m.id === selectedModel)?.availableOn[0];
   const effortInfo = canEffort(effectiveCli) && selectedModel ? modelEfforts(models, effectiveCli!, selectedModel) : undefined;
-  const efforts = effortInfo?.efforts ?? [];
+  const efforts = effortInfo?.efforts ?? fallbackEfforts ?? [];
 
   const pickModel = (m: AvailableModel): void => {
     if (disabled) return;
@@ -56,7 +59,7 @@ export function ModelEffortMenu({
     const targetCli = (cli && m.availableOn.includes(cli) ? cli : undefined)
       ?? m.availableOn.find((c) => !enabledClis || enabledClis.includes(c))
       ?? m.availableOn[0];
-    const nextEfforts = canEffort(targetCli) ? m.effortsByCli?.[targetCli!]?.efforts : undefined;
+    const nextEfforts = (canEffort(targetCli) ? m.effortsByCli?.[targetCli!]?.efforts : undefined) ?? fallbackEfforts;
     onPickModel(m.id);
     // Keep the menu open when switching to a model that has effort choices so model + effort
     // can be picked in a single open; close immediately when re-picking or when there are no efforts.
@@ -105,7 +108,7 @@ export function ModelEffortMenu({
       })}
       {efforts.length > 0 ? (
         <>
-          <div class="bean-chip-menu-divider" />
+          {models.length || topOption ? <div class="bean-chip-menu-divider" /> : null}
           <div class="bean-effort-section">
             <div class="bean-chip-menu-hint">Effort</div>
             <div class="bean-effort-seg" role="group" aria-label="Reasoning effort">

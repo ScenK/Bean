@@ -6,7 +6,6 @@ export interface ConfigView {
   editorApp: string;
   delegateCli: string;
   systemControls: boolean;
-  reasoningEffort: string;
   disabledClis: string[];
   webSearch: boolean;
   autoMemory: boolean;
@@ -26,7 +25,6 @@ export interface ConfigFields {
   editorApp: string;
   delegateCli: string;
   systemControls: boolean;
-  reasoningEffort: string;
   disabledClis: string[];
   webSearch: boolean;
   autoMemory: boolean;

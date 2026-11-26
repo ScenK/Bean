@@ -260,7 +260,7 @@ test("chat history: active card keeps its height on hover; a draft survives a sw
     expect((await card.boundingBox())!.height).toBeCloseTo(resting, 1); // layout rounds sub-pixel: 54 vs 54.0000076
 
     const shown = chat.locator(".bean-chat:not([hidden])");
-    await shown.locator(".bean-agent-chip").click();
+    await shown.locator(".bean-agent-seg--agent").click();
     await shown.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
     await shown.locator(".bean-input--composer").fill("half-typed thought");
     await open(b).click();

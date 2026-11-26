@@ -167,10 +167,10 @@ export async function createHost(deps: HostDeps) {
   const cfgPath = configFile(dir);
   // ponytail: first launch has no ~/.bean yet — bootstrap an empty-key config so
   // loadConfig (which throws on missing file) has something to read instead of crashing.
-  if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "" });
+  if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false });
   const cfg = await loadConfig(cfgPath, dir);
   const runtime = createRuntimeConfig(
-    { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory, homeDiscordDm: cfg.homeDiscordDm, homeTeamsDm: cfg.homeTeamsDm, gitName: cfg.gitName, gitEmail: cfg.gitEmail },
+    { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory, homeDiscordDm: cfg.homeDiscordDm, homeTeamsDm: cfg.homeTeamsDm, gitName: cfg.gitName, gitEmail: cfg.gitEmail },
     {
       makeConverse: makeOpenAIConverse,
       makeRankByMeaning: (key) => makeRankByMeaning(db, makeOpenAIEmbed(key)),
@@ -622,7 +622,6 @@ export async function createHost(deps: HostDeps) {
     editorApp: runtime.getEditorApp(),
     delegateCli: runtime.getDelegateCli(),
     systemControls: runtime.getSystemControls(),
-    reasoningEffort: runtime.getReasoningEffort(),
     disabledClis: runtime.getDisabledClis(),
     webSearch: runtime.getWebSearch(),
     autoMemory: runtime.getAutoMemory(),
