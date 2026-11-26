@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { Terminal, type IBufferLine, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import type { Project } from "@bean/core";
 import type { TerminalEvent } from "../../../terminal-tasks.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
@@ -132,6 +133,13 @@ type Tab = {
 };
 type View = { term: Terminal; fit: FitAddon; off: () => void; booted?: Promise<void>; started: boolean };
 
+// shortcut: Chromium 156 rejects a leading space in a canvas `font`, and addon-webgl (0.19, 0.20 beta)
+// sets ` normal 12px …` for upright text — the glyph atlas fell back to 10px sans-serif. Drop once xterm trims it.
+for (const Ctx of [globalThis.CanvasRenderingContext2D, globalThis.OffscreenCanvasRenderingContext2D]) {
+  const font = Ctx && Object.getOwnPropertyDescriptor(Ctx.prototype, "font");
+  if (font?.set) Object.defineProperty(Ctx.prototype, "font", { ...font, set(this: unknown, v: string) { font.set!.call(this, String(v).trim()); } });
+}
+
 const tabTitle = (t: Tab): string => t.command ?? t.shell ?? "shell";
 
 export function TerminalPane({ mountId, open, projectPath, projects, onOpenChange, onShells, shortcutRef }: {
@@ -226,7 +234,15 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
     return v.booted ??= (async () => {
       await document.fonts.ready;
       const host = hosts.get(id);
-      if (host && views.get(id) === v) v.term.open(host);
+      if (!host || views.get(id) !== v) return;
+      v.term.open(host);
+      // WebGL draws block/box/Powerline glyphs itself (customGlyphs) so they join at any line height;
+      // no WebGL2 or a lost context falls back to the DOM renderer.
+      try {
+        const gl = new WebglAddon();
+        gl.onContextLoss(() => gl.dispose());
+        v.term.loadAddon(gl);
+      } catch { /* DOM renderer */ }
     })();
   };
 
@@ -234,7 +250,8 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
     const reduced = reducedMotion();
     const openLink = (e: MouseEvent, uri: string): void => { if (e.metaKey) window.bean.terminalOpenLink(uri, mountId); };
     const term = new Terminal({
-      fontFamily: "ui-monospace, Menlo, monospace",
+      // Not ui-monospace/SF Mono: the WebGL renderer draws through a canvas, which resolves neither to a monospace face.
+      fontFamily: "Menlo, 'Symbols Nerd Font Mono', monospace",
       fontSize: 12,
       lineHeight: 1.2,
       cursorStyle: "bar",

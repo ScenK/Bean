@@ -32,6 +32,13 @@ export async function launchBean(
     cwd: appRoot,
     env: { ...process.env, ...env },
   });
+  // No WebGL2 in later windows: the terminal falls back to xterm's DOM renderer, whose `.xterm-rows` specs read.
+  await app.context().addInitScript(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ...rest: unknown[]) {
+      return type === "webgl2" ? null : (getContext as (...a: unknown[]) => unknown).call(this, type, ...rest);
+    } as typeof getContext;
+  });
   if (reuseUserDataDir === undefined) {
     const originalClose = app.close.bind(app);
     app.close = async () => {
