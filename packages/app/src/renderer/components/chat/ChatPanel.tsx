@@ -586,6 +586,7 @@ export function ChatPanel({
   const beanName = usePersonaName();
   // ↑/↓ history position; null once you type or send.
   const recallRef = useRef<Recall | null>(null);
+  const recalledRef = useRef(false);
   const submit = (): void => {
     const el = inputRef.current;
     // Type-ahead: while Bean answers the draft and images stay put — return before clearing.
@@ -602,7 +603,8 @@ export function ChatPanel({
     // Image-only sends are allowed; converse still needs some text on the turn.
     const text = el.value.trim() || (pendingImages.length > 0 ? "(image)" : pdf && !pdf.sent && !agentMode ? "(PDF)" : "");
     if (!text) return;
-    pushInputHistory(el.value.trim());
+    // Off the record stays off the history too.
+    if (!incognito) pushInputHistory(el.value.trim());
     recallRef.current = null;
     el.value = "";
     resizeInput();
@@ -1171,7 +1173,11 @@ export function ChatPanel({
             onBlur={disarmEsc}
             // The caret can leave the `/word` without an input event: follow it.
             onClick={(e) => onComposerInput(e.currentTarget)}
-            onKeyUp={(e) => { if (/^(Arrow|Home|End|Page)/.test(e.key)) onComposerInput(e.currentTarget); }}
+            onKeyUp={(e) => {
+              // A recalled `/command` is a sent message, not a menu to open.
+              if (recalledRef.current) { recalledRef.current = false; return; }
+              if (/^(Arrow|Home|End|Page)/.test(e.key)) onComposerInput(e.currentTarget);
+            }}
             onKeyDown={(e) => {
               // IME-safe: Enter/arrows while composing belong to the input method.
               if (e.isComposing || e.keyCode === 229) return;
@@ -1190,6 +1196,9 @@ export function ChatPanel({
                 const step = recallStep(el, e.key === "ArrowUp", recallRef.current, readInputHistory());
                 if (step) {
                   e.preventDefault();
+                  if (escArmed) disarmEsc();
+                  if (slashText) setSlashText("");
+                  recalledRef.current = true;
                   recallRef.current = step.state;
                   el.value = step.value;
                   el.selectionStart = el.selectionEnd = step.caret;

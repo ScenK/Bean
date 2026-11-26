@@ -59,3 +59,12 @@ test("arrows off the first/last line, with a selection, or with no history just 
   expect(recallStep(at(""), true, null, [])).toBeUndefined();
   expect(recallStep(at(""), false, null, ["x"])).toBeUndefined(); // already at the draft
 });
+
+test("text changed since the last recall (a drop, a refill) becomes the new draft", () => {
+  const list = ["old", "new"];
+  const r = recallStep(at("draft"), true, null, list)!;
+  const back = recallStep(at("new /tmp/dropped.png", 0), true, r.state, list)!;
+  expect(back.value).toBe("new"); // starts over from the edited text, not from "old"
+  const down = recallStep(at(back.value), false, back.state, list)!;
+  expect(down.value).toBe("new /tmp/dropped.png");
+});

@@ -21,8 +21,8 @@ export function pushInputHistory(text: string): void {
   try { localStorage.setItem(INPUT_HISTORY_KEY, JSON.stringify(next)); } catch { /* not remembered */ }
 }
 
-/** `at` = how many entries back (0 = your unsent draft). */
-export interface Recall { at: number; draft: string }
+/** `at` = how many entries back (0 = your unsent draft); `shown` = what recall last put in the box. */
+export interface Recall { at: number; draft: string; shown: string }
 
 /** One ↑/↓ press: undefined when the key should just move the caret (not on the first/last line,
  * a selection, or nothing further to recall). Up lands the caret at the start so another ↑ keeps
@@ -36,9 +36,10 @@ export function recallStep(
   if (el.selectionStart !== el.selectionEnd) return undefined;
   const onEdge = up ? !el.value.slice(0, el.selectionStart).includes("\n") : !el.value.slice(el.selectionEnd).includes("\n");
   if (!onEdge) return undefined;
-  const cur = state ?? { at: 0, draft: el.value };
+  // Edited since the last recall (typing, a drop, a refill): that text is the new draft.
+  const cur = state && state.shown === el.value ? state : { at: 0, draft: el.value };
   const at = Math.max(0, Math.min(list.length, cur.at + (up ? 1 : -1)));
   if (at === cur.at) return undefined;
   const value = at === 0 ? cur.draft : list[list.length - at] ?? "";
-  return { state: { at, draft: cur.draft }, value, caret: up ? 0 : value.length };
+  return { state: { at, draft: cur.draft, shown: value }, value, caret: up ? 0 : value.length };
 }
