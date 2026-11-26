@@ -22,6 +22,7 @@ import { dividerLabel, timeDividers, TRIM_NOTICE, trimNoticeText } from "./chat-
 import { usePersonaName } from "../../shared/persona-name.js";
 import { SECTION_TITLES, slashInsert, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
+import { pushInputHistory, readInputHistory, recallStep, type Recall } from "./input-history.js";
 import { copyPath, useCapabilities } from "../../shared/capabilities.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { coreOffline, useCoreStatus } from "../../shared/core-status.js";
@@ -583,6 +584,9 @@ export function ChatPanel({
   const offline = coreOffline(core);
   // The main conversation is named after the persona (#1001).
   const beanName = usePersonaName();
+  // ↑/↓ history position; null once you type or send.
+  const recallRef = useRef<Recall | null>(null);
+  const recalledRef = useRef(false);
   const submit = (): void => {
     const el = inputRef.current;
     // Type-ahead: while Bean answers the draft and images stay put — return before clearing.
@@ -599,6 +603,9 @@ export function ChatPanel({
     // Image-only sends are allowed; converse still needs some text on the turn.
     const text = el.value.trim() || (pendingImages.length > 0 ? "(image)" : pdf && !pdf.sent && !agentMode ? "(PDF)" : "");
     if (!text) return;
+    // Off the record stays off the history too.
+    if (!incognito) pushInputHistory(el.value.trim());
+    recallRef.current = null;
     el.value = "";
     resizeInput();
     setSlashText("");
@@ -1159,14 +1166,18 @@ export function ChatPanel({
             placeholder={offline ? `Waiting for ${core.kind === "remote" ? core.host : "the core"}…` : !agentMode ? "Message Bean · type / for skills" : live
               ? `Message ${agentName}…`
               : `Message ${agentName}… (Bean will hand over up to ${Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)} messages)`}
-            onInput={(e) => { resizeInput(); onComposerInput(e.target as HTMLTextAreaElement); }}
+            onInput={(e) => { recallRef.current = null; resizeInput(); onComposerInput(e.target as HTMLTextAreaElement); }}
             onPaste={pasteImages}
             onDragOver={(e) => { if (droppedPath(e)) e.preventDefault(); }}
             onDrop={dropPathIntoComposer}
             onBlur={disarmEsc}
             // The caret can leave the `/word` without an input event: follow it.
             onClick={(e) => onComposerInput(e.currentTarget)}
-            onKeyUp={(e) => { if (/^(Arrow|Home|End|Page)/.test(e.key)) onComposerInput(e.currentTarget); }}
+            onKeyUp={(e) => {
+              // A recalled `/command` is a sent message, not a menu to open.
+              if (recalledRef.current) { recalledRef.current = false; return; }
+              if (/^(Arrow|Home|End|Page)/.test(e.key)) onComposerInput(e.currentTarget);
+            }}
             onKeyDown={(e) => {
               // IME-safe: Enter/arrows while composing belong to the input method.
               if (e.isComposing || e.keyCode === 229) return;
@@ -1180,6 +1191,21 @@ export function ChatPanel({
                 return;
               }
               if (live && pickable.length && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
+              if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !offline) {
+                const el = e.currentTarget;
+                const step = recallStep(el, e.key === "ArrowUp", recallRef.current, readInputHistory());
+                if (step) {
+                  e.preventDefault();
+                  if (escArmed) disarmEsc();
+                  if (slashText) setSlashText("");
+                  recalledRef.current = true;
+                  recallRef.current = step.state;
+                  el.value = step.value;
+                  el.selectionStart = el.selectionEnd = step.caret;
+                  resizeInput();
+                  return;
+                }
+              }
               if (e.key === "Escape" && canStop) {
                 if (e.repeat) return;
                 if (escArmed) { e.preventDefault(); disarmEsc(); onStopTurn(); return; }
