@@ -36,7 +36,7 @@
       {
         "id": "gemini-4-neon",
         "efforts": ["low", "medium", "high", "xhigh"],
-        "defaultEffort": "high",
+        "defaultEffort": "medium",
         "effortIds": {
           "low": "gemini-4-neon-low",
           "medium": "gemini-4-neon-medium",
@@ -47,11 +47,22 @@
       {
         "id": "gemini-4-carbon",
         "efforts": ["low", "medium", "high"],
-        "defaultEffort": "high",
+        "defaultEffort": "medium",
         "effortIds": {
           "low": "gemini-4-carbon-low",
           "medium": "gemini-4-carbon-medium",
           "high": "gemini-4-carbon-high"
+        }
+      },
+      {
+        "id": "gemini-4-hydrogen",
+        "efforts": ["low", "medium", "high", "xhigh"],
+        "defaultEffort": "medium",
+        "effortIds": {
+          "low": "gemini-4-hydrogen-low",
+          "medium": "gemini-4-hydrogen-medium",
+          "high": "gemini-4-hydrogen-high",
+          "xhigh": "gemini-4-hydrogen-xhigh"
         }
       }
     ]
