@@ -64,10 +64,11 @@ export type ChatItem =
   // Same `display`/`text` split as above, in the other direction: an interrupted-run notice
   // needs its full instruction in `text` so a later "retry" has context (it drives history the
   // same as any other reply), but shows a short `display` instead of dumping that wall of text.
-  // A live agent's turn (`agent` + `session`) streams in: `tail` = its tool progress, `streaming`
-  // until the turn's result lands in `text`, then `footer` ("— turn done (12.3s, $0.04)").
+  // A live agent's turn (`agent` + `session`) streams in: `tail` = its latest tool steps (capped),
+  // `stepCount` = total tool steps seen in this bubble, `streaming` until the turn's result lands
+  // in `text`, then `footer` ("— turn done (12.3s, $0.04)").
   | { kind: "reply"; id: string; text: string; display?: string; images?: Array<{ path: string; dataUrl: string }>; agent?: AgentId; at?: string;
-      session?: string; tail?: string[]; footer?: string; streaming?: boolean }
+      session?: string; tail?: string[]; stepCount?: number; footer?: string; streaming?: boolean }
   | { kind: "working"; id: string; text: string; agent?: AgentId }
   | { kind: "proposal"; id: string; run: ProposedRun; state: "pending" | "confirmed" | "cancelled" | "expired" }
   | { kind: "delegate"; id: string; proposal: ProposedDelegate;

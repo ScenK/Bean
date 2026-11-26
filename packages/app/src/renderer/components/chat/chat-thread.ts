@@ -42,7 +42,7 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
       };
     }
     case "reply": {
-      const { images, session: _s, tail: _t, streaming, at, ...rest } = it;
+      const { images, session: _s, tail: _t, stepCount: _sc, streaming, at, ...rest } = it;
       return {
         ...rest, ...validAt(at),
         text: cap(withPlaceholder(it.text, !!images?.length)),
