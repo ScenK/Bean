@@ -4,5 +4,11 @@
     "file": "home-arrival.e2e.ts",
     "issue": 1021,
     "since": "2026-11-21"
+  },
+  {
+    "title": "Bring Bean Back reloads a crashed avatar with its running job's bubble, without stopping the job",
+    "file": "avatar-visibility.e2e.ts",
+    "issue": 1121,
+    "since": "2026-11-26"
   }
 ]
