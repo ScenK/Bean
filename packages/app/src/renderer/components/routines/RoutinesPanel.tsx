@@ -138,18 +138,19 @@ function nextRunView(cron: string): { ok: boolean; text: string } {
 // see whether it's healthy, and the Dashboard is where the whole kept history lives.
 const HISTORY_SHOWN = 3;
 
-type DotKind = "running" | "failed" | "enabled" | "off" | "review";
+type DotKind = "running" | "failed" | "enabled" | "demand" | "off" | "review";
 
-// Enabled = green, running = glowing green, failed/missed = red, disabled = grey — the pill's
-// on/off state always wins over run history so a paused routine never reads as healthy.
+// Enabled = green, running = glowing green, failed/missed = red, paused = grey — a paused watch
+// never reads as healthy. An on-demand sprout (schedule, auto off) is in use, not off: it shows its
+// run health like any other, and a hollow ring instead of green when idle (green = runs by itself).
 function dotKind(r: Routine, state: RoutineStateView | undefined): DotKind {
   if (needsReview(r, state)) return "review";
-  if (!r.enabled) return "off";
+  if (!r.enabled && (r.watch || state?.ended)) return "off";
   if (r.watch && failureCount(state) > 0) return "failed"; // matches the row's "check failing"
   if (state?.running) return "running";
   const last = state?.history[0]?.status;
   if (state?.missed || (last && last !== "ok")) return "failed"; // needs-attention reds too
-  return "enabled";
+  return r.enabled ? "enabled" : "demand";
 }
 
 function statusText(state: RoutineStateView | undefined): string {
@@ -659,7 +660,7 @@ export function RoutinesPanel() {
   ) : (
     <div
       key={`${sectionKey}:${r.name}`}
-      class={`bean-skills-row bean-routines-row${r.enabled ? "" : " bean-routines-row--off"}${needsReview(r, states[r.name]) ? " bean-routines-row--review" : ""}${selected === r.name ? " bean-skills-row--selected" : ""}`}
+      class={`bean-skills-row bean-routines-row${r.enabled || !(r.watch || states[r.name]?.ended) ? "" : " bean-routines-row--off"}${needsReview(r, states[r.name]) ? " bean-routines-row--review" : ""}${selected === r.name ? " bean-skills-row--selected" : ""}`}
       onClick={() => select(r.name)}
     >
       <button
