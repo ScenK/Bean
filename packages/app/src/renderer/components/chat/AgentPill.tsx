@@ -143,7 +143,7 @@ export function AgentPill({
         >
           <AgentAvatar agent={mode} size={16} />
           <span class="bean-agent-seg-text">{AGENT_NAMES[mode]}</span>
-          {!hasModelSegment ? <>{" "}<span class="bean-chip-menu-caret">{open === "agent" ? "▴" : "▾"}</span></> : null}
+          {!agentMode && !hasModelSegment ? <>{" "}<span class="bean-chip-menu-caret">{open === "agent" ? "▴" : "▾"}</span></> : null}
         </button>
         {agentMode ? (
           <>

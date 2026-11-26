@@ -446,7 +446,7 @@ export function ChatSession({
         void window.bean.getModelMemory(`effort:${k.name}`).then((e) => { if (e) setLastUsedEfforts((prev) => ({ ...prev, [k.name]: e })); }, () => {});
       }
     }, () => {});
-    window.bean.getConfig().then((c) => { setDelegateCli(c?.delegateCli ?? ""); setBrainModel(c?.model || undefined); }, () => {});
+    window.bean.getConfig().then((c) => setDelegateCli(c?.delegateCli ?? ""), () => {});
   };
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
@@ -482,7 +482,6 @@ export function ChatSession({
   const [beanEffort, setBeanEffortState] = useState<string | undefined>(undefined);
   const beanEffortRef = useRef<string | undefined>(undefined);
   const setBeanEffort = (e: string | undefined): void => { beanEffortRef.current = e; setBeanEffortState(e); };
-  const [brainModel, setBrainModel] = useState<string | undefined>(undefined);
   // Each agent's last project + model + per-model effort (#612): seeded at mount from model memory,
   // updated by chip picks, restored on a switch to that agent. Read synchronously — `/claude <ask>`
   // restores and starts in one tick.
@@ -2081,7 +2080,7 @@ export function ChatSession({
         agentProject={agentProject}
         agentModel={isLiveAgent(mode) ? resolveAgentSelection(runModels, mode, agentModel, agentEffort, picks[mode]?.efforts).model ?? "" : ""}
         agentEffort={isLiveAgent(mode) ? resolveAgentSelection(runModels, mode, agentModel, agentEffort, picks[mode]?.efforts).effort : beanEffort}
-        beanEfforts={beanEfforts(runModels, brainModel)}
+        beanEfforts={beanEfforts(runModels, model)}
         live={live ? { agent: live.agent, projectPath: live.projectPath, model: live.model, effort: live.effort, busy: live.busy, continuing: live.continuing, stopping: live.stopping } : undefined}
         offerLaunch={(offerPath) => {
           const agent = offerAgent(clis);
