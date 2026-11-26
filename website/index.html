@@ -216,7 +216,7 @@
   }
   .composer-label { display: flex; justify-content: space-between; align-items: center; font-size: 11.5px; color: var(--dim); }
   .composer-label code { font-size: 11.5px; color: var(--amber-ink); }
-  .switcher-row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+  .switcher-row { display: flex; gap: 5px; flex-wrap: nowrap; align-items: center; overflow-x: auto; }
   .sw-chip {
     display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px 4px 6px;
     border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
@@ -228,7 +228,6 @@
   }
   .sw-chip .cli-svg { width: 13px; height: 13px; }
   .sw-chip:not(.on) { padding: 5px; }
-  .switcher-row { flex-wrap: nowrap; }
 
 
   /* memory mock */
@@ -373,6 +372,9 @@
   }
   @media (max-width: 620px) {
     .cli-grid, .suite-callout, .grid3, .trust-grid, .ledger { grid-template-columns: 1fr; }
+    .crew-bar { padding: 16px; }
+    .crew-pill { padding: 7px 10px 7px 7px; gap: 8px; font-size: 13.5px; }
+    .crew-label > span { margin-left: 0; }
   }
 </style>
 </head>

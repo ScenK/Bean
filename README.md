@@ -8,7 +8,7 @@
 
 **Bean is a complete personal agent suite that lives on your desktop as a tiny pet — smaller than any IDE or ADE, without even a Dock icon.**
 
-Beside Bean's own Brain (for memory, chat, and routing), **four official coding CLIs** are first-class citizens doing the heavy lifting natively:
+Beside Bean's own optional Brain (powering **Home**, memory, chat, and routing), **four official coding CLIs** are first-class citizens doing the heavy lifting natively:
 
 | Native CLI | Command | What it brings |
 | :--- | :--- | :--- |
@@ -100,12 +100,12 @@ Bean is two halves: the **core** (the Brain, your `~/.bean` data, sprouts, chat 
 ## Requirements
 
 - macOS for the full app; Windows for the remote-only shell
-- Your own OpenAI API key for Bean's lightweight Brain (set it in Settings)
 - One or more official coding CLIs on your `PATH` — signed in directly with your existing accounts (no OAuth proxies or harness API billing):
   - <img src="docs/icons/antigravity.svg" width="16" height="16" align="absmiddle" alt="" /> **Antigravity** (`agy`)
   - <img src="docs/icons/claude-code.svg" width="16" height="16" align="absmiddle" alt="" /> **Claude Code** (`claude`)
   - <img src="docs/icons/codex.svg" width="16" height="16" align="absmiddle" alt="" /> **Codex** (`codex`)
   - <img src="docs/icons/opencode.svg" width="16" height="16" align="absmiddle" alt="" /> **[OpenCode](https://opencode.ai)** (`opencode`)
+- *(Optional)* Your own OpenAI API key for Bean's Brain (set it in Settings) — powers **Home**, the always-on superagent thread; without it the CLIs still work, and Home is just less capable
 
 ---
 
