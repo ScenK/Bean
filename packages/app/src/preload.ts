@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("bean", {
   launch: (req: LaunchRequest): void => ipcRenderer.send(IPC.launch, req),
   delegateStart: (req: DelegateStartRequest, mountId: string): Promise<string> => ipcRenderer.invoke(IPC.delegateStart, req, mountId),
   delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),
+  delegateRevoke: (mountId: string): void => ipcRenderer.send(IPC.delegateRevoke, mountId),
   onDelegateEvent: (cb: (e: DelegateEvent) => void) =>
     ipcRenderer.on(IPC.delegateEvent, (_e, ev: DelegateEvent) => cb(ev)),
   chatSproutRun: (name: string, thread: string, mountId: string): Promise<{ jobId?: string; reason?: string }> =>

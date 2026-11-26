@@ -1,9 +1,12 @@
-import { dispatchContext, stageImages, type ChatRequest, type ConverseResult, type Dispatch, type SproutOrigin, type TriggerResult } from "@bean/core";
+import {
+  createGrant, dispatchContext, GRANT_MISMATCH_TEXT, matchGrant, refreshGrant, revokeGrant, stageImages,
+  type ChatRequest, type ConverseResult, type DelegateGrant, type Dispatch, type SproutOrigin, type TriggerResult,
+} from "@bean/core";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildChatMounts, THREAD_ID, type buildChatHandler, type buildChatThreadHandlers, type SproutEvent, type SproutOutcome, type SproutStarted } from "./chat.js";
-import type { DelegateStartRequest } from "./delegate-tasks.js";
+import type { DelegateStartOpts, DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks, LiveOwner } from "./live-tasks.js";
 import { EPISODE_IDLE_MS, toTranscript, type buildMemoryHandlers, type CloseTurn } from "./memory.js";
 import type { ClientId, HostPush } from "./shell-ops.js";
@@ -14,8 +17,12 @@ export interface ChatSessionsDeps {
   chat: ReturnType<typeof buildChatHandler>;
   memory: ReturnType<typeof buildMemoryHandlers>;
   threads: ReturnType<typeof buildChatThreadHandlers>;
-  delegateTasks: { start: (req: DelegateStartRequest) => Promise<string>; cancelMount: (mountId: string) => void };
-  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "interrupt" | "resume" | "stopMount">;
+  delegateTasks: {
+    start: (req: DelegateStartRequest, opts?: DelegateStartOpts) => Promise<string>;
+    cancelMount: (mountId: string) => void;
+    busy: (sessionId: string) => boolean;
+  };
+  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "interrupt" | "resume" | "stopMount" | "holds">;
   push: HostPush;
   /** Called as a chat (mount) turn starts; the returned fn is called when it ends (with the failure, if any). */
   onChatTurn?: (mountId: string) => (error?: string) => void;
@@ -35,6 +42,8 @@ export interface ChatSessionsDeps {
     => Promise<TodoDispatchAnswer>;
   /** A restored thread's sprout dispatches, the closed ones marked delivered (#921). */
   sproutOutcomes?: (thread: string) => SproutOutcome[];
+  /** Epoch ms, for the task grants' idle clock (tests). */
+  now?: () => number;
 }
 
 /** What a todo card's tap did (#923): `jobId` names the dispatch its result comes back under. */
@@ -44,6 +53,11 @@ export interface TodoDispatchAnswer { jobId: string; outcome: "running" | "next"
 export const SPROUT_UNRECORDED = "Started — see the Dashboard for how it went";
 
 const NOT_LIVE = "Agent sessions run from the chat window.";
+const DELEGATE_HOLDS = "A background run is still working in that session — wait for it to finish.";
+/** The desktop is its owner's machine: one actor confirms and continues every chat's tasks. */
+const DESKTOP_ACTOR = "owner";
+/** Turns that may continue a task: what the user typed or ran — never a loopback (epic #1111). */
+const CAN_CONTINUE = new Set(["typed", "skill"]);
 // ponytail: the newest turns kept per chat for a host-run close catch-up; a longer chat's oldest
 // turns are only covered by their per-turn captures.
 const TRANSCRIPT_TURNS = 100;
@@ -78,9 +92,61 @@ export function createChatSessions(deps: ChatSessionsDeps) {
   // Sprout runs started here (#921): their thread → the chat that started it, so its result reaches
   // that chat even when the thread isn't pinned (not saved yet, or off the record). Dropped at release.
   const sproutThreads = new Map<string, string>();
+  // Each chat's task grant (epic #1111, core delegate-grant.ts): a confirmed delegate card that
+  // reported its CLI session lets that chat's follow-ups resume it without a card. Memory only;
+  // dropped with the chat, revoked by its Dismiss/End.
+  const now = deps.now ?? Date.now;
+  const grants = new Map<string, { grant: DelegateGrant; instruction: string }>();
+  // A run on the grant's session settled: its idle clock restarts; a refused resume ends the grant.
+  const touch = (k: string, sessionId: string, e: { type: string; resumeRefused?: true }): boolean => {
+    const g = grants.get(k);
+    if (!g || g.grant.revoked || g.grant.sessionId !== sessionId) return false;
+    if (e.type === "failed" && e.resumeRefused) {
+      grants.set(k, { ...g, grant: revokeGrant(g.grant) });
+      return false;
+    }
+    grants.set(k, { ...g, grant: refreshGrant(g.grant, now()) });
+    return true;
+  };
+  const revoke = (k: string): void => {
+    const g = grants.get(k);
+    if (g) grants.set(k, { ...g, grant: revokeGrant(g.grant) });
+  };
+  /** A `continue` proposal: started at once when it matches the grant offered with the turn (and no
+   * run or live session holds that session), else back to a normal card with the reason. */
+  const continueDelegate = async (k: string, result: ConverseResult, offered: DelegateGrant): Promise<void> => {
+    const { continue: _c, ...plain } = result.proposedDelegate!;
+    const fallback = (why: string): void => { result.proposedDelegate = plain; result.delegateNotice = why; };
+    const m = matchGrant(grants.get(k)?.grant, {
+      surface: "desktop", scopeKey: k, actorId: DESKTOP_ACTOR, projectPath: plain.projectPath,
+      ...(plain.cli ? { cli: plain.cli } : {}), ...(plain.model ? { model: plain.model } : {}),
+      ...(plain.skillName ? { skillName: plain.skillName } : {}), generation: offered.generation,
+    }, now());
+    if (!m.ok) return fallback(GRANT_MISMATCH_TEXT[m.reason]);
+    const g = m.grant;
+    if (deps.delegateTasks.busy(g.sessionId) || deps.liveTasks.holds(g.sessionId)) return fallback(GRANT_MISMATCH_TEXT.busy);
+    const refused = deps.refuseStart?.();
+    if (refused) return fallback(refused);
+    grants.set(k, { grant: refreshGrant(g, now()), instruction: plain.instruction });
+    const proposal = {
+      ...plain, projectPath: g.projectPath, cli: g.cli,
+      ...(g.model ? { model: g.model } : {}), ...(g.skillName ? { skillName: g.skillName } : {}),
+    };
+    const started = deps.delegateTasks.start({
+      projectPath: g.projectPath, prompt: plain.composedPrompt, instruction: plain.instruction, cli: g.cli,
+      ...(g.model ? { model: g.model } : {}), ...(g.skillName ? { skillName: g.skillName } : {}),
+      offRecord: deps.memory.isIncognito(k), mountId: k,
+    }, { resume: g.sessionId, continued: proposal, browserAllowed: g.browser, onEnd: (e) => touch(k, g.sessionId, e) });
+    const taskId = await (deps.track ? deps.track(started) : started);
+    // Released while it started (the release's cancelMount ran before the task existed).
+    if (mounts.holder(k) === undefined) deps.delegateTasks.cancelMount(k);
+    delete result.proposedDelegate;
+    result.continuedDelegate = { taskId, proposal };
+  };
   const release = (client: ClientId, mountId: unknown): void => {
     if (!mounts.release(client, mountId)) return;
     const id = mountId as string;
+    grants.delete(id);
     for (const [thread, k] of sproutThreads) if (k === id) sproutThreads.delete(thread);
     beanTurns.get(id)?.ctl.abort();
     transcripts.delete(id);
@@ -147,8 +213,17 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       const turn = { turnId: req?.turnId, ctl: new AbortController() };
       beanTurns.set(k, turn);
       const end = deps.onChatTurn?.(k);
+      // The chat's live grant, offered to the model as a session it may continue (typed turns only).
+      const g = grants.get(k);
+      const offered = g && CAN_CONTINUE.has(req?.source ?? "typed") && matchGrant(g.grant, { surface: "desktop", scopeKey: k, actorId: DESKTOP_ACTOR }, now()).ok
+        ? g : undefined;
       try {
-        const result = await deps.chat(req, client, k, turn.ctl.signal);
+        const result = await deps.chat(req, client, k, turn.ctl.signal, offered
+          ? { cli: offered.grant.cli, projectPath: offered.grant.projectPath, lastInstruction: offered.instruction } : undefined);
+        if (result.proposedDelegate?.continue) {
+          if (offered && !result.stopped && mounts.holder(k) !== undefined) await continueDelegate(k, result, offered.grant);
+          else { const { continue: _c, ...plain } = result.proposedDelegate; result.proposedDelegate = plain; }
+        }
         end?.(result.error);
         // Stopped by the user: no error bubble, and nothing of this turn is captured as memory.
         if (result.stopped) return result;
@@ -287,8 +362,28 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       const k = key(client, mountId);
       const refused = deps.refuseStart?.();
       if (refused) return Promise.reject(new Error(refused));
-      const started = deps.delegateTasks.start({ ...req, offRecord: deps.memory.isIncognito(k), mountId: k });
+      const instruction = typeof req?.instruction === "string" ? req.instruction : "";
+      // A confirmed card grants its task once the run reports its CLI session (replacing any older grant).
+      let session: string | undefined;
+      const started = deps.delegateTasks.start({ ...req, offRecord: deps.memory.isIncognito(k), mountId: k }, {
+        onSession: (s) => {
+          if (mounts.holder(k) === undefined) return;
+          session = s.sessionId;
+          const grant = createGrant({
+            surface: "desktop", scopeKey: k, actorId: DESKTOP_ACTOR, projectPath: s.projectPath, cli: s.cli,
+            ...(s.model ? { model: s.model } : {}), ...(req.skillName ? { skillName: req.skillName } : {}),
+            browser: s.browser, sessionId: s.sessionId,
+          }, now(), grants.get(k)?.grant);
+          grants.set(k, { grant, instruction });
+        },
+        onEnd: (e) => session !== undefined && touch(k, session, e),
+      });
       return deps.track ? deps.track(started) : started;
+    },
+    /** Dismiss on a delegate card, or End of the chat's agent session: its task grant ends. */
+    revokeGrant: (client: ClientId, mountId: unknown): void => {
+      const k = tryKey(client, mountId);
+      if (k !== undefined) revoke(k);
     },
     // Sessions belong to one chat (client + attached mount); every payload is validated in live-tasks.
     liveStart: (client: ClientId, mountId: unknown, req: unknown) => {
@@ -315,6 +410,8 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       const o = liveOwner(client, mountId);
       const refused = deps.refuseStart?.();
       if (refused) return { error: refused };
+      // Never two writers on one session: a delegate (a continuation, even still starting) holds it.
+      if (typeof sessionId === "string" && deps.delegateTasks.busy(sessionId)) return { error: DELEGATE_HOLDS };
       return o ? deps.liveTasks.resume(o, sessionId) : { error: NOT_LIVE };
     },
   };

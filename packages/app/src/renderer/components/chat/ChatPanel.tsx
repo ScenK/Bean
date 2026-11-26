@@ -139,6 +139,7 @@ export function ChatPanel({
   autoFocusDelegateId,
   onDelegateDismiss,
   onDelegateCancelTask,
+  grantCardId,
   onContinueLive,
   onSaveToNotes,
   onUnlink,
@@ -244,6 +245,8 @@ export function ChatPanel({
   autoFocusDelegateId?: string;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
+  /** The delegate card whose task grant is live: it says follow-ups continue its session. */
+  grantCardId?: string;
   onContinueLive: (id: string) => void;
   onSaveToNotes: () => void;
   onUnlink: () => void;
@@ -774,12 +777,16 @@ export function ChatPanel({
                 {speaker(it)}
                 {it.streaming ? <span class="bean-bubble--working">Working<span class="bean-dots"><span /><span /><span /></span></span> : null}
                 {it.text || it.display ? <Markdown text={it.display ?? it.text} /> : null}
-                {it.tail?.length ? (
-                  <details class="bean-agent-tail">
-                    <summary>{it.tail.length} step{it.tail.length === 1 ? "" : "s"}</summary>
-                    <pre>{it.tail.join("\n")}</pre>
-                  </details>
-                ) : null}
+                {it.tail?.length ? (() => {
+                  const total = it.stepCount ?? it.tail.length;
+                  const earlier = total - it.tail.length;
+                  return (
+                    <details class="bean-agent-tail">
+                      <summary>{total} step{total === 1 ? "" : "s"}</summary>
+                      <pre>{earlier > 0 ? `… ${earlier} earlier step${earlier === 1 ? "" : "s"}\n${it.tail.join("\n")}` : it.tail.join("\n")}</pre>
+                    </details>
+                  );
+                })() : null}
                 {it.footer ? <div class="bean-agent-footer">{it.footer}</div> : null}
                 {it.images?.map((img) => (
                   <button
@@ -1019,6 +1026,7 @@ export function ChatPanel({
                 onConfirm={(edited, choice) => onDelegateConfirm(it.id, edited, choice)}
                 onDismiss={() => onDelegateDismiss(it.id)}
                 onCancelTask={() => onDelegateCancelTask(it.id)}
+                granted={it.id === grantCardId}
                 onContinueLive={!continued && canContinueLive(it, clis, !!live) ? () => onContinueLive(it.id) : undefined}
               />
             );

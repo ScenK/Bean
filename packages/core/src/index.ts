@@ -38,6 +38,7 @@ export * from "./system-control.js";
 export * from "./image-gen.js";
 export * from "./agent-rules.js";
 export * from "./delegate.js";
+export * from "./delegate-grant.js";
 export * from "./delegate-runs.js";
 export * from "./desktop-chats.js";
 export * from "./destinations.js";

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
-import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedLiveSession, type ProposedSend } from "../converse.js";
+import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedDelegate, type ProposedLiveSession, type ProposedSend } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
@@ -33,10 +33,11 @@ import type { RecallScope } from "../memory/store.js";
 import type { CliName } from "../launcher.js";
 import { cliOffersModel, resolveWireModel, type CliModels } from "../cli-models.js";
 import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
+import { createGrant, GRANT_MISMATCH_TEXT, matchGrant, refreshGrant, revokeGrant, type DelegateGrant } from "../delegate-grant.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type DelegateRunRow, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
-import { lastSaidLine, type CardBuilders, type NoContinueReason } from "./cards-api.js";
+import { lastSaidLine, skillBrowserChange, type CardBuilders, type NoContinueReason } from "./cards-api.js";
 import { formatAmbientBlock, formatCarriedBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
@@ -627,6 +628,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // store its session afterwards and resurrect the pre-reset agent.
   const resets = new Map<string, number>();
 
+  // Task grants (epic #1111, delegate-grant.ts): a confirmed delegate card's run lets the person who
+  // confirmed it continue its agent session from this real conversation (never historyId()'s shared
+  // `main`) without a new card. Memory only — a restart drops them (fail closed: cards again); `/new`
+  // revokes. One surface per process, so the grant's surface tag only has to be consistent.
+  const grantSurface = deps.mainLog?.surface ?? "discord";
+  const grants = new Map<string, { grant: DelegateGrant; instruction: string }>();
+
   // The model's record of a confirm card (#941): one code-built assistant line after each card
   // post and at each authorized outcome — kind, state and a catalog name only (card-record.ts).
   // Appended before the card edit is awaited, so a quick follow-up already sees it.
@@ -640,7 +648,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (held?.conversationId === conversationId) recordCard(conversationId, kind, "expired", name);
   };
 
-  async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
+  /** `confirmed`: the tap that confirmed the card — its platform identity (never the display name),
+   * whom a run that reports its session grants cardless follow-ups, and the conversation's `/new`
+   * count when it arrived (a `/new` after it means no grant and no thread pointer). `continued`: a
+   * cardless continuation of that grant — resumes its session strictly and posts the compact card itself. */
+  async function startRun(
+    p: Pick<PendingProposal, "proposal" | "conversationId" | "cardActivityId" | "fresh">, cli: CliName, model: string | undefined,
+    startedBy: string, fx: BotEffects, confirmed?: { actorId: string; resets: number },
+    continued?: { grant: DelegateGrant; recheck: () => string | undefined },
+  ): Promise<void> {
+    // Before any await: a `/new` from here on must not let this run store a session or grant.
+    const resetsAtLaunch = confirmed?.resets ?? resets.get(p.conversationId) ?? 0;
+    const actorId = confirmed?.actorId;
     const projects = await deps.loadProjects();
     // Shared channel: an unregistered project shows its folder name, never the absolute path.
     const projectName = delegateProjectLabel(p.proposal.projectPath, projects);
@@ -665,20 +684,47 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // Thread sessions: continue this thread's earlier agent for the same CLI; another CLI
     // starts fresh, as does a session from another project (RunRegistry.start; see
     // .memory/project-thread-sessions.md).
-    // The main conversation (#998) never resumes implicitly: every owner-DM delegate starts fresh;
-    // its finished card's Continue live (the durable delegate_runs row) is the explicit resume.
+    // The main conversation (#998) never resumes from a card: every owner-DM card starts fresh. Its
+    // resumes are the task grant's cardless continuation (strict: refused, never fresh) and the
+    // finished card's Continue live. A fallback card (a continuation that didn't match) starts fresh.
     const onMain = historyId(p.conversationId) === MAIN_CONVERSATION_ID;
-    const resume = onMain ? undefined : deps.conversations.threadSession(p.conversationId, cli);
-    const resetsAtLaunch = resets.get(p.conversationId) ?? 0;
+    const resume = continued ? continued.grant.sessionId
+      : onMain || p.fresh ? undefined : deps.conversations.threadSession(p.conversationId, cli);
     const wire = resolveWireModel(deps.cliModels, cli, model);
     const req: DelegateRequest = {
       cli,
       projectPath: p.proposal.projectPath,
-      prompt: skill ? composePrompt(skill, p.proposal.instruction) : p.proposal.instruction,
+      // A continuation sends what converse() composed (the skill body only if the model named it
+      // again): the resumed agent already has the task's skill in its context.
+      prompt: continued ? p.proposal.composedPrompt
+        : skill ? composePrompt(skill, p.proposal.instruction) : p.proposal.instruction,
       ...(wire.model !== undefined ? { model: wire.model } : {}),
       ...(wire.effort !== undefined ? { effort: wire.effort } : {}),
       ...(resume ? { resume } : {}),
+      ...(continued ? { strictResume: true } : {}),
       ...(skill?.browser ? { browser: true } : {}),
+    };
+    // Every settle: a confirmed run with a session grants its confirmer the task (replacing an older
+    // grant) unless `/new` ran since launch; a continuation restarts its grant's idle clock, or ends
+    // the grant when it didn't resume that session. A late settle never touches a newer or revoked grant.
+    const settleGrant = (sessionId: string | undefined): void => {
+      const conv = p.conversationId;
+      const held = grants.get(conv);
+      if (continued) {
+        if (!held || held.grant.revoked || held.grant.generation !== continued.grant.generation) return;
+        const grant = sessionId === continued.grant.sessionId ? refreshGrant(held.grant, Date.now()) : revokeGrant(held.grant);
+        grants.set(conv, { ...held, grant });
+        return;
+      }
+      if (!sessionId || actorId === undefined || (resets.get(conv) ?? 0) !== resetsAtLaunch) return;
+      grants.set(conv, {
+        grant: createGrant({
+          surface: grantSurface, scopeKey: conv, actorId, projectPath: p.proposal.projectPath, cli,
+          ...(model !== undefined ? { model } : {}), ...(p.proposal.skillName ? { skillName: p.proposal.skillName } : {}),
+          browser: skill?.browser === true, sessionId,
+        }, Date.now(), held?.grant),
+        instruction: p.proposal.instruction,
+      });
     };
     const receipt = (sessionId: string | undefined, last: string | undefined) => {
       const line = lastSaidLine(last);
@@ -689,18 +735,34 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ...continueLive(cli, sessionId),
       };
     };
-    const cardId = p.cardActivityId;
+    // Read late: a continuation posts its own card just below.
     const updateTo = async (card: object): Promise<void> => {
-      if (cardId !== undefined) await fx.updateCard(cardId, card);
+      if (p.cardActivityId !== undefined) await fx.updateCard(p.cardActivityId, card);
     };
     let runId = "";
+    const running = (tail?: string): object => deps.cards.runningCard({
+      projectName, instruction: p.proposal.instruction, startedBy, runId, ...(tail !== undefined ? { tail } : {}),
+      ...(continued ? { continued: true as const } : {}),
+    });
     let ended = false; // a launch that fails synchronously ends before start() returns
+    if (continued) {
+      // No proposal card to edit: the compact card (no Cancel until the run has an id) is posted first.
+      p.cardActivityId = await fx.postCard(running());
+      // Checked again after the turn's last await, right before dispatch: a `/new`, a role change or a
+      // skill that gained `browser: true` (the request's own `skill`) meanwhile refuses — never runs.
+      const why = continued.recheck() ?? (skill?.browser && !continued.grant.browser ? GRANT_MISMATCH_TEXT.browser : undefined);
+      if (why) {
+        recordCard(p.conversationId, "delegate", "didn't start");
+        await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", agent: cli }));
+        await fx.post(`${why} Nothing ran — ask me again.`);
+        return;
+      }
+    }
     const started = await deps.runs.start(
       req,
       {
         onTail: (line) => {
-          updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, runId }))
-            .catch(logRunEffectError);
+          updateTo(running(line)).catch(logRunEffectError);
         },
         onDone: (result, sessionId) => {
           ended = true;
@@ -708,6 +770,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             if (sessionId && !onMain && (resets.get(p.conversationId) ?? 0) === resetsAtLaunch) {
               deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
             }
+            settleGrant(sessionId);
             appendHistory(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done", ...receipt(sessionId, result) })).catch(logRunEffectError);
             await (fx.postResult ?? fx.post)(result);
@@ -715,6 +778,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         },
         onError: (message, sessionId, last) => {
           ended = true;
+          settleGrant(sessionId);
           void (async () => {
             recordCard(p.conversationId, "delegate", "failed", p.proposal.skillName);
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId, last) })).catch(logRunEffectError);
@@ -723,6 +787,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         },
         onCancelled: (sessionId, last) => {
           ended = true;
+          settleGrant(sessionId);
           void (async () => {
             recordCard(p.conversationId, "delegate", "cancelled", p.proposal.skillName);
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId, last) })).catch(logRunEffectError);
@@ -735,10 +800,48 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     runId = started;
     if (!ended) {
       recordCard(p.conversationId, "delegate", "running", p.proposal.skillName);
-      await updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, runId }));
+      await updateTo(running());
     }
     const memory = await deps.loadModelMemory();
     await deps.saveModelMemory({ ...memory, ...memoryUpdatesFor({ cli, model }) });
+  }
+
+  /** A `continue` proposal from `msg`'s speaker: started on the grant offered with the turn when it
+   * still matches (actor, project, CLI, model, skill, no added browser), the CLI is still here and
+   * nothing holds the session. Resolves undefined once started, else the fallback card's reason. */
+  async function continueTask(
+    msg: IncomingMessage, plain: ProposedDelegate, offered: DelegateGrant, detected: CliName[], skills: Skill[], fx: BotEffects,
+  ): Promise<string | undefined> {
+    const conv = msg.conversationId;
+    const held = grants.get(conv);
+    const skillName = plain.skillName ?? held?.grant.skillName;
+    const browser = skillName !== undefined && skills.find((s) => s.name === skillName)?.browser === true;
+    const m = matchGrant(held?.grant, {
+      surface: grantSurface, scopeKey: conv, actorId: msg.fromId, projectPath: plain.projectPath,
+      ...(plain.cli ? { cli: plain.cli } : {}), ...(plain.model ? { model: plain.model } : {}),
+      ...(plain.skillName ? { skillName: plain.skillName } : {}), ...(browser ? { browser } : {}),
+      generation: offered.generation,
+    }, Date.now());
+    if (!m.ok) return GRANT_MISMATCH_TEXT[m.reason];
+    const g = m.grant;
+    if (!detected.includes(g.cli)) return GRANT_MISMATCH_TEXT.cli;
+    // Two writers never drive one session: a run still on it, or a live session bound here.
+    if (deps.runs.busy(conv, g.cli) || deps.liveSessions.has(conv)) return GRANT_MISMATCH_TEXT.busy;
+    grants.set(conv, { grant: refreshGrant(g, Date.now()), instruction: plain.instruction });
+    const proposal: ProposedDelegate = {
+      ...plain, projectPath: g.projectPath, cli: g.cli,
+      ...(g.model !== undefined ? { model: g.model } : {}), ...(g.skillName !== undefined ? { skillName: g.skillName } : {}),
+    };
+    // The speaker's role and the grant as they are at dispatch, not as the turn found them.
+    const recheck = (): string | undefined => {
+      const { role, scopeId } = speakerRole(msg);
+      if (!can(role, "delegate")) return refusal(needs("delegate"), role, "run tasks", deps.roles, scopeId);
+      if (deps.liveSessions.has(conv)) return GRANT_MISMATCH_TEXT.busy; // bound while the card posted
+      const now = matchGrant(grants.get(conv)?.grant, { surface: grantSurface, scopeKey: conv, actorId: msg.fromId, generation: g.generation }, Date.now());
+      return now.ok ? undefined : GRANT_MISMATCH_TEXT[now.reason];
+    };
+    await startRun({ proposal, conversationId: conv }, g.cli, g.model, msg.fromName, fx, undefined, { grant: g, recheck });
+    return undefined;
   }
 
   // A picked skill must still exist and be enabled (never a silent bare-instruction start), and a
@@ -1822,6 +1925,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (cmd === "new") {
       if (!(await permitted("fresh", "start a fresh conversation"))) return true;
+      // Ends this conversation's task grant even where the history doesn't reset (the owner's DM),
+      // and counts the reset there too, so a run confirmed before it can't grant once it settles.
+      const held = grants.get(conv);
+      if (held) grants.set(conv, { ...held, grant: revokeGrant(held.grant) });
+      resets.set(conv, (resets.get(conv) ?? 0) + 1);
       // The owner's DM is part of the one ongoing conversation (#998): it never resets.
       if (msg.direct && isOwner && deps.mainLog?.cutover()) {
         const { name } = await deps.loadPersona();
@@ -1831,7 +1939,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       const archived = deps.conversations.clear(conv);
       deps.noteProposals.forgetImages(conv);
-      resets.set(conv, (resets.get(conv) ?? 0) + 1);
       // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
       deps.conversations.setAmbientCutoff(conv, Date.now());
       await fx.reply(archived
@@ -2191,6 +2298,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const sprouts = can(role, "runRoutines") ? deps.routines?.sprouts : undefined;
         const sproutRoutines = sprouts && deps.routines ? (await deps.routines.load()).filter((r) => !isArchived(r, new Date())) : [];
         const detected = deps.detectClis();
+        // This conversation's task grant, offered to the model only when the speaker holds it.
+        const heldGrant = canDelegate ? grants.get(msg.conversationId) : undefined;
+        const offered = heldGrant && matchGrant(heldGrant.grant, { surface: grantSurface, scopeKey: msg.conversationId, actorId: msg.fromId }, Date.now()).ok
+          ? heldGrant : undefined;
         let history = hid === MAIN_CONVERSATION_ID
           ? await boundMainLog(deps.conversations, { chat: deps.chat, model: deps.model })
           : deps.conversations.history(hid);
@@ -2311,6 +2422,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           sproutCatalog: sproutRoutines.map((r) => ({ name: r.name, description: r.description, takesTask: r.todoDriven })),
           history: [...history, ...repliedHint], latestUserText: msg.text, latestUserImages: msg.images,
           ...(ownerDm && canMemory ? { memoryCategories: memoryCategories(memories) } : {}),
+          ...(offered ? { activeSession: {
+            cli: offered.grant.cli, projectPath: offered.grant.projectPath, lastInstruction: offered.instruction,
+            projectName: delegateProjectLabel(offered.grant.projectPath, projects),
+          } } : {}),
         });
         turnFailed = result.error !== undefined;
         // History keeps only "[image attached]"; the bytes stay in bounded memory for a
@@ -2448,8 +2563,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           if (!(await permitted("skillWrites", "save skills"))) return;
           const skill = result.proposedSkill;
           const pending = deps.skillProposals.add({ skill, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          // Every skill (built-ins and disabled ones too): a replacement overrides whichever exists.
+          const existing = (await deps.loadSkills()).find((s) => s.name === skill.name);
+          const browser = skillBrowserChange(skill.body, existing?.browser === true);
           const activityId = await fx.postCard(deps.cards.skillProposalCard({
             proposalId: pending.id, name: skill.name, body: skill.body, updating: skill.updating,
+            ...(browser ? { browser } : {}),
           }));
           deps.skillProposals.setCardActivityId(pending.id, activityId);
           recordCard(msg.conversationId, "skill", "pending", skill.name);
@@ -2522,9 +2641,27 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           recordCard(msg.conversationId, "sprout draft", "pending", String(proposal.routine.name));
           return;
         }
-        const proposal = result.proposedDelegate;
+        let proposal = result.proposedDelegate;
         if (!proposal) return;
         if (!(await permitted("delegate", "run tasks"))) return;
+        // A follow-up to the granted task: continued at once, or the normal card with the reason —
+        // and that card starts fresh, never silently on the earlier session.
+        let fresh = false;
+        if (proposal.continue) {
+          const { continue: _c, ...plain } = proposal;
+          const why = offered ? await continueTask(msg, plain, offered.grant, detected, skills, fx) : GRANT_MISMATCH_TEXT.none;
+          if (why === undefined) return;
+          await fx.post(why);
+          proposal = plain;
+          fresh = true;
+        } else if (heldGrant && !offered && heldGrant.grant.actorId === msg.fromId) {
+          // The speaker's own grant lapsed (30 idle minutes, /new): say why this one needs a card.
+          const lapsed = matchGrant(heldGrant.grant, { surface: grantSurface, scopeKey: msg.conversationId, actorId: msg.fromId }, Date.now());
+          if (!lapsed.ok) {
+            await fx.post(GRANT_MISMATCH_TEXT[lapsed.reason]);
+            fresh = true; // like any fallback card: never onto the lapsed session's thread pointer
+          }
+        }
         const choice = resolveCliModel(detected, { cli: proposal.cli, model: proposal.model }, modelMemory, deps.cliModels);
         if (!choice) {
           await fx.post(NO_CLI);
@@ -2532,7 +2669,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         const pending = deps.proposals.add({
           proposal, conversationId: msg.conversationId, proposedBy: msg.fromName,
-          defaultCli: choice.cli, defaultModel: choice.model,
+          defaultCli: choice.cli, defaultModel: choice.model, ...(fresh ? { fresh: true as const } : {}),
         });
         const activityId = await fx.postCard(deps.cards.proposalCard({
           proposalId: pending.id, skillName: proposal.skillName,
@@ -2555,6 +2692,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
     async onCardAction(action: CardAction, fx: BotEffects): Promise<void> {
       const { beanAction, proposalId, projectPath, runId } = action.value;
+      // When the tap arrived: a `/new` during the awaits before a confirmed run launches still counts.
+      const resetsAtTap = resets.get(action.conversationId) ?? 0;
       // Checked before any claim(), so a refused tap leaves the card usable for someone who may.
       const role = deps.roles.roleOf({ fromId: action.fromId, fromAltId: action.fromAltId, scopeId: action.scopeId });
       const need = cardActionNeeds(beanAction);
@@ -2762,7 +2901,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await fx.post(NO_CLI);
         return;
       }
-      await startRun(p, choice.cli, choice.model, action.fromName, fx);
+      await startRun(p, choice.cli, choice.model, action.fromName, fx, { actorId: action.fromId, resets: resetsAtTap });
     },
   };
   return bot;

@@ -4,6 +4,7 @@ import {
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard, sendCard,
 } from "../src/cards.js";
+import { DELEGATE_GRANT_LINE } from "@bean/core";
 
 const models = [
   { id: "sonnet", label: "Sonnet", aliases: { claude: "sonnet" }, availableOn: ["claude" as const] },
@@ -160,6 +161,14 @@ test("skill proposal card badges an update to an existing skill", () => {
   expect(s).toContain("replaces existing");
 });
 
+test("skill proposal card shows the browser line for on and off, and none otherwise", () => {
+  const card = (browser?: "on" | "off") =>
+    flatten(skillProposalCard({ proposalId: "s", name: "web", body: "# W", updating: true, ...(browser ? { browser } : {}) }));
+  expect(card("on")).toContain("🌐 uses your browser (and computer on codex)");
+  expect(card("off")).toContain("🌐 no longer uses your browser");
+  expect(card()).not.toContain("🌐");
+});
+
 test("skill result card reports outcome and actor", () => {
   const s = flatten(skillResultCard({ name: "changelog", savedBy: "alice", outcome: "saved" }));
   expect(s).toContain("Skill saved");
@@ -292,4 +301,17 @@ test("finished/ended cards say what Continue live resumes, or why it's missing (
   // Instruction/prompt are clamped for display.
   expect(JSON.stringify(finishedCard({ projectName: "bean", instruction: "i".repeat(3000), startedBy: "bob", outcome: "done" }))).not.toContain("i".repeat(1000));
   expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "ended", prompt: "p".repeat(3000) }))).not.toContain("p".repeat(1000));
+});
+
+test("delegate proposal states its task grant; a continuation's compact card has Cancel only once it has a run id", () => {
+  const proposal = proposalCard({
+    proposalId: "prop-1", projectPath: "/p/bean", projects: [{ name: "bean", path: "/p/bean" }], scratch: true,
+    instruction: "x", clis: ["claude"], skills: [], models, defaultCli: "claude",
+  });
+  expect(flatten(proposal)).toContain(DELEGATE_GRANT_LINE);
+  const base = { projectName: "bean", instruction: "and the tests too", startedBy: "bob", continued: true as const };
+  const posted = runningCard({ ...base, runId: "" }) as { body: { text?: string }[]; actions: unknown[] };
+  expect(posted.body[0]!.text).toBe("↻ Continuing in bean… (asked by bob)");
+  expect(posted.actions).toEqual([]);
+  expect(flatten(runningCard({ ...base, runId: "run-2" }))).toContain('"runId":"run-2"');
 });

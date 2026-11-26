@@ -12,7 +12,7 @@ const transcript: ChatItem[] = [
   { kind: "user", id: "old-1", text: "look", images: ["data:image/png;base64,AAAA"], source: "typed" },
   { kind: "working", id: "old-2", text: "Spinning up" },
   { kind: "reply", id: "old-3", text: "here", images: [{ path: "/tmp/a.png", dataUrl: "data:image/png;base64,BBBB" }] },
-  { kind: "reply", id: "old-4", text: "half", agent: "claude", session: "s1", tail: ["Read x"], streaming: true },
+  { kind: "reply", id: "old-4", text: "half", agent: "claude", session: "s1", tail: ["Read x"], stepCount: 42, streaming: true },
   { kind: "proposal", id: "old-5", run, state: "pending" },
   { kind: "delegate", id: "old-6", proposal, state: "pending", tail: [] },
   { kind: "delegate", id: "old-7", proposal, state: "running", taskId: "t7", tail: ["…"] },
@@ -47,6 +47,7 @@ describe("normalizeForSave", () => {
     expect(reply.streaming).toBeUndefined();
     expect(reply.session).toBeUndefined();
     expect(reply.tail).toBeUndefined();
+    expect(reply.stepCount).toBeUndefined();
     expect(reply.footer).toBe("— turn interrupted");
     expect(find<"status">("old-14").exiting).toBeUndefined();
   });

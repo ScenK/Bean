@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -52,18 +52,19 @@ function proposalCard(input: ProposalCardInput): object {
     placeholder: "CLI",
     options: input.clis.map((c) => ({ label: c, value: c, default: c === input.defaultCli })),
   };
-  const modelSelect = {
-    type: STRING_SELECT,
-    custom_id: `bean:model:${input.proposalId}`,
-    placeholder: "Model",
-    options: input.models
-      .filter((m) => m.availableOn.length > 0)
-      .map((m) => ({
-        label: `${m.label} (${m.availableOn.join("/")})`,
-        value: m.id,
-        default: m.id === input.defaultModel,
-      })),
-  };
+  // Discord: 1–25 options, label ≤ 100 chars. The default is hoisted so the cap can't drop it.
+  const usable = input.models.filter((m) => m.availableOn.length > 0);
+  const modelOptions = [
+    ...usable.filter((m) => m.id === input.defaultModel),
+    ...usable.filter((m) => m.id !== input.defaultModel),
+  ].slice(0, 25).map((m) => ({
+    label: `${m.label} (${m.availableOn.join("/")})`.slice(0, 100),
+    value: m.id,
+    default: m.id === input.defaultModel,
+  }));
+  const modelRows = modelOptions.length > 0
+    ? [row([{ type: STRING_SELECT, custom_id: `bean:model:${input.proposalId}`, placeholder: "Model", options: modelOptions }])]
+    : [];
   const skillRows = skillSelectRows(`bean:skill:${input.proposalId}`, input.skills, input.skillName);
   // Same caps as skillSelectRows: values ≤ 100 chars (a longer path gets no option), ≤ 25
   // options, the picked project hoisted so truncation can't drop the default.
@@ -87,9 +88,10 @@ function proposalCard(input: ProposalCardInput): object {
     embeds: [{
       title: "Bean proposes a delegate run",
       description: clampInstruction(input.instruction),
+      footer: { text: DELEGATE_GRANT_LINE },
     }],
     // Discord caps a message at 5 action rows: project, skill, cli, model, buttons (the live card's order).
-    components: [...projectRows, ...skillRows, row([cliSelect]), row([modelSelect]), row(buttons)],
+    components: [...projectRows, ...skillRows, row([cliSelect]), ...modelRows, row(buttons)],
   };
 }
 
@@ -107,12 +109,17 @@ function clampTail(tail: string): string {
 function runningCard(input: RunningCardInput): object {
   return {
     embeds: [{
-      title: `Running in ${input.projectName}… (started by ${input.startedBy})`,
+      title: input.continued
+        ? `↻ Continuing in ${input.projectName}… (asked by ${input.startedBy})`
+        : `Running in ${input.projectName}… (started by ${input.startedBy})`,
       description: clampInstruction(input.instruction),
       ...(input.tail ? { fields: [{ name: "Progress", value: clampTail(input.tail) }] } : {}),
     }],
-    // cancel-run carries the run id in the customId's id slot (self-contained, no adapter state).
-    components: [row([{ type: BUTTON, style: 4, label: "Cancel run", custom_id: `bean:cancel-run:${input.runId}` }])],
+    // cancel-run carries the run id in the customId's id slot (self-contained, no adapter state);
+    // none until the run has one (a continuation's card is posted just before it starts).
+    components: input.runId
+      ? [row([{ type: BUTTON, style: 4, label: "Cancel run", custom_id: `bean:cancel-run:${input.runId}` }])]
+      : [],
   };
 }
 
@@ -260,7 +267,10 @@ function skillProposalCard(input: SkillProposalCardInput): object {
     embeds: [{
       title: input.updating ? "Bean proposes a skill update" : "Bean proposes a new skill",
       description: noteDescription(input.name, `\`\`\`markdown\n${input.body}\n\`\`\``),
-      fields: [{ name: "Skill", value: input.updating ? `${input.name} (replaces existing)` : input.name, inline: true }],
+      fields: [
+        { name: "Skill", value: input.updating ? `${input.name} (replaces existing)` : input.name, inline: true },
+        ...(input.browser ? [{ name: "Browser", value: SKILL_BROWSER_NOTES[input.browser], inline: true }] : []),
+      ],
     }],
     components: [row([
       { type: BUTTON, style: 3, label: input.updating ? "Update skill" : "Save skill", custom_id: `bean:save-skill:${input.proposalId}` },

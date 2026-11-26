@@ -23,7 +23,7 @@ export const CARRY_ITEMS = 60;
 export const AGENT_FINAL_CHARS = 4000;
 /** An agent's final as memory extraction's (non-citable) context. */
 const MEMORY_FINAL_CHARS = 1000;
-const TAIL_LINES = 30;
+export const TAIL_LINES = 30;
 
 type ChatStatus = "idle" | "working" | "done" | "error";
 /** Who the chat header shows (#794): Bean while Bean's own turn runs, else the open live session's
@@ -363,16 +363,25 @@ export function applyLiveEvent(items: ChatItem[], e: LiveEvent, newId: () => str
     // Prose arrives as `text` events; the collapsed steps keep only the `▸ tool` parts.
     const tools = e.line.split(" · ").filter((part) => part.startsWith("▸ "));
     if (!tools.length) return items;
-    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: tools, streaming: true, at: new Date().toISOString() }];
-    return patch((it) => ({ ...it, tail: [...(it.tail ?? []), ...tools].slice(-TAIL_LINES) }));
+    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: tools.slice(-TAIL_LINES), stepCount: tools.length, streaming: true, at: new Date().toISOString() }];
+    return patch((it) => ({
+      ...it,
+      tail: [...(it.tail ?? []), ...tools].slice(-TAIL_LINES),
+      stepCount: (it.stepCount ?? it.tail?.length ?? 0) + tools.length,
+    }));
   }
   if (e.type === "turn") {
     const done = { text: e.result, footer: turnFooter(e), streaming: false };
     if (open < 0) return [...items, { kind: "reply", id: newId(), agent: e.agent, session: e.sessionId, tail: [], ...done, at: new Date().toISOString() }];
     // The final answer is usually the last streamed message already — don't show it twice.
+    // agy's `result.response` joins every agent_response step with `\n` while `display` joined
+    // them with `\n\n`, so compare normalized lines as well as the raw suffix.
     return patch((it) => {
       if (!it.display) return { ...it, ...done };
-      return { ...it, ...done, display: it.display.endsWith(e.result.trim()) ? it.display : `${it.display}\n\n${e.result}` };
+      const trimmed = e.result.trim();
+      const norm = (s: string): string => s.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean).join("\n");
+      const alreadyShown = it.display.endsWith(trimmed) || (trimmed !== "" && norm(it.display).endsWith(norm(trimmed)));
+      return { ...it, ...done, display: alreadyShown ? it.display : `${it.display}\n\n${e.result}` };
     });
   }
   // ended: no turn is coming for an open bubble, and the child is gone — Continue live may run.

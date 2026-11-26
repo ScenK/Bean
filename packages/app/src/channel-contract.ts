@@ -81,6 +81,7 @@ export const CHANNEL_CONTRACT = {
   launch: bound("terminalHandoff", launch),
   delegateStart: core(delegateStart, str),
   delegateCancel: core(str),
+  delegateRevoke: core(str),
   delegateEvent: core(delegateEvent),
   chatSproutRun: core(str, str, str),
   chatTodoDispatch: core(str, str, oneOf("run", "queue"), str, str),

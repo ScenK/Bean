@@ -22,6 +22,8 @@ declare global {
       launch(req: LaunchRequest): void;
       delegateStart(req: DelegateStartRequest, mountId: string): Promise<string>;
       delegateCancel(taskId: string): void;
+      /** Dismiss / End: this chat's task grant ends (follow-ups get a card again). */
+      delegateRevoke(mountId: string): void;
       onDelegateEvent(cb: (e: DelegateEvent) => void): void;
       /** A sprout card's Run (#921): resolves at admission — `jobId`, or `reason` it didn't start. */
       chatSproutRun(name: string, thread: string, mountId: string): Promise<{ jobId?: string; reason?: string }>;

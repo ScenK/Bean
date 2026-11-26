@@ -163,6 +163,8 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
   chatSproutRun: op((h, c, name, thread, mountId) => h.chat.sproutRun(c, mountId, name, thread), str, str, str),
   chatTodoDispatch: op((h, c, routine, text, mode, thread, mountId) => h.chat.todoDispatch(c, mountId, routine, text, mode, thread), str, str, oneOf("run", "queue"), str, str),
   delegateCancel: op((h, _c, taskId) => h.cancelDelegate(taskId), str),
+  // A delegate card's Dismiss / the agent session's End (epic #1111): the chat's task grant ends.
+  delegateRevoke: op((h, c, mountId) => h.chat.revokeGrant(c, mountId), str),
   liveStart: op((h, c, req, mountId) => h.chat.liveStart(c, mountId, req), liveStart, str),
   liveSend: op((h, c, sessionId, text, mountId) => h.chat.liveSend(c, mountId, sessionId, text), str, str, str),
   liveStop: op((h, c, sessionId, mountId) => h.chat.liveStop(c, mountId, sessionId), str, str),

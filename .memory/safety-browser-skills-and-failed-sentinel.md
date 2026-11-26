@@ -12,9 +12,17 @@ hands an unattended agent the user's logged-in sessions, so:
   step's `Skill`, chatops `startRun` from its re-loaded skill, desktop via
   `DelegateStartRequest.skillName` → the host's `skillBrowser()` (`host.ts`). Never infer it from instruction
   text and never accept a renderer-, card-, or model-supplied boolean.
+- The built-in `browser-read` skill (`.bean/skills/`, `quick-launch: false`) is the ready-made
+  one: the sprout drafter (`propose_routine`) points pages that block bots or need JavaScript at
+  a delegate step using it (#1107). Chat steps never get a browser — Bean's own model stays an
+  API call; don't add a chat-step browser flag.
 - Terminal launches and the routine builder deliberately don't get `--chrome`. Claude **live
   sessions always do** (#597, every surface) — they're steered turn by turn, so a `browser: true`
   skill sent into one must find the browser; see project-live-sessions for the war-room exposure.
+- Skill proposal cards (desktop `SkillCard`, Discord/Teams `skillProposalCard`) disclose the
+  change before Save via `skillBrowserChange(body, existing.browser)` in `frontmatter.ts`: "on"
+  while the parsed body has `browser: true`, "off" when it drops it from an existing (incl.
+  built-in/disabled) browser skill (#1108). Same frontmatter rule, never model prose.
 
 **FAILED: sentinel.** A headless run that couldn't do its job still exits 0. Every delegate
 prompt ends with `FAILED_SENTINEL_INSTRUCTION`; on exit 0, a final result whose first line
@@ -22,3 +30,10 @@ prompt ends with `FAILED_SENTINEL_INSTRUCTION`; on exit 0, a final result whose 
 before the resume notice is prepended and never retried (a post may already have gone out).
 `FAILED:` anywhere else is ordinary text; no sentinel = success. Callers need no change — a
 rejected delegate is already a failed routine step / todo / chat card.
+
+Sprout **chat steps** share the contract (#1107): `runChatStep`'s system prompt carries the
+sentinel and the runner checks `failedReason()` (`agent-rules.ts`) on the final answer before
+`session.finish()` and route/verdict parsing, so a blocked source fails the run (delivered even
+with "only on problems") instead of taking the quiet route. A chat step that runs out of tool
+rounds fails too — its intermediate text is never passed off as a report. Live sessions stay
+without the sentinel.

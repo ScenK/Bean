@@ -1,6 +1,7 @@
 import type { CliName } from "../launcher.js";
 import type { AvailableModel } from "../models.js";
 import type { SproutRunPlan } from "../sprout-trigger.js";
+import type { SkillBrowserChange } from "../frontmatter.js";
 
 export interface ProposalCardInput {
   proposalId: string;
@@ -23,8 +24,9 @@ export interface ProposalCardInput {
   defaultModel?: string;
 }
 
-/** Picker disclosure for a `browser: true` skill; codex's browser tools also control the computer. */
-export const BROWSER_SKILL_NOTE = "🌐 uses your browser (and computer on codex)";
+// Defined in the node-free frontmatter module so the desktop renderer can share them.
+export { BROWSER_SKILL_NOTE, SKILL_BROWSER_NOTES, skillBrowserChange } from "../frontmatter.js";
+export type { SkillBrowserChange } from "../frontmatter.js";
 
 export interface RunningCardInput {
   projectName: string;
@@ -33,7 +35,14 @@ export interface RunningCardInput {
   tail?: string;
   /** RunRegistry id the Cancel button carries. */
   runId: string;
+  /** A follow-up continuing the confirmed task's agent session with no card (epic #1111): the
+   * compact card. */
+  continued?: true;
 }
+
+/** The delegate proposal card's grant line (epic #1111): what confirming it allows. */
+export const DELEGATE_GRANT_LINE =
+  "Run it and your follow-ups here continue this agent session without a new card — until /new or 30 idle minutes.";
 
 export interface FinishedCardInput {
   projectName: string;
@@ -187,6 +196,8 @@ export interface SkillProposalCardInput {
   body: string;
   /** True when a skill with this name already exists (save replaces/overrides it). */
   updating: boolean;
+  /** `skillBrowserChange()` of the body against the existing skill; absent = no browser line. */
+  browser?: SkillBrowserChange;
 }
 
 export interface SkillResultCardInput {

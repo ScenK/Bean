@@ -116,3 +116,37 @@ test("model with efforts sends its default, remembered, or explicitly picked eff
   hookState.effort = "max";
   expect(confirmed({ models, clis: ["claude"], lastUsedEffort: "low" })).toEqual({ projectPath: "/p", cli: "claude", model: "opus", effort: "max" });
 });
+
+const text = (value: unknown): string => nodes(value).map((n) => (typeof n.props?.children === "string" ? n.props.children : Array.isArray(n.props?.children) ? n.props.children.filter((c) => typeof c === "string").join("") : "")).join("|");
+
+test("a continued run is a compact card: what it continues, its instruction and Stop — nothing to confirm (#1113)", () => {
+  hookState.n = 0;
+  const onCancelTask = vi.fn();
+  const card = DelegateCard({
+    item: {
+      kind: "delegate", id: "d2", continued: true, taskId: "t2", state: "running", tail: [],
+      proposal: { projectPath: "/p", instruction: "add a test", composedPrompt: "add a test", cli: "claude" },
+    },
+    onConfirm: vi.fn(), onDismiss: vi.fn(), onCancelTask,
+    projectOptions: [{ name: "Bean", path: "/p" }],
+  });
+  const all = text(card);
+  expect(all).toContain("↻ continuing claude · Bean");
+  expect(all).toContain("add a test");
+  expect(nodes(card).some((n) => n.type === "textarea")).toBe(false);
+  const stop = nodes(card).find((n) => n.type === "button" && n.props?.children === "Stop");
+  stop?.props?.onClick?.();
+  expect(onCancelTask).toHaveBeenCalledOnce();
+});
+
+test("the grant line shows only while the card's grant is live (#1113)", () => {
+  const item = {
+    kind: "delegate" as const, id: "d1", taskId: "t1", state: "done" as const, tail: [], result: "ok",
+    proposal: { projectPath: "/p", instruction: "fix", composedPrompt: "fix" },
+  };
+  const line = "Follow-ups of this task continue this session automatically while this chat is open.";
+  hookState.n = 0;
+  expect(text(DelegateCard({ item, onConfirm: vi.fn(), onDismiss: vi.fn(), onCancelTask: vi.fn(), granted: true }))).toContain(line);
+  hookState.n = 0;
+  expect(text(DelegateCard({ item, onConfirm: vi.fn(), onDismiss: vi.fn(), onCancelTask: vi.fn() }))).not.toContain(line);
+});

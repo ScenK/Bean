@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { DELEGATE_GRANT_LINE } from "@bean/core";
 import { discordCards } from "../src/components.js";
 
 const models = [
@@ -91,6 +92,16 @@ test("delegate proposal: project select hoists the pick past the 25-option cap a
   expect(options.slice(0, 2).map((o) => o.value)).toEqual(["__none__", "/p/39"]);
   expect(options.find((o) => o.default)?.value).toBe("/p/39");
   expect(options.every((o) => o.value.length <= 100)).toBe(true);
+});
+
+test("delegate proposal: model select hoists the default past the 25-option cap; no models = no row", () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, label: `M${i}`, aliases: {}, availableOn: ["claude" as const] }));
+  const card = discordCards.proposalCard({ ...proposalInput, models: many, defaultModel: "m29" }) as SelectCard;
+  const options = card.components.flatMap((r) => r.components).find((c) => c.custom_id === "bean:model:prop-1")?.options ?? [];
+  expect(options).toHaveLength(25);
+  expect(options[0]).toMatchObject({ value: "m29", default: true });
+  const none = discordCards.proposalCard({ ...proposalInput, models: [] }) as SelectCard;
+  expect(JSON.stringify(none)).not.toContain("bean:model:prop-1");
 });
 
 test("running message carries cancel-run and the tail in a code block", () => {
@@ -403,4 +414,21 @@ test("finished/ended cards say what Continue live resumes, or why it's missing, 
   expect(JSON.stringify(ended)).toContain("bean:resume-live:sess-2");
   // started/cancelled cards stay bare.
   expect(embedOf(discordCards.liveSessionResultCard({ projectName: "bean", startedBy: "scen", outcome: "started", agent: "codex" })).fields).toBeUndefined();
+});
+
+test("skill proposal card shows the browser line for on and off, and none otherwise", () => {
+  const card = (browser?: "on" | "off") =>
+    JSON.stringify(discordCards.skillProposalCard({ proposalId: "s", name: "web", body: "# W", updating: true, ...(browser ? { browser } : {}) }));
+  expect(card("on")).toContain("🌐 uses your browser (and computer on codex)");
+  expect(card("off")).toContain("🌐 no longer uses your browser");
+  expect(card()).not.toContain("🌐");
+});
+
+test("delegate proposal states its task grant; a continuation's compact card has Cancel only once it has a run id", () => {
+  expect(JSON.stringify(discordCards.proposalCard(proposalInput))).toContain(DELEGATE_GRANT_LINE);
+  const base = { projectName: "bean", instruction: "and the tests too", startedBy: "scen", continued: true as const };
+  const posted = discordCards.runningCard({ ...base, runId: "" }) as { embeds: { title: string }[]; components: unknown[] };
+  expect(posted.embeds[0]!.title).toBe("↻ Continuing in bean… (asked by scen)");
+  expect(posted.components).toEqual([]);
+  expect(JSON.stringify(discordCards.runningCard({ ...base, runId: "run-2" }))).toContain("bean:cancel-run:run-2");
 });

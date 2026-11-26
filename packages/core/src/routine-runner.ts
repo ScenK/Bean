@@ -4,6 +4,7 @@ import type { ActionTool, ConverseDeps, ConvoMsg, ToolCall } from "./converse.js
 import { ARCHIVE_GRACE_DAYS, DEFAULT_GATE_ROUNDS, MEMBER_TODO_REFUSAL, memberTodoEligible, parallelSlots, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
 import { STOPPED_BY_YOU, type CommandStepOutcome } from "./command-step.js";
 import type { Skill } from "./types.js";
+import { FAILED_SENTINEL_INSTRUCTION, failedReason } from "./agent-rules.js";
 import type { CliName } from "./launcher.js";
 import type { TodoItem, TodoStatus } from "./todo-store.js";
 import { MEMORY_CONFLICT_CLAUSE, MEMORY_CONTEXT_CLAUSE, memoriesBlock, type Memory } from "./memory/memory.js";
@@ -267,7 +268,8 @@ async function runChatStep(
     `You are Bean executing step ${index + 1} of the scheduled sprout "${routine.name}" unattended. ` +
       "There is no user present: never ask questions, never wait for confirmation. Use the tools you are " +
       "given directly when the task calls for them, then reply with a concise plain-text report of what " +
-      "you did and found — that report becomes this step's output for later steps and the final digest.",
+      "you did and found — that report becomes this step's output for later steps and the final digest." +
+      FAILED_SENTINEL_INSTRUCTION,
     ...(skill ? [`Skill instructions:\n${skill.body}`] : []),
     `Current date and time: ${(deps.now ?? (() => new Date()))().toString()}`,
   ];
@@ -280,13 +282,11 @@ async function runChatStep(
   ];
   const tools = pool.map((t) => t.spec);
   const byName = new Map(pool.map((t) => [t.spec.name, t]));
-  let content = "";
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     signal.throwIfAborted();
     const res = await deps.chat({ model: step.model ?? deps.model, messages, tools, webSearch });
-    content = res.content;
     const actionCalls = res.toolCalls.filter((c: ToolCall) => byName.has(c.name));
-    if (actionCalls.length === 0) return content;
+    if (actionCalls.length === 0) return res.content;
     messages.push({ role: "assistant", content: res.content, toolCalls: actionCalls });
     for (const call of actionCalls) {
       signal.throwIfAborted();
@@ -294,7 +294,9 @@ async function runChatStep(
       messages.push({ role: "tool", content: result, toolCallId: call.id ?? call.name });
     }
   }
-  return content;
+  // Intermediate text isn't a report: passing it off as one reads as "nothing found". Never
+  // retried — the tools may already have acted.
+  throw new Error(`step ${index + 1} ran out of tool rounds before a final report`);
 }
 
 async function composeDigest(
@@ -468,6 +470,10 @@ async function runSteps(
           // Only after the step finished in time and unstopped: a failed, timed-out or stopped
           // retro publishes nothing.
           if (deps.signal?.aborted) throw new Error(STOPPED_BY_YOU);
+          // The delegates' `FAILED:` contract: a source it couldn't read fails the step (no route,
+          // run failed) instead of passing for "nothing new"; a failed retro publishes nothing.
+          const failed = failedReason(output);
+          if (failed !== undefined) throw new Error(failed);
           if (session) output = session.finish(output);
         }
       }

@@ -13,6 +13,34 @@ export function parseFrontmatter(text: string): Record<string, string> {
   return out;
 }
 
+/** Picker disclosure for a `browser: true` skill; codex's browser tools also control the computer. */
+export const BROWSER_SKILL_NOTE = "🌐 uses your browser (and computer on codex)";
+
+/** Skill proposal card disclosure (#1108): "on" while the draft's parsed frontmatter has
+ * `browser: true`, "off" when a replacement drops it from an existing browser skill. Derived from
+ * the body only, never from model prose — saving the body stays the only switch. */
+export type SkillBrowserChange = "on" | "off";
+export const SKILL_BROWSER_NOTES: Record<SkillBrowserChange, string> = {
+  on: BROWSER_SKILL_NOTE,
+  off: "🌐 no longer uses your browser",
+};
+
+export function skillBrowserChange(body: string, existingBrowser: boolean): SkillBrowserChange | undefined {
+  const saved = formatSkillBody(body); // parse what Save writes, not the untrimmed draft
+  if (parseFrontmatter(saved).browser?.toLowerCase() === "true") return "on";
+  // A toggle overlay keeps the built-in's own body (and its `browser:`) — nothing changes.
+  return existingBrowser && !isToggleOverlay(saved) ? "off" : undefined;
+}
+
+// The flags a toggle overlay may carry; skill-library's fingerprint ignores them too.
+export const TOGGLE_KEYS = ["enabled", "quick-launch"];
+
+// A user file holding nothing but toggle frontmatter: a built-in's enable/quick-launch state,
+// layered onto whatever body the built-in currently ships (#877). Written by saveSkill.
+export function isToggleOverlay(body: string): boolean {
+  return stripFrontmatter(body).trim() === "" && Object.keys(parseFrontmatter(body)).every((k) => TOGGLE_KEYS.includes(k));
+}
+
 export function parseDescription(text: string, fm: Record<string, string>): string {
   if (fm.description) return fm.description;
   const first = text

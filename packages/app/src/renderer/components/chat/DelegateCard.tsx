@@ -46,6 +46,7 @@ export function DelegateCard({
   modelOptions,
   projectOptions,
   browser,
+  granted,
   onContinueLive,
   lastUsedModel,
   lastUsedEffort,
@@ -68,6 +69,8 @@ export function DelegateCard({
   projectOptions?: Project[];
   /** Display only — main re-resolves the skill's `browser:` frontmatter at launch. */
   browser?: boolean;
+  /** This card's task grant is live: follow-ups continue its session with no card (epic #1111). */
+  granted?: boolean;
   /** Set only when Continue live is offered (eligible receipt, CLI enabled, no live session). */
   onContinueLive?: () => void;
   /** The skill's remembered model — a default only, so a late read never overwrites a pick. */
@@ -126,6 +129,35 @@ export function DelegateCard({
   const starting = item.state === "starting";
   const running = item.state === "running";
   const mmss = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
+  const output = (running && item.tail.length > 0) || (item.state === "done" && item.result) ? (
+    <>
+      <button type="button" class="bean-btn bean-btn--ghost" onClick={() => setShowDetail(!showDetail)}>
+        {running ? (showDetail ? "Hide output" : `Show output (${item.tail.length})`) : showDetail ? "Hide result" : "Show result"}
+      </button>
+      {showDetail ? <pre class="bean-card-prompt bean-delegate-output">{running ? item.tail.join("\n") : item.result}</pre> : null}
+    </>
+  ) : null;
+
+  // A follow-up resumed with no card: what it was asked, how long, Stop — nothing to confirm.
+  if (item.continued) {
+    return (
+      <div class="bean-card bean-card--continued">
+        <div class="bean-card-chips">
+          <span class="bean-chip">↻ continuing {item.proposal.cli ?? "agent"} · {projectName}</span>
+        </div>
+        <div class="bean-offer-ask">{item.proposal.instruction}</div>
+        {output}
+        {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
+        {item.receipt ? <ResumeReceipt receipt={item.receipt} /> : null}
+        <div class="bean-card-actions">
+          <button type="button" class="bean-btn" disabled>
+            {running || starting ? `${STATE_LABEL[item.state]} ${mmss}` : STATE_LABEL[item.state]}
+          </button>
+          {running ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onCancelTask}>Stop</button> : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -224,24 +256,10 @@ export function DelegateCard({
           onInput={(e) => setPrompt((e.target as HTMLTextAreaElement).value)}
         />
       ) : null}
-      {running && item.tail.length > 0 ? (
-        <>
-          <button type="button" class="bean-btn bean-btn--ghost" onClick={() => setShowDetail(!showDetail)}>
-            {showDetail ? "Hide output" : `Show output (${item.tail.length})`}
-          </button>
-          {showDetail ? <pre class="bean-card-prompt bean-delegate-output">{item.tail.join("\n")}</pre> : null}
-        </>
-      ) : null}
-      {item.state === "done" && item.result ? (
-        <>
-          <button type="button" class="bean-btn bean-btn--ghost" onClick={() => setShowDetail(!showDetail)}>
-            {showDetail ? "Hide result" : "Show result"}
-          </button>
-          {showDetail ? <pre class="bean-card-prompt bean-delegate-output">{item.result}</pre> : null}
-        </>
-      ) : null}
+      {output}
       {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
       {item.receipt ? <ResumeReceipt receipt={item.receipt} /> : null}
+      {granted ? <div class="bean-offer-ask">Follow-ups of this task continue this session automatically while this chat is open.</div> : null}
       <div class="bean-card-actions">
         <button
           type="button"
