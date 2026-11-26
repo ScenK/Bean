@@ -17,7 +17,7 @@ Beside Bean's own Brain (for memory, chat, and routing), **four official coding 
 | <img src="docs/icons/codex.svg" width="20" height="20" align="absmiddle" alt="" /> **Codex** | `codex` | Live turns, sandboxed read-only planning, delegates, and Sprouts via OpenAI's official Codex CLI |
 | <img src="docs/icons/opencode.svg" width="20" height="20" align="absmiddle" alt="" /> **OpenCode** | `opencode` | Multi-provider model catalog across chat, background delegates, and Sprouts via the official CLI |
 
-- **100% official harnesses — no OAuth proxies, no API billing.** Bean runs the real CLIs already installed and signed in on your machine using your existing subscriptions and logins. *(Only Bean's lightweight Brain uses your own OpenAI key.)*
+- **100% official harnesses — no OAuth proxies, no API billing.** Bean runs the real CLIs already installed and signed in on your machine using your existing subscriptions and logins. *(The one metered part is Bean's optional Brain, on your own OpenAI key — it powers Home, the always-on superagent thread. Without it the CLIs still work; Home is just less capable.)*
 - **Tiny footprint, full working suite.** On macOS, Bean runs dockless (`LSUIElement`) as a floating pet and menu bar icon — yet packs live multi-agent chat, effortless model switching, a built-in terminal pane, markdown skills, notes, memory + Dream, Discord/Teams ChatOps, and autonomous Sprouts.
 - **Autonomous orchestration beyond standalone harnesses.** Sprouts combine zero-token watchers, mixed-CLI step graphs, PASS/FAIL gates with branching and retry loops, session continuation, parallel to-do queues, quiet-by-default sinks, and self-improving retros.
 
@@ -35,7 +35,7 @@ No heavy editor chrome or cluttered workspace. Bean stays out of your way as a t
 Chat with Bean's Brain, or switch straight into `/agy`, `/claude`, `/codex`, or `/opencode` in the same thread. Swap models from the composer chip, keep remembered defaults per CLI, or assign different harnesses to different steps in a Sprout.
 
 🔌 **Official harnesses — no OAuth, no API billing.**
-Every coding harness is the real official CLI on your `PATH`, using the sign-ins and plans you already have. No third-party OAuth bridge, no per-token API markup for agent runs, and no middleman service.
+Every coding harness is the real official CLI on your `PATH`, using the sign-ins and plans you already have. No third-party OAuth bridge, no per-token API markup for agent runs, and no middleman service. Bean's own Brain is optional and is the only part billed per use (your OpenAI key).
 
 🌱 **Sprouts — full autonomous orchestration.**
 Far more complete than single-turn harnesses or brittle cron scripts. Trigger on a cron schedule or a zero-token watch (RSS feed or shell command — no model call per check). Mix **Antigravity**, **Claude Code**, **Codex**, **OpenCode**, Bean **chat**, and deterministic **shell** steps in one pipeline. Gate on a `PASS`/`FAIL` verdict to stop, branch, or loop back with failure context; continue sessions across steps; drain parallel to-do queues; deliver only when needed; and let retro steps draft skill improvements for your review.
@@ -77,7 +77,7 @@ Set it up once; it quietly covers everything from the family calendar to the spr
 1. **Install Bean.** Pick your platform on the [download page](https://scenk.github.io/Bean/#get).
 2. **Open it.** Bean sits on your desktop as a tiny dockless avatar and menu bar icon.
    Hover for a box, click for petals — chat, skills, projects, notes, sprouts.
-3. **Add your Brain key.** Open **Settings**, paste your OpenAI key for Bean's Brain, and pick a model. Bean automatically picks up the official CLIs already on your `PATH`.
+3. **Add your Brain key (optional).** Open **Settings**, paste your OpenAI key for Bean's Brain, and pick a model. Bean automatically picks up the official CLIs already on your `PATH`; without a key they still work, but Home — the always-on superagent thread — is less capable.
 4. **Say hi.** That's it. Bean bootstraps everything else on first launch.
 
 Set it up entirely from the UI panels — **Settings**, **Persona**, **Skills**, **Projects**, and **Sprouts**.

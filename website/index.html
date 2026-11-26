@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Bean — a complete personal agent suite powered by four official CLIs</title>
-<meta name="description" content="Smaller than an IDE — not even a Dock icon. Bean pairs its own Brain with four official CLIs (Antigravity, Claude Code, Codex, OpenCode) for effortless model switching, no OAuth or harness API billing, and autonomous Sprout orchestration." />
+<meta name="description" content="Smaller than an IDE — not even a Dock icon. Bean pairs its own Brain with four official CLIs (Antigravity, Claude Code, Codex, OpenCode) for effortless model switching, no OAuth or API billing for coding agents (the Brain is optional, on your own OpenAI key), and autonomous Sprout orchestration." />
 <link rel="icon" href="img/icon.png" />
 <style>
   :root {
@@ -116,12 +116,18 @@
     box-shadow: 0 1px 0 oklch(1 0 0 / .85) inset, 0 28px 60px -42px oklch(0.4 0.08 50 / .35);
     display: grid; gap: 14px;
   }
-  .crew-top {
-    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-    font-size: 13px; color: var(--dim);
+  .crew-groups { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 4fr); gap: 0 22px; }
+  .crew-group { display: grid; gap: 10px; align-content: start; }
+  .crew-group.clis { padding-left: 22px; border-left: 1px solid var(--line); }
+  .crew-label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-height: 24px; font-size: 13px; color: var(--dim); }
+  .crew-label b { color: var(--ink); font-weight: 600; }
+  .crew-pills { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .opt-tag {
+    white-space: nowrap; padding: 5px 10px; border-radius: 999px; font: 600 12px/1 var(--sans);
+    color: var(--amber-ink); border: 1px dashed oklch(0.66 0.15 48 / .5); background: oklch(0.98 0.025 70);
   }
-  .crew-top b { color: var(--ink); font-weight: 600; }
-  .crew-pills { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+  .crew-note { padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.55; color: var(--dim); }
+  .crew-note b { color: var(--ink); font-weight: 600; }
   .crew-pill {
     display: inline-flex; align-items: center; gap: 10px; padding: 7px 14px 7px 8px;
     border-radius: 14px; border: 1px solid var(--line); background: var(--bg);
@@ -129,7 +135,6 @@
     transition: border-color .2s ease, transform .2s ease;
   }
   .crew-pill:hover { border-color: oklch(0.66 0.15 48 / .55); transform: translateY(-1px); }
-  .crew-pill code { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--dim); background: var(--surface); border: 1px solid var(--line); padding: 1px 6px; border-radius: 6px; }
   .crew-pill.brain {
     background: linear-gradient(135deg, oklch(0.98 0.025 70), var(--surface));
     border-color: oklch(0.66 0.15 48 / .4);
@@ -137,7 +142,7 @@
   .no-bill-tag {
     display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px;
     background: oklch(0.96 0.035 145 / .55); border: 1px solid oklch(0.6 0.13 145 / .35);
-    color: oklch(0.38 0.11 145); font: 600 12px/1 var(--sans); letter-spacing: .01em;
+    color: oklch(0.38 0.11 145); font: 600 12px/1 var(--sans); letter-spacing: .01em; white-space: nowrap;
   }
   .no-bill-tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--leaf); }
 
@@ -360,13 +365,13 @@
     .flow { grid-template-columns: 1fr; gap: 26px; }
     .node:nth-child(-n+4)::after { content: "↓"; right: auto; left: 50%; top: auto; bottom: -24px; transform: translateX(-50%); }
     .loop { grid-column: 1; }
+    .crew-groups { grid-template-columns: 1fr; gap: 18px; }
+    .crew-group.clis { padding-left: 0; border-left: 0; }
     .crew-pills { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .crew-pill.brain { grid-column: 1 / -1; }
     section { padding: 92px 0; }
   }
   @media (max-width: 620px) {
     .cli-grid, .suite-callout, .grid3, .trust-grid, .ledger { grid-template-columns: 1fr; }
-    .crew-pill code { display: none; }
   }
 </style>
 </head>
@@ -446,32 +451,38 @@
     </div>
 
     <div class="crew-bar reveal" aria-label="Bean Brain and its four native official CLIs">
-      <div class="crew-top">
-        <span><b>Bean's Brain</b> thinks, remembers &amp; routes — <b>four official CLIs</b> do the heavy lifting natively.</span>
-        <span class="no-bill-tag">Official harnesses · No OAuth · No API billing</span>
-      </div>
-      <div class="crew-pills">
+      <div class="crew-groups">
+      <div class="crew-group">
+        <div class="crew-label"><b>Brain</b><span class="opt-tag">Optional</span></div>
         <a class="crew-pill brain" href="#chat">
           <span class="cli-badge sm bean-badge"><svg class="cli-svg" viewBox="0 0 200 200" aria-hidden="true"><use href="#bean"/></svg></span>
-          Bean <code>brain</code>
+          Bean
         </a>
+      </div>
+      <div class="crew-group clis">
+        <div class="crew-label"><b>Four official CLIs</b><span class="no-bill-tag">No OAuth · No API billing</span></div>
+      <div class="crew-pills">
         <a class="crew-pill" href="#agents">
           <span class="cli-badge sm"><svg class="cli-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#ico-agy"/></svg></span>
-          Antigravity <code>agy</code>
+          Antigravity
         </a>
         <a class="crew-pill" href="#agents">
           <span class="cli-badge sm"><svg class="cli-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#ico-claude"/></svg></span>
-          Claude Code <code>claude</code>
+          Claude Code
         </a>
         <a class="crew-pill" href="#agents">
           <span class="cli-badge sm"><svg class="cli-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#ico-codex"/></svg></span>
-          Codex <code>codex</code>
+          Codex
         </a>
         <a class="crew-pill" href="#agents">
           <span class="cli-badge sm"><svg class="cli-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#ico-opencode"/></svg></span>
-          OpenCode <code>opencode</code>
+          OpenCode
         </a>
       </div>
+      </div>
+      </div>
+      <p class="crew-note">The CLIs run on the sign-ins you already have. The Brain is the one pay-per-use part, on your own OpenAI key —
+        it powers <b>Home</b>, Bean's always-on superagent thread. Skip it and the CLIs still work; Home just won't be as capable.</p>
     </div>
   </div>
 </header>
@@ -535,7 +546,7 @@
       </div>
       <div class="feat reveal">
         <h3>No OAuth. No API billing.</h3>
-        <p>Bean drives the real CLIs already authenticated on your machine — using your existing subscriptions and logins, never OAuth proxies or pay-per-token API wrappers. Only Bean's lightweight Brain uses your own OpenAI key.</p>
+        <p>Bean drives the real CLIs already authenticated on your machine — using your existing subscriptions and logins, never OAuth proxies or pay-per-token API wrappers. The only metered part is the optional Brain, on your own OpenAI key.</p>
       </div>
     </div>
   </div>
@@ -741,7 +752,7 @@
     <span class="eyebrow reveal">Trust</span>
     <p class="quote reveal" style="margin-top:24px">“Always asks before it acts.” Not a slogan — <em>a rule enforced in code.</em></p>
     <div class="trust-grid">
-      <div class="reveal"><h3>Official harnesses, no API billing</h3><p>Coding agents run as the real CLIs on your existing sign-ins. Only Bean's own Brain uses your OpenAI key.</p></div>
+      <div class="reveal"><h3>Official harnesses, no API billing</h3><p>Coding agents run as the real CLIs on your existing sign-ins. Only the optional Brain uses your own OpenAI key.</p></div>
       <div class="reveal"><h3>Private by default</h3><p>Your data dir is locked to your account. Remote images in replies are never loaded, so nothing can beacon out.</p></div>
       <div class="reveal"><h3>Least privilege</h3><p>Spawned agents get an allow-listed environment, never your whole shell. Untrusted links are fetched with private-network blocking.</p></div>
       <div class="reveal"><h3>Saved text stays data</h3><p>Notes and memories are framed as quotes, never as instructions — what Bean read can't steer what Bean does.</p></div>
@@ -792,7 +803,7 @@ docker run -d -v bean:/data -e TZ=America/Toronto bean</pre></div>
   <div class="wrap">
     <div class="orb big-orb float"></div>
     <h2 class="reveal">Say hi to <em>Bean.</em></h2>
-    <p class="lede reveal">Install, add your Brain key, say hi. Bean picks up the official CLIs already on your machine.</p>
+    <p class="lede reveal">Install and say hi — Bean picks up the official CLIs already on your machine. Add an OpenAI key to wake the Brain.</p>
     <div class="hero-ctas reveal" style="justify-content:center">
       <a class="btn btn-primary" href="#get">Get Bean</a>
       <a class="btn btn-ghost" href="https://github.com/ScenK/Bean">View on GitHub</a>
