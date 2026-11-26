@@ -160,7 +160,7 @@ test("quit: an agent-mode chat's close catch-up is saved before a local core exi
       avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
     ]);
     await chat.waitForLoadState("domcontentloaded");
-    await chat.locator(".bean-agent-chip").click();
+    await chat.locator(".bean-agent-seg--agent").click();
     await chat.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
     const composer = chat.locator(".bean-input--composer");
     await composer.fill("fyi our staging database is pg-seven");

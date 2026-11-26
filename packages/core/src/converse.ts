@@ -89,13 +89,15 @@ export interface ConverseDeps {
   /** webSearch = also offer the provider's built-in web search (OpenAI Responses `web_search`),
    * which runs server-side inside the same model call — no tool round trip on Bean's side.
    * signal = abort the request (the turn was stopped). */
-  chat: (a: { model: string; messages: ConvoMsg[]; tools: ToolSpec[]; webSearch?: boolean; signal?: AbortSignal }) => Promise<{
+  chat: (a: { model: string; messages: ConvoMsg[]; tools: ToolSpec[]; webSearch?: boolean; signal?: AbortSignal; effort?: string }) => Promise<{
     content: string;
     toolCalls: ToolCall[];
     /** The model hit its output limit: `content` is partial (and carries a visible cut-off note). */
     incomplete?: true;
   }>;
   model: string;
+  /** Reasoning effort for this chat's turns (the composer pill); absent = the model's default. */
+  effort?: string;
   /** Recall by meaning (core makeRankByMeaning); absent = keyword recall only. */
   rankByMeaning?: RankByMeaning;
 }
@@ -246,6 +248,8 @@ export interface ConverseResult {
 export interface ChatRequest {
   history: ChatTurn[]; summary?: string; message: string; gap?: boolean; source?: TurnSource; incognito?: boolean; droppedUrl?: string;
   linkedNote?: LinkedNote; images?: ImageAttachment[]; documents?: PdfAttachment[]; turnId?: string;
+  /** Reasoning effort the composer pill picked for Bean's model; absent = the model's default. */
+  effort?: string;
   /** The main conversation (#997, after the cutover): the shell's turns new since its last ack, which
    * the host appends to the log — `history` and `summary` are then unused. */
   delta?: KeyedTurn[];
@@ -999,7 +1003,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     if (signal?.aborted) return stopped();
     let toolCalls: ToolCall[] = [];
     try {
-      const res = await untilAbort(deps.chat({ model: deps.model, messages, tools, webSearch, signal }), signal);
+      const res = await untilAbort(deps.chat({ model: deps.model, messages, tools, webSearch, signal, ...(deps.effort ? { effort: deps.effort } : {}) }), signal);
       content = res.content;
       toolCalls = res.toolCalls;
     } catch (err) {
@@ -1231,7 +1235,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // One closing call with no tools forces a text answer.
   if (signal?.aborted) return stopped();
   try {
-    content = (await untilAbort(deps.chat({ model: deps.model, messages, tools: [], signal }), signal)).content;
+    content = (await untilAbort(deps.chat({ model: deps.model, messages, tools: [], signal, ...(deps.effort ? { effort: deps.effort } : {}) }), signal)).content;
   } catch (err) {
     if (signal?.aborted) return stopped();
     const why = err instanceof Error ? err.message : String(err);

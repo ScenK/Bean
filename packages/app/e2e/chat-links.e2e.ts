@@ -87,7 +87,7 @@ test("chat links: Cmd+click in a live reply and its steps opens once; plain clic
   try {
     const chat = await openChat(app);
     await expect(chat.getByText("⌘-click a link or path to open it")).toBeVisible();
-    await chat.locator(".bean-agent-chip").click();
+    await chat.locator(".bean-agent-seg--agent").click();
     await chat.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
     await chat.locator(".bean-input--composer").fill("go");
     await chat.locator(".bean-input--composer").press("Enter");

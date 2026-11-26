@@ -161,6 +161,7 @@ export function ChatPanel({
   onPickProject,
   onPickModel,
   onPickEffort,
+  beanEfforts,
   onEndAgent,
   stopTarget,
   onStopTurn,
@@ -277,7 +278,10 @@ export function ChatPanel({
   onPickAgent: (agent: AgentId) => void;
   onPickProject: (path: string) => void;
   onPickModel: (model: string) => void;
-  onPickEffort: (effort: string) => void;
+  /** Bean mode: `undefined` = the model's default. */
+  onPickEffort: (effort: string | undefined) => void;
+  /** Efforts Bean's own model offers (the pill's Bean-mode effort segment). */
+  beanEfforts?: readonly string[];
   onEndAgent: () => void;
   stopTarget?: StopTarget;
   /** Stop `stopTarget`; a live session stays (banner / working-row Stop, composer Esc Esc). */
@@ -1219,6 +1223,7 @@ export function ChatPanel({
               onPickProject={onPickProject}
               onPickModel={onPickModel}
               onPickEffort={onPickEffort}
+              beanEfforts={beanEfforts}
             />
             <button
               type="button"

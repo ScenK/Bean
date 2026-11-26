@@ -12,10 +12,6 @@ import { dmProblem } from "../routines/chat-sinks.js";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
-// "" is deliberately first: models without reasoning reject the parameter outright, so the
-// default must send nothing at all rather than any effort value.
-const REASONING_EFFORTS = ["", "none", "low", "medium", "high"] as const;
-
 const PATH_LABELS: { key: keyof ConfigView["paths"]; label: string }[] = [
   { key: "config", label: "Config" },
   { key: "skills", label: "Skills" },
@@ -67,7 +63,6 @@ export function SettingsWindow() {
   const [editorApp, setEditorApp] = useState("");
   const [delegateCli, setDelegateCli] = useState("");
   const [systemControls, setSystemControls] = useState(false);
-  const [reasoningEffort, setReasoningEffort] = useState("");
   const [webSearch, setWebSearch] = useState(false);
   const [autoMemory, setAutoMemory] = useState(true);
   // Per bot (#1067): posts to the chat with Bean also go to the owner's DM there.
@@ -120,7 +115,6 @@ export function SettingsWindow() {
       setEditorApp(c.editorApp);
       setDelegateCli(c.delegateCli);
       setSystemControls(c.systemControls);
-      setReasoningEffort(c.reasoningEffort);
       setWebSearch(c.webSearch);
       setAutoMemory(c.autoMemory);
       // An older core has no Home DM fields.
@@ -157,7 +151,7 @@ export function SettingsWindow() {
     try {
       // Only what this window shows: a hidden field (and an untouched key) keeps its saved value.
       const patch: ConfigUpdate = {
-        model: model.trim(), delegateCli, reasoningEffort, disabledClis, webSearch, autoMemory,
+        model: model.trim(), delegateCli, disabledClis, webSearch, autoMemory,
         ...(homeDmsEdited ? { homeDiscordDm: homeDms.discord, homeTeamsDm: homeDms.teams } : {}),
         gitName: gitName.trim(), gitEmail: gitEmail.trim(),
         ...(apiKeyEdited ? { openaiApiKey: apiKey.trim() } : {}),
@@ -232,21 +226,6 @@ export function SettingsWindow() {
                 placeholder="gpt-4o-mini"
                 onInput={(e) => { setModel((e.target as HTMLInputElement).value); setSave("idle"); }}
               />
-            </div>
-          </div>
-          <div class="bean-settings-row">
-            <span class="bean-settings-row-label">Reasoning effort</span>
-            <div class="bean-settings-row-control">
-              <select
-                class="bean-input"
-                title="Only reasoning models accept this. Others reject the request — leave it on Default for gpt-4o-mini or gpt-5.4-nano."
-                value={reasoningEffort}
-                onChange={(e) => { setReasoningEffort((e.target as HTMLSelectElement).value); setSave("idle"); }}
-              >
-                {REASONING_EFFORTS.map((e) => (
-                  <option key={e} value={e}>{e === "" ? "Default (model's own)" : e}</option>
-                ))}
-              </select>
             </div>
           </div>
           {detectedClis.length > 0 && (

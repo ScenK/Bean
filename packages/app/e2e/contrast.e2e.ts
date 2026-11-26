@@ -220,7 +220,7 @@ test("every component window clears WCAG AA text contrast in both themes", { tag
         await expect(win.getByText("Stopped by you.")).toBeVisible();
         // #746: a live message the agent hasn't picked up — its outline and "Not read yet" caption
         // (revealed after ~1.5s; toBeVisible waits past the hidden phase).
-        await win.locator(".bean-agent-chip").click();
+        await win.locator(".bean-agent-seg--agent").click();
         await win.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
         await win.locator(".bean-input--composer").fill("not picked up");
         await win.locator(".bean-input--composer").press("Enter");

@@ -77,7 +77,7 @@ describe("service contract (#807)", () => {
     expect(fn).not.toHaveBeenCalled();
     const config = {
       openaiApiKey: "k", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false,
-      reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "",
+      disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "",
     };
     call(IPC.saveConfig, config)();
     call(IPC.saveConfig, { routineDigestContext: true })(); // retired key from an older peer (#1066): passes, ignored

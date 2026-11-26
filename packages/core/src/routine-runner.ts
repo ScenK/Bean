@@ -284,7 +284,7 @@ async function runChatStep(
   const byName = new Map(pool.map((t) => [t.spec.name, t]));
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     signal.throwIfAborted();
-    const res = await deps.chat({ model: step.model ?? deps.model, messages, tools, webSearch });
+    const res = await deps.chat({ model: step.model ?? deps.model, messages, tools, webSearch, ...(step.effort ? { effort: step.effort } : {}) });
     const actionCalls = res.toolCalls.filter((c: ToolCall) => byName.has(c.name));
     if (actionCalls.length === 0) return res.content;
     messages.push({ role: "assistant", content: res.content, toolCalls: actionCalls });

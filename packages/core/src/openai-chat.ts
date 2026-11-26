@@ -92,8 +92,8 @@ function toResponsesItems(message: ConvoMsg): ResponsesItem[] {
   return [message as { role: "system"; content: string } | { role: "user"; content: string }];
 }
 
-export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningEffort = ""): ConverseDeps["chat"] {
-  return async ({ model, messages, tools, webSearch, signal }) => {
+export function makeOpenAIConverseWithClient(client: ResponsesClient): ConverseDeps["chat"] {
+  return async ({ model, messages, tools, webSearch, signal, effort }) => {
     const res = await client.responses.create({
       model,
       // Bean's fixed runtime rules, on every brain call (converse, routine steps, memory,
@@ -111,10 +111,9 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
         ...(webSearch ? [{ type: "web_search" as const }] : []),
       ],
       tool_choice: "auto",
-      // Omitted unless the user picked one in Settings: sending reasoning.effort to a model
-      // that has no reasoning (gpt-4o-mini, gpt-5.4-nano) is a hard 400, so "" must mean
-      // "send nothing" rather than any default value.
-      ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
+      // Omitted unless the caller (a sprout chat step) pinned one: sending reasoning.effort to a
+      // model that has no reasoning (gpt-4o-mini) is a hard 400, so absent = the model's default.
+      ...(effort ? { reasoning: { effort } } : {}),
       // Responses defaults to store:true, which would persist every Bean conversation in the
       // user's OpenAI account — chat.completions never did. Not a setting; keep it off.
       store: false,
@@ -155,9 +154,9 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
   };
 }
 
-export function makeOpenAIConverse(apiKey: string, reasoningEffort = ""): ConverseDeps["chat"] {
+export function makeOpenAIConverse(apiKey: string): ConverseDeps["chat"] {
   const client = new OpenAI({ apiKey }) as unknown as ResponsesClient;
-  return makeOpenAIConverseWithClient(client, reasoningEffort);
+  return makeOpenAIConverseWithClient(client);
 }
 
 interface ImageClient {

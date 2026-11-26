@@ -47,7 +47,7 @@ test("live agent: Stop and Esc Esc interrupt the turn, the session stays; a sing
       avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
     ]) as [Page, unknown];
     await chat.waitForLoadState("domcontentloaded");
-    await chat.locator(".bean-agent-chip").click();
+    await chat.locator(".bean-agent-seg--agent").click();
     await chat.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
 
     const composer = chat.locator(".bean-input--composer");

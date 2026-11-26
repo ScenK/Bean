@@ -807,14 +807,31 @@ describe("ChatWindow agent mode", () => {
       await flush();
     };
 
-    it("Bean mode shows only the agent segment with no project picker", async () => {
+    it("Bean mode shows the agent + effort segments with no project picker", async () => {
       await mount({});
-      expect(chip().textContent?.trim()).toBe("Bean ▾");
+      expect(chip().textContent?.trim()).toBe("Bean · default ▾");
       expect(seg("project")).toBeNull();
-      expect(seg("model")).toBeNull();
       await openSeg("agent");
       expect(root.textContent).not.toContain("No project — scratch workspace");
       expect(root.textContent).not.toContain("Agents work in");
+    });
+
+    it("Bean mode's effort is per chat: a pick rides on Bean's turns, default sends none", async () => {
+      await mount({});
+      await openSeg("model");
+      const effortBtns = (): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>(".bean-effort-btn")];
+      expect(effortBtns().map((b) => b.textContent)).toEqual(["default", "none", "low", "med", "high", "xhigh"]);
+      await act(async () => { effortBtns().find((b) => b.textContent === "high")!.click(); });
+      await flush();
+      expect(chip().textContent?.trim()).toBe("Bean · high ▾");
+      await send("think hard");
+      expect(bean.chat!.mock.calls.at(-1)![0]).toMatchObject({ message: "think hard", effort: "high" });
+      expect(bean.setModelMemory).not.toHaveBeenCalledWith(expect.stringContaining("effort"), expect.anything());
+      await openSeg("model");
+      await act(async () => { effortBtns().find((b) => b.textContent === "default")!.click(); });
+      await flush();
+      await send("plain");
+      expect(bean.chat!.mock.calls.at(-1)![0]).not.toHaveProperty("effort");
     });
 
     it("first use picks the CLI's first configured model (no Agent default) and remembers model + project", async () => {
@@ -872,35 +889,35 @@ describe("ChatWindow agent mode", () => {
       ];
       await mount({}, withEfforts as typeof models);
       await pickIn("agent", "Claude Code");
-      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · High ▾");
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · high ▾");
       // Open model+effort once, switch to haiku (menu stays open and adopts haiku's default Medium), pick Low (menu closes).
       await openSeg("model");
       const haikuRow = modelRows().find((b) => b.textContent?.includes("haiku"))!;
       await act(async () => { haikuRow.click(); });
       await flush();
-      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · Medium ▴");
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · medium ▴");
       expect(root.querySelectorAll(".bean-effort-btn").length).toBe(3); // popover stayed open with haiku's efforts
-      const lowBtn = [...root.querySelectorAll<HTMLButtonElement>(".bean-effort-btn")].find((b) => b.textContent === "Low")!;
+      const lowBtn = [...root.querySelectorAll<HTMLButtonElement>(".bean-effort-btn")].find((b) => b.textContent === "low")!;
       await act(async () => { lowBtn.click(); });
       await flush();
       expect(root.querySelector(".bean-chip-menu-panel")).toBeNull();
-      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · Low ▾");
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · low ▾");
       // Switching to opus restores opus's own default (High), not haiku's Low; picking Max on opus
       // then switching back to haiku restores haiku's remembered Low.
       await openSeg("model");
       const opusRow = modelRows().find((b) => b.textContent?.includes("opus"))!;
       await act(async () => { opusRow.click(); });
       await flush();
-      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · High ▴");
-      const maxBtn = [...root.querySelectorAll<HTMLButtonElement>(".bean-effort-btn")].find((b) => b.textContent === "Max")!;
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · high ▴");
+      const maxBtn = [...root.querySelectorAll<HTMLButtonElement>(".bean-effort-btn")].find((b) => b.textContent === "max")!;
       await act(async () => { maxBtn.click(); });
       await flush();
-      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · Max ▾");
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · opus · max ▾");
       await openSeg("model");
       const haikuRow2 = modelRows().find((b) => b.textContent?.includes("haiku"))!;
       await act(async () => { haikuRow2.click(); });
       await flush();
-      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · Low ▴");
+      expect(chip().textContent?.trim()).toBe("Claude Code · scratch · haiku · low ▴");
       // Close popover by clicking haiku again.
       const haikuRow3 = modelRows().find((b) => b.textContent?.includes("haiku"))!;
       await act(async () => { haikuRow3.click(); });

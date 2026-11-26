@@ -49,7 +49,7 @@ test("recall by meaning: keyword-only (no throw) with an empty key; a key set in
 test("apply is a patch (#812): an omitted key — or any omitted field — keeps its value", async () => {
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-keep", model: "gpt-4o-mini", terminalApp: "/T.app", editorApp: "", delegateCli: "", systemControls: true, reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "", gitEmail: "" },
+    { openaiApiKey: "sk-keep", model: "gpt-4o-mini", terminalApp: "/T.app", editorApp: "", delegateCli: "", systemControls: true, disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "", gitEmail: "" },
     { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async (u) => { saved.push(u); } },
   );
   await rt.apply({ model: "gpt-5" });
@@ -74,7 +74,7 @@ test("gitName/gitEmail set Bean's commit identity at start and on apply", async 
   const saved = { ...BEAN_GIT_IDENTITY };
   try {
     const rt = createRuntimeConfig(
-      { openaiApiKey: "", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "Sprout", gitEmail: "s@x" },
+      { openaiApiKey: "", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "Sprout", gitEmail: "s@x" },
       { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async () => {} },
     );
     expect(BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME).toBe("Sprout");
@@ -89,7 +89,7 @@ test("overlapping patches apply in order, each onto the one before (#812)", asyn
   let release: () => void = () => {};
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-old", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "", gitEmail: "" },
+    { openaiApiKey: "sk-old", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "", gitEmail: "" },
     {
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async (u) => { saved.push(u); if (saved.length === 1) await new Promise<void>((r) => { release = r; }); },
@@ -223,61 +223,15 @@ test("disabledClis is exposed and updated by apply", async () => {
   expect(saved[0]).toMatchObject({ disabledClis: [] });
 });
 
-test("reasoning effort reaches the converse client and is rebuilt on save", async () => {
-  const madeConverse: string[] = [];
-  const saved: RuntimeUpdate[] = [];
-  const rt = createRuntimeConfig(
-    {
-      openaiApiKey: "sk-x",
-      model: "gpt-5.6-luna",
-      terminalApp: "",
-      editorApp: "",
-      delegateCli: "",
-      systemControls: false,
-      reasoningEffort: "low",
-     
-      disabledClis: [],
-      webSearch: false,
-      gitName: "",
-      gitEmail: "",
-    },
-    {
-      makeConverse: (_k, effort) => { madeConverse.push(effort); return (async () => ({ content: "", toolCalls: [] })) as never; },
-      saveConfigFile: async (u) => { saved.push(u); },
-    },
-  );
-
-  expect(rt.getReasoningEffort()).toBe("low");
-  expect(madeConverse).toEqual(["low"]);
-
-  await rt.apply({
-    openaiApiKey: "sk-x",
-    model: "gpt-5.6-luna",
-    terminalApp: "",
-    editorApp: "",
-    delegateCli: "",
-    systemControls: false,
-    reasoningEffort: "high",
-   
-    disabledClis: [],
-    webSearch: false,
-  });
-
-  // Rebuilt, not just stored — the effort is baked into the client at construction.
-  expect(madeConverse).toEqual(["low", "high"]);
-  expect(rt.getReasoningEffort()).toBe("high");
-  expect(saved[0]).toMatchObject({ reasoningEffort: "high" });
-});
-
 test("an open Settings window saving after the owner-DM migration keeps the migrated toggles (#1068)", async () => {
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "", gitEmail: "" },
+    { openaiApiKey: "sk", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], webSearch: false, autoMemory: true, homeDiscordDm: false, homeTeamsDm: false, gitName: "", gitEmail: "" },
     { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async (u) => { saved.push(u); } },
   );
   await rt.apply({ homeDiscordDm: true }); // the migration's patch
   // SettingsWindow's onSave patch: only what the window shows, loaded before the migration ran.
-  await rt.apply({ model: "m", delegateCli: "", reasoningEffort: "", disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" });
+  await rt.apply({ model: "m", delegateCli: "", disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" });
   expect(rt.getHomeDms()).toEqual({ discord: true, teams: false });
   expect(saved.at(-1)).toMatchObject({ homeDiscordDm: true, homeTeamsDm: false });
 });

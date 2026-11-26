@@ -49,8 +49,8 @@ test("agent chip: pick project + model, start, relaunch — the chip restores bo
     await pick(chat, "agent", "Claude Code");
     await pick(chat, "project", "demo");
     await pick(chat, "model", "opus");
-    await chat.locator(".bean-effort-btn", { hasText: "Max" }).click();
-    await expect(chat.locator(".bean-agent-chip")).toContainText("Claude Code · demo · opus · Max");
+    await chat.locator(".bean-effort-btn", { hasText: "max" }).click();
+    await expect(chat.locator(".bean-agent-chip")).toContainText("Claude Code · demo · opus · max");
     const composer = chat.locator(".bean-input--composer");
     await composer.fill("fix X");
     await composer.press("Enter");
@@ -74,7 +74,7 @@ test("agent chip: pick project + model, start, relaunch — the chip restores bo
     chat = await openChat(app);
     await expect(chat.locator(".bean-agent-chip")).toContainText("Bean");
     await pick(chat, "agent", "Claude Code");
-    await expect(chat.locator(".bean-agent-chip")).toContainText("Claude Code · demo · opus · Max");
+    await expect(chat.locator(".bean-agent-chip")).toContainText("Claude Code · demo · opus · max");
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }

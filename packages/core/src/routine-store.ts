@@ -59,7 +59,7 @@ export type RoutineStep = StepEdges & (
    * `continues`: an earlier delegate step's id — this step resumes the newest session of that
    * step's lane (same `cli` and `project` required; rules: `describeContinueErrors`). */
   | { kind: "delegate"; id?: string; skill?: string; project?: string; cli?: CliName; model?: string; effort?: string; timeoutMinutes?: number; instruction: string; continues?: string }
-  | { kind: "chat"; id?: string; skill?: string; model?: string; effort?: never; instruction: string; continues?: never }
+  | { kind: "chat"; id?: string; skill?: string; model?: string; effort?: string; instruction: string; continues?: never }
   /** A deterministic check: runs `command` in a shell (in `project`, else the run's scratch dir)
    * — no model, memories, or skill (the `never`s keep `step.skill`/`.model` readable on the
    * union; the validator rejects them). Exit 0 = PASS, non-zero = FAIL, timeout = step error. */
@@ -254,11 +254,11 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
   }
   if (!str(s.instruction) || !s.instruction.trim()) return `${at} needs an instruction`;
   if (s.model !== undefined && !str(s.model)) return `${at} has an invalid model`;
+  if (s.effort !== undefined && (!str(s.effort) || !s.effort.trim())) return `${at} has an invalid effort`;
   if (s.kind === "delegate") {
     if (s.cli !== undefined && !CLI_NAMES.includes(s.cli as CliName)) {
       return `${at} has an unknown coding agent ${JSON.stringify(s.cli)} (use ${CLI_NAMES.join(", ")})`;
     }
-    if (s.effort !== undefined && (!str(s.effort) || !s.effort.trim())) return `${at} has an invalid effort`;
     // Only when the caller hands us clis.json: loading must never drop a routine because this
     // Mac's model list changed — the run refuses with a clear error instead.
     if (cliModels && s.cli !== undefined) {
@@ -278,7 +278,6 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
   if (s.kind === "chat") {
     if (s.skill !== undefined && !str(s.skill)) return `${at} has an invalid skill`;
     if (s.cli !== undefined) return `${at}: chat steps run on Bean's own model — a coding agent only applies to delegate steps`;
-    if (s.effort !== undefined) return `${at}: chat steps run on Bean's own model — effort only applies to delegate steps`;
     return null;
   }
   return `${at} has an unknown kind`;

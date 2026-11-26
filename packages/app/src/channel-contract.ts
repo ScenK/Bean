@@ -28,14 +28,14 @@ const keyedTurn = shape({ key: str, role: oneOf("user", "assistant"), content: s
 const image = shape({ data: str, mimeType: str });
 const chatRequest = shape({
   history: arr(turn), summary: opt(str), message: str, gap: opt(bool), source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
-  linkedNote: opt(obj), images: opt(arr(image)), documents: opt(list), turnId: opt(str), delta: opt(arr(keyedTurn)),
+  linkedNote: opt(obj), images: opt(arr(image)), documents: opt(list), turnId: opt(str), delta: opt(arr(keyedTurn)), effort: opt(str),
 });
 const project = shape({ name: str, path: str, skills: opt(arr(str)) });
 const persona = shape({ name: str, tags: arr(str) });
 // A patch (#812): each field optional, an omitted one keeps its value — `{}` changes nothing.
 const configUpdate = shape({
   openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
-  systemControls: opt(bool), reasoningEffort: opt(str), disabledClis: opt(arr(str)),
+  systemControls: opt(bool), disabledClis: opt(arr(str)),
   webSearch: opt(bool), autoMemory: opt(bool), homeDiscordDm: opt(bool), homeTeamsDm: opt(bool), gitName: opt(str), gitEmail: opt(str),
 });
 const noteDraft = shape({ title: str, body: str, project: opt(str), source: opt(oneOf("chat", "manual")), slug: opt(str) });

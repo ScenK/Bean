@@ -93,7 +93,7 @@ const keyedTurn = shape({ key: str, role: oneOf("user", "assistant"), content: s
 const chatRequest = shape({
   history: arr(turn), summary: opt(str), message: str, gap: opt(bool), source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
   linkedNote: opt(obj), images: opt(arr(shape({ data: str, mimeType: str }))), documents: opt(arr(() => true)), turnId: opt(str),
-  delta: opt(arr(keyedTurn)),
+  delta: opt(arr(keyedTurn)), effort: opt(str),
 });
 // Home over SSH (#997): its open and its saves, so a remote shell reaches the main conversation too.
 const threadSave = shape({ id: str, title: str, items: arr(() => true), noteSlug: opt(str), turns: opt(arr(keyedTurn)), mainCursor: opt(num) });
@@ -106,7 +106,7 @@ const liveStart = shape({
 
 const configPatch = shape({
   openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
-  systemControls: opt(bool), reasoningEffort: opt(str), disabledClis: opt(arr(str)),
+  systemControls: opt(bool), disabledClis: opt(arr(str)),
   webSearch: opt(bool), autoMemory: opt(bool), homeDiscordDm: opt(bool), homeTeamsDm: opt(bool), gitName: opt(str), gitEmail: opt(str),
 });
 const project = shape({ name: str, path: str, skills: opt(arr(str)) });
