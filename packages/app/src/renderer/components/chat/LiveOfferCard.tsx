@@ -8,6 +8,7 @@ export function LiveOfferCard({
   agent,
   projectName,
   modelName,
+  effortName,
   state,
   onStart,
   onDismiss,
@@ -17,6 +18,8 @@ export function LiveOfferCard({
   projectName: string;
   /** The model Start launches with; undefined = the agent's default (not named). */
   modelName?: string;
+  /** The effort level Start launches with, when the model offers one. */
+  effortName?: string;
   state: "pending" | "started" | "dismissed" | "expired";
   onStart: () => void;
   onDismiss: () => void;
@@ -28,7 +31,7 @@ export function LiveOfferCard({
         {agent ? (
           <>
             <AgentAvatar agent={agent} size={16} />
-            <span>This looks like a job for {AGENT_NAMES[agent]} in <em>{projectName}</em>{modelName ? <> on <em>{modelName}</em></> : null}. Hand over this chat?</span>
+            <span>This looks like a job for {AGENT_NAMES[agent]} in <em>{projectName}</em>{modelName ? <> on <em>{modelName}{effortName ? ` · ${effortName}` : ""}</em></> : null}. Hand over this chat?</span>
           </>
         ) : (
           <span>This looks like a job for a coding agent, but none is turned on in Settings.</span>

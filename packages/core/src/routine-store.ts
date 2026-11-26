@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { isValidCron, nextRun } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
-import type { CliModels } from "./cli-models.js";
+import { cliOffersEffort, cliOffersModel, type CliModels } from "./cli-models.js";
 import type { Destination } from "./destinations.js";
 import { describeContinueErrors, describeEdgeError, describeGroupErrors, isDoneEnd } from "./routine-graph.js";
 
@@ -58,12 +58,12 @@ export type RoutineStep = StepEdges & (
    * fallback); absent = today's inference from `model` + the Settings preference.
    * `continues`: an earlier delegate step's id — this step resumes the newest session of that
    * step's lane (same `cli` and `project` required; rules: `describeContinueErrors`). */
-  | { kind: "delegate"; id?: string; skill?: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string; continues?: string }
-  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string; continues?: never }
+  | { kind: "delegate"; id?: string; skill?: string; project?: string; cli?: CliName; model?: string; effort?: string; timeoutMinutes?: number; instruction: string; continues?: string }
+  | { kind: "chat"; id?: string; skill?: string; model?: string; effort?: never; instruction: string; continues?: never }
   /** A deterministic check: runs `command` in a shell (in `project`, else the run's scratch dir)
    * — no model, memories, or skill (the `never`s keep `step.skill`/`.model` readable on the
    * union; the validator rejects them). Exit 0 = PASS, non-zero = FAIL, timeout = step error. */
-  | { kind: "command"; id?: string; command: string; project?: string; timeoutMinutes?: number; skill?: never; model?: never; cli?: never; continues?: never });
+  | { kind: "command"; id?: string; command: string; project?: string; timeoutMinutes?: number; skill?: never; model?: never; effort?: never; cli?: never; continues?: never });
 
 export type StepKind = RoutineStep["kind"];
 
@@ -246,7 +246,7 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
   }
   if (s.kind === "command") {
     if (!str(s.command) || !s.command.trim()) return `${at} (command) needs a command to run`;
-    for (const k of ["skill", "model", "cli", "instruction"]) {
+    for (const k of ["skill", "model", "effort", "cli", "instruction"]) {
       if (s[k] !== undefined) return `${at}: a command step runs no model — remove its ${k}`;
     }
     if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
@@ -258,10 +258,18 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
     if (s.cli !== undefined && !CLI_NAMES.includes(s.cli as CliName)) {
       return `${at} has an unknown coding agent ${JSON.stringify(s.cli)} (use ${CLI_NAMES.join(", ")})`;
     }
+    if (s.effort !== undefined && (!str(s.effort) || !s.effort.trim())) return `${at} has an invalid effort`;
     // Only when the caller hands us clis.json: loading must never drop a routine because this
     // Mac's model list changed — the run refuses with a clear error instead.
-    const offered = s.cli !== undefined && cliModels?.find((c) => c.provider === s.cli)?.models;
-    if (offered && str(s.model) && !offered.includes(s.model)) return `${at}: ${String(s.cli)} doesn't offer model "${s.model}"`;
+    if (cliModels && s.cli !== undefined) {
+      const cli = s.cli as CliName;
+      if (str(s.model) && !cliOffersModel(cliModels, cli, s.model)) {
+        return `${at}: ${cli} doesn't offer model "${s.model}"`;
+      }
+      if (str(s.model) && str(s.effort) && !cliOffersEffort(cliModels, cli, s.model, s.effort)) {
+        return `${at}: ${cli} doesn't offer effort "${s.effort}" on model "${s.model}"`;
+      }
+    }
     // Optional: a skill-less delegate step runs on its instruction alone. "No skill" omits the key.
     if (s.skill !== undefined && (!str(s.skill) || !s.skill)) return `${at} has an invalid skill`;
     if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
@@ -270,6 +278,7 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
   if (s.kind === "chat") {
     if (s.skill !== undefined && !str(s.skill)) return `${at} has an invalid skill`;
     if (s.cli !== undefined) return `${at}: chat steps run on Bean's own model — a coding agent only applies to delegate steps`;
+    if (s.effort !== undefined) return `${at}: chat steps run on Bean's own model — effort only applies to delegate steps`;
     return null;
   }
   return `${at} has an unknown kind`;

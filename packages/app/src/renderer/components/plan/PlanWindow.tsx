@@ -12,6 +12,7 @@ export function PlanWindow() {
   const { clis, models } = useCliAvailability();
   const [projects, setProjects] = useState<Project[]>([]);
   const [lastUsedModel, setLastUsedModel] = useState<string | undefined>(undefined);
+  const [lastUsedEffort, setLastUsedEffort] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     window.bean.getTheme().then(setTheme);
@@ -28,6 +29,7 @@ export function PlanWindow() {
   useEffect(() => {
     if (!run) return;
     window.bean.getModelMemory(run.skillName).then(setLastUsedModel);
+    window.bean.getModelMemory(`effort:${run.skillName}`).then(setLastUsedEffort);
   }, [run?.skillName]);
 
   useEffect(() => {
@@ -67,8 +69,10 @@ export function PlanWindow() {
             projectOptions={projectOptions}
             modelOptions={models}
             lastUsedModel={lastUsedModel}
+            lastUsedEffort={lastUsedEffort}
             onConfirm={(edited, choice) => {
               if (choice.model) void window.bean.setModelMemory(run.skillName, choice.model);
+              if (choice.effort) void window.bean.setModelMemory(`effort:${run.skillName}`, choice.effort);
               if (run.target === "chat") window.bean.runInChat(edited, run.skillName);
               else if (choice.cli) {
                 window.bean.launch({
@@ -76,6 +80,7 @@ export function PlanWindow() {
                   projectPath: choice.projectPath ?? "",
                   prompt: edited,
                   model: choice.model,
+                  ...(choice.effort ? { effort: choice.effort } : {}),
                 });
               }
               window.close();

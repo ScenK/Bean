@@ -4,7 +4,7 @@ import { MAX_IMAGES_PER_MESSAGE, PDF_NO_PATH, insertDroppedPath, newId, type Age
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
   CARRY_ITEMS, chatTurns, keyedTurns, modelHistory, placeSummary, sinceSummary, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
-  LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
+  LIVE_AGENTS, liveEffortKey, liveModelKey, liveProjectKey, offerLaunch, resolveAgentSelection, validProject, type AgentPick, type AgentPicks,
   LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths, type LabeledImage,
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
@@ -48,7 +48,7 @@ export const THREAD_SAVE_MS = 1000;
  * until the next `turn`/`ended` or main refuses it. Its user rows carry `pending: key` until the agent
  * picks them up (`consumed`), the send is refused, or the session ends (#746). */
 interface LiveState {
-  key: string; agent: LiveCli; projectPath: string; model?: string; sessionId?: string; turns: number; busy: boolean;
+  key: string; agent: LiveCli; projectPath: string; model?: string; effort?: string; sessionId?: string; turns: number; busy: boolean;
   queued: { text: string; rowId: string }[];
   continuing?: boolean; receipt?: LiveReceipt; unopened?: string[]; stopping?: boolean;
 }
@@ -358,6 +358,7 @@ export function ChatSession({
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
   const [projects, setProjects] = useState<Project[]>([]);
   const [lastUsedModels, setLastUsedModels] = useState<Record<string, string>>({});
+  const [lastUsedEfforts, setLastUsedEfforts] = useState<Record<string, string>>({});
   const [autoFocusDelegateId, setAutoFocusDelegateId] = useState<string | undefined>(undefined);
   // Full current skill list — passed to SkillCard so its "replaces existing" chip tracks
   // the user's live-edited name against real skills, not a stale server-computed flag.
@@ -372,6 +373,7 @@ export function ChatSession({
       for (const k of s ?? []) {
         if (k.target === "chat") continue;
         void window.bean.getModelMemory(k.name).then((m) => { if (m) setLastUsedModels((prev) => ({ ...prev, [k.name]: m })); }, () => {});
+        void window.bean.getModelMemory(`effort:${k.name}`).then((e) => { if (e) setLastUsedEfforts((prev) => ({ ...prev, [k.name]: e })); }, () => {});
       }
     }, () => {});
     window.bean.getConfig().then((c) => setDelegateCli(c?.delegateCli ?? ""), () => {});
@@ -398,16 +400,25 @@ export function ChatSession({
   const terminalShortcutRef = useRef<((s: TabShortcut) => void) | null>(null);
   // A discarding leave is awaiting main's terminal check: a second pick meanwhile is ignored.
   const leavingRef = useRef(false);
-  // The agent's model for the next fresh start ("" = its own default).
+  // The agent's model + effort for the next fresh start (resolved against clis.json).
   const [agentModel, setAgentModelState] = useState("");
   const agentModelRef = useRef("");
   const setAgentModel = (m: string): void => { agentModelRef.current = m; setAgentModelState(m); };
-  // Each agent's last project + model (#612): seeded at mount from model memory, updated by chip picks,
-  // restored on a switch to that agent. Read synchronously — `/claude <ask>` restores and starts in one tick.
+  const [agentEffort, setAgentEffortState] = useState<string | undefined>(undefined);
+  const agentEffortRef = useRef<string | undefined>(undefined);
+  const setAgentEffort = (e: string | undefined): void => { agentEffortRef.current = e; setAgentEffortState(e); };
+  // Each agent's last project + model + per-model effort (#612): seeded at mount from model memory,
+  // updated by chip picks, restored on a switch to that agent. Read synchronously — `/claude <ask>`
+  // restores and starts in one tick.
   const [picks, setPicksState] = useState<AgentPicks>({});
   const picksRef = useRef<AgentPicks>({});
   const updatePick = (agent: LiveCli, patch: AgentPick): void => {
-    picksRef.current = { ...picksRef.current, [agent]: { ...picksRef.current[agent], ...patch } };
+    const cur = picksRef.current[agent];
+    const efforts = patch.efforts ? { ...cur?.efforts, ...patch.efforts } : cur?.efforts;
+    picksRef.current = {
+      ...picksRef.current,
+      [agent]: { ...cur, ...patch, ...(efforts ? { efforts } : {}) },
+    };
     setPicksState(picksRef.current);
   };
   const [live, setLiveState] = useState<LiveState | undefined>(undefined);
@@ -586,8 +597,8 @@ export function ChatSession({
     window.bean.getModel().then(setModel, () => {});
     window.bean.listProjects().then(setProjects, () => {});
     refreshCatalogs();
-    // An absent key stays absent (project: keep the window's; model: default). A pick made before
-    // the read lands wins over it.
+    // An absent key stays absent (project: keep the window's; model: resolved to first configured).
+    // A pick made before the read lands wins over it.
     for (const cli of LIVE_AGENTS) {
       void Promise.all([window.bean.getModelMemory(liveModelKey(cli)), window.bean.getModelMemory(liveProjectKey(cli))]).then(([model, project]) => {
         const seeded: AgentPick = { ...(typeof model === "string" ? { model } : {}), ...(typeof project === "string" ? { project } : {}) };
@@ -596,6 +607,21 @@ export function ChatSession({
     }
     restore();
   }, []);
+  // Seed remembered per-model effort once models load (only for models that declare efforts).
+  useEffect(() => {
+    for (const m of runModels) {
+      if (!m.effortsByCli) continue;
+      for (const cli of LIVE_AGENTS) {
+        if (!m.effortsByCli[cli]?.efforts.length) continue;
+        if (picksRef.current[cli]?.efforts?.[m.id] !== undefined) continue;
+        void window.bean.getModelMemory(liveEffortKey(cli, m.id)).then((eff) => {
+          if (typeof eff === "string" && eff && picksRef.current[cli]?.efforts?.[m.id] === undefined) {
+            updatePick(cli, { efforts: { [m.id]: eff } });
+          }
+        }, () => {});
+      }
+    }
+  }, [runModels]);
 
   // A thread picked from history: restored inert (chat-thread.ts), its snapshot the baseline. The
   // linked-note chip comes back only if that note still exists. A failed restore (a remote core still
@@ -802,6 +828,9 @@ export function ChatSession({
           void window.bean.getModelMemory(skillName).then((modelId) => {
             if (modelId) setLastUsedModels((prev) => ({ ...prev, [skillName]: modelId }));
           });
+          void window.bean.getModelMemory(`effort:${skillName}`).then((eff) => {
+            if (eff) setLastUsedEfforts((prev) => ({ ...prev, [skillName]: eff }));
+          });
         }
         if (res.proposedNote) {
           // Offer the images from the chat's latest turn that had any (chatops does the same).
@@ -821,6 +850,9 @@ export function ChatSession({
           if (skillName) {
             void window.bean.getModelMemory(skillName).then((modelId) => {
               if (modelId) setLastUsedModels((prev) => ({ ...prev, [skillName]: modelId }));
+            }, () => {});
+            void window.bean.getModelMemory(`effort:${skillName}`).then((eff) => {
+              if (eff) setLastUsedEfforts((prev) => ({ ...prev, [skillName]: eff }));
             }, () => {});
           }
         }
@@ -899,7 +931,9 @@ export function ChatSession({
     const pick = picksRef.current[next];
     const project = validProject(projects, pick?.project);
     if (project !== undefined) rememberProject(project);
-    setAgentModel(validModel(runModels, next, pick?.model) ?? "");
+    const resolved = resolveAgentSelection(runModels, next, pick?.model, undefined, pick?.efforts);
+    setAgentModel(resolved.model ?? "");
+    setAgentEffort(resolved.effort);
   };
 
   const pickProject = (path: string): void => {
@@ -912,20 +946,33 @@ export function ChatSession({
     if (l) endSession(`${AGENT_NAMES[l.agent]} · ${projects.find((p) => p.path === path)?.name ?? "scratch"}`);
   };
 
-  // A session runs on the model it started with: the chip's model rows are disabled meanwhile.
+  // A session runs on the model/effort it started with: the chip's model/effort controls are disabled meanwhile.
   const pickModel = (model: string): void => {
     const agent = modeRef.current;
     if (!isLiveAgent(agent) || liveRef.current) return;
-    setAgentModel(model);
-    updatePick(agent, { model });
+    const resolved = resolveAgentSelection(runModels, agent, model, agentEffortRef.current, picksRef.current[agent]?.efforts);
+    setAgentModel(resolved.model ?? "");
+    setAgentEffort(resolved.effort);
+    updatePick(agent, { model: resolved.model ?? "" });
+  };
+
+  const pickEffort = (effort: string): void => {
+    const agent = modeRef.current;
+    if (!isLiveAgent(agent) || liveRef.current) return;
+    const resolved = resolveAgentSelection(runModels, agent, agentModelRef.current, effort, picksRef.current[agent]?.efforts);
+    setAgentEffort(resolved.effort);
+    if (resolved.model && resolved.effort) {
+      updatePick(agent, { efforts: { [resolved.model]: resolved.effort } });
+    }
   };
 
   // After a fresh start the user chose: the next chat (and chatops' next live card, for the model)
-  // opens on these. Model then project, in order; a failed write never fails the session.
-  const persistPicks = async (agent: LiveCli, projectPath: string, model: string | undefined): Promise<void> => {
+  // opens on these. Model, project, then per-model effort, in order; a failed write never fails the session.
+  const persistPicks = async (agent: LiveCli, projectPath: string, model: string | undefined, effort: string | undefined): Promise<void> => {
     try {
       await window.bean.setModelMemory(liveModelKey(agent), model ?? "");
       await window.bean.setModelMemory(liveProjectKey(agent), projectPath);
+      if (model && effort) await window.bean.setModelMemory(liveEffortKey(agent, model), effort);
     } catch (err) {
       console.error("couldn't remember the agent's picks:", err);
     }
@@ -957,16 +1004,23 @@ export function ChatSession({
   // `typed` = the text is the user's own composer text; a hand-off offer's instruction is Bean's
   // wording, so its row is `skill` (never citable for memory).
   const startSession = async (agent: LiveCli, text: string, display?: string, persist = false, typed = false): Promise<void> => {
-    const model = validModel(runModels, agent, agentModelRef.current);
+    const { model, effort } = resolveAgentSelection(runModels, agent, agentModelRef.current, agentEffortRef.current, picksRef.current[agent]?.efforts);
     // The ask carries the image paths; the transcript and the run-log label stay label-only.
     const ask = withImagePaths(text, imageLabelsRef.current);
     const label = display ?? (ask !== text ? text.slice(0, LABEL_LIMIT) : undefined);
-    const l: LiveState = { key: newId(), agent, projectPath: agentProjectRef.current, ...(model ? { model } : {}), turns: 0, busy: true, queued: [] };
+    const l: LiveState = {
+      key: newId(), agent, projectPath: agentProjectRef.current,
+      ...(model ? { model } : {}), ...(effort ? { effort } : {}),
+      turns: 0, busy: true, queued: [],
+    };
     setLive(l);
     const history = handoffItems(itemsRef.current);
     const userId = newId();
     setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: typed ? "live" : "skill", pending: l.key, at: new Date().toISOString() }]);
-    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask, history, ...(label ? { label } : {}), ...(model ? { model } : {}) }, mountId)
+    const res: LiveStartResult = await window.bean.liveStart(
+      { agent, projectPath: l.projectPath, ask, history, ...(label ? { label } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+      mountId,
+    )
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
       // A crash during startup already reported itself through the ended event.
@@ -975,7 +1029,7 @@ export function ChatSession({
       return;
     }
     knownSessionsRef.current.add(res.sessionId);
-    if (persist) void persistPicks(agent, l.projectPath, model);
+    if (persist) void persistPicks(agent, l.projectPath, model, effort);
     const cur = liveRef.current;
     if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId, mountId); return; } // ended while starting
     setLive({ ...cur, sessionId: res.sessionId, queued: [] });
@@ -1118,6 +1172,7 @@ export function ChatSession({
     const launch = offerLaunch(item.offer.projectPath, agent, picksRef.current, projects, runModels);
     rememberProject(launch.projectPath);
     setAgentModel(launch.model ?? "");
+    setAgentEffort(launch.effort);
     void startSession(agent, item.offer.instruction);
   };
 
@@ -1221,7 +1276,7 @@ export function ChatSession({
     id: string,
     editedPrompt: string,
     run: RouteSuggestion,
-    choice: { cli?: CliName; projectPath?: string; model?: string },
+    choice: { cli?: CliName; projectPath?: string; model?: string; effort?: string },
   ): void => {
     const inChat = run.target === "chat";
     if (!inChat && !choice.cli) return;
@@ -1230,6 +1285,10 @@ export function ChatSession({
       { kind: "status", id: newId(), text: inChat ? "Running here…" : "Handed off to Terminal.", tone: "done" },
     ]);
     if (choice.model) void window.bean.setModelMemory(run.skillName, choice.model);
+    if (choice.effort) {
+      void window.bean.setModelMemory(`effort:${run.skillName}`, choice.effort);
+      setLastUsedEfforts((prev) => ({ ...prev, [run.skillName]: choice.effort! }));
+    }
     if (!inChat) rememberProject(choice.projectPath ?? "");
     if (inChat) {
       void sendMessage(editedPrompt, `▶ ${run.skillName}`, false, undefined, "skill");
@@ -1240,6 +1299,7 @@ export function ChatSession({
       projectPath: choice.projectPath ?? "",
       prompt: editedPrompt,
       model: choice.model,
+      ...(choice.effort ? { effort: choice.effort } : {}),
     });
   };
 
@@ -1247,9 +1307,9 @@ export function ChatSession({
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "cancelled" } : it)));
   };
 
-  const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string, skillName?: string, cli?: CliName): Promise<void> => {
+  const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string, skillName?: string, cli?: CliName, effort?: string): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
-    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model, skillName, cli }, mountId);
+    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model, ...(effort ? { effort } : {}), skillName, cli }, mountId);
     rememberProject(projectPath);
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
@@ -1271,16 +1331,20 @@ export function ChatSession({
     }
   };
 
-  const confirmDelegate = async (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }): Promise<void> => {
+  const confirmDelegate = async (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; effort?: string; cli?: CliName }): Promise<void> => {
     const item = itemsRef.current.find(
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
     if (!item || (item.state !== "pending" && item.state !== "starting")) return;
-    const { projectPath, model, cli } = choice;
+    const { projectPath, model, effort, cli } = choice;
     const { skillName } = item.proposal;
     if (skillName && model) {
       void window.bean.setModelMemory(skillName, model);
       setLastUsedModels((prev) => ({ ...prev, [skillName]: model }));
+    }
+    if (skillName && effort) {
+      void window.bean.setModelMemory(`effort:${skillName}`, effort);
+      setLastUsedEfforts((prev) => ({ ...prev, [skillName]: effort }));
     }
     // The card shows (and a restore keeps) the project the run committed to. itemsRef too: the
     // start's task-id attach reads it after its await, possibly before the next render.
@@ -1288,7 +1352,7 @@ export function ChatSession({
       items.map((it) => (it.kind === "delegate" && it.id === id ? { ...it, proposal: { ...it.proposal, projectPath } } : it));
     itemsRef.current = commit(itemsRef.current);
     setItems(commit);
-    return startDelegate(id, projectPath, editedPrompt, item.proposal.instruction, model, skillName, cli);
+    return startDelegate(id, projectPath, editedPrompt, item.proposal.instruction, model, skillName, cli, effort);
   };
 
   // `/` terminal skill: adds a pending delegate card at the destination its menu caption named; the
@@ -1888,6 +1952,7 @@ export function ChatSession({
         projects={projects}
         runModels={runModels}
         lastUsedModels={lastUsedModels}
+        lastUsedEfforts={lastUsedEfforts}
         skills={skills}
         delegateCli={delegateCli}
         onSlashOpen={refreshCatalogs}
@@ -1901,8 +1966,9 @@ export function ChatSession({
         onStageImage={stageImage}
         mode={mode}
         agentProject={agentProject}
-        agentModel={isLiveAgent(mode) ? validModel(runModels, mode, agentModel) ?? "" : ""}
-        live={live ? { agent: live.agent, projectPath: live.projectPath, model: live.model, busy: live.busy, continuing: live.continuing, stopping: live.stopping } : undefined}
+        agentModel={isLiveAgent(mode) ? resolveAgentSelection(runModels, mode, agentModel, agentEffort, picks[mode]?.efforts).model ?? "" : ""}
+        agentEffort={isLiveAgent(mode) ? resolveAgentSelection(runModels, mode, agentModel, agentEffort, picks[mode]?.efforts).effort : undefined}
+        live={live ? { agent: live.agent, projectPath: live.projectPath, model: live.model, effort: live.effort, busy: live.busy, continuing: live.continuing, stopping: live.stopping } : undefined}
         offerLaunch={(offerPath) => {
           const agent = offerAgent(clis);
           return agent ? offerLaunch(offerPath, agent, picks, projects, runModels) : { projectPath: offerPath };
@@ -1910,6 +1976,7 @@ export function ChatSession({
         onPickAgent={switchMode}
         onPickProject={pickProject}
         onPickModel={pickModel}
+        onPickEffort={pickEffort}
         onEndAgent={() => { endSession("Bean"); setMode("bean"); }}
         stopTarget={stopTarget}
         onStopTurn={onStopTurn}

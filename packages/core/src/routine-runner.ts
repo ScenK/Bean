@@ -20,6 +20,7 @@ export interface DelegateStepRequest {
   /** The step's pinned harness — the adapter must refuse (not fall back) when it can't run. */
   cli?: CliName;
   model?: string;
+  effort?: string;
   /** The step's own timeout override; undefined = the impl's default. */
   timeoutMinutes?: number;
   priorOutputs: string;
@@ -443,6 +444,7 @@ async function runSteps(
             instruction: effective.instruction,
             ...(effective.cli ? { cli: effective.cli } : {}),
             model: effective.model,
+            ...(effective.effort ? { effort: effective.effort } : {}),
             ...(effective.timeoutMinutes ? { timeoutMinutes: effective.timeoutMinutes } : {}),
             priorOutputs: prior,
             ...(memories ? { memories } : {}),

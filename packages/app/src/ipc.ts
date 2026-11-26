@@ -1,5 +1,5 @@
 import {
-  launchInTerminal, scratchDir, availableModels, pickModel, planForDroppedSkill,
+  launchInTerminal, scratchDir, availableModels, pickModel, resolveWireModel, planForDroppedSkill,
   type Project, type RouteSuggestion, type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type NoteDraft,
   type Persona, type Routine, type CliModels, type RoutineBrief, type RoutineWatch, type ChatRequest,
 } from "@bean/core";
@@ -222,10 +222,14 @@ export function buildLaunchHandler(deps: LaunchHandlerDeps) {
         onError(new Error(`CLI "${req.mode}" is disabled or unavailable — enable it in Settings.`));
         return;
       }
-      if (req.model && deps.getCliModels) {
+      if ((req.model || req.effort) && deps.getCliModels) {
+        const cliModels = deps.getCliModels();
+        const model = req.model ? pickModel(availableModels(cliModels, enabled), req.mode, req.model) : undefined;
+        const wire = resolveWireModel(cliModels, req.mode, model, req.effort);
         checked = {
           ...req,
-          model: pickModel(availableModels(deps.getCliModels(), enabled), req.mode, req.model),
+          model: wire.model,
+          effort: wire.effort,
         };
       }
     }

@@ -790,6 +790,19 @@ button, input, textarea, select, a {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.bean-term-head .bean-chip-menu { margin-left: auto; min-width: 0; }
+.bean-chat-window .bean-term-project-trigger {
+  height: 22px;
+  padding: 0 6px;
+  margin-bottom: 3px;
+  border: none;
+  background: transparent;
+  color: var(--bean-text-dim);
+  font-size: 11px;
+  gap: 4px;
+}
+.bean-chat-window .bean-term-project-trigger:hover { background: var(--bean-surface-2); color: var(--bean-text); }
+.bean-chat-window .bean-term-project-trigger .bean-term-project { margin-left: 0; padding: 0; }
 .bean-term-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .bean-term-host {
   flex: 1;
@@ -1661,6 +1674,38 @@ button, input, textarea, select, a {
   margin-top: 4px;
 }
 .bean-chip-menu-hint { font-size: 11px; line-height: 1.4; color: var(--bean-text-dim); }
+/* Effort segmented control inside the combined Model + Effort popover. */
+.bean-effort-section { display: flex; flex-direction: column; gap: 6px; padding: 2px 4px 2px; }
+.bean-effort-seg {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  background: var(--bean-surface-2);
+  border-radius: 8px;
+}
+.bean-effort-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bean-text);
+  font: 600 11.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bean-effort-btn:hover:not(:disabled):not(.bean-effort-btn--on) {
+  background: var(--bean-surface);
+}
+.bean-effort-btn--on {
+  background: var(--bean-accent);
+  color: var(--bean-accent-ink);
+}
+.bean-effort-btn:disabled { cursor: default; }
+.bean-effort-btn:disabled:not(.bean-effort-btn--on) { color: var(--bean-text-dim); }
 
 /* target:-reminder banner — must be readable at a glance, unlike the dim projects-hint */
 .bean-skills-notice {
@@ -3710,6 +3755,58 @@ button, input, textarea, select, a {
   border-radius: 8px;
 }
 .bean-chat-window .bean-agent-chip { font-weight: 600; }
+/* Unified segmented agent pill: looks like one single 28px pill separated by `·`, while each
+   segment (Agent / Project / Model·Effort) hovers and opens its own focused popover. */
+.bean-chat-window .bean-agent-pill {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 2px;
+  color: var(--bean-text);
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 8px;
+}
+.bean-chat-window .bean-agent-pill--disabled { opacity: 0.6; }
+.bean-chat-window .bean-agent-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bean-text);
+  font: 600 12px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bean-chat-window .bean-agent-seg--project,
+.bean-chat-window .bean-agent-seg--model { font-weight: 500; }
+.bean-chat-window .bean-agent-seg:hover:not(:disabled),
+.bean-chat-window .bean-agent-seg--on {
+  background: var(--bean-surface-2);
+}
+.bean-chat-window .bean-agent-seg:disabled { cursor: default; }
+.bean-chat-window .bean-agent-seg--locked { color: var(--bean-text-dim); }
+.bean-chat-window .bean-agent-seg-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.bean-chat-window .bean-agent-sep {
+  flex: none;
+  color: var(--bean-text-dim);
+  font-size: 12px;
+  user-select: none;
+  padding: 0 1px;
+}
 .bean-chat-window .bean-btn {
   display: inline-flex;
   align-items: center;

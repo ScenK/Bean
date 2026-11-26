@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import {
   startLiveEngine, isLiveCli, recordRun, releaseRun, updateRunPid, killTree, killPendingGroups,
-  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, dbFile, isLiveSessionId, recordDelegateSession, cliOffersModel,
+  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, dbFile, isLiveSessionId, recordDelegateSession,
+  cliOffersModel, cliOffersEffort, resolveWireModel,
 } from "@bean/core";
 import type { CliModels, CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn, ResumableRun } from "@bean/core";
 import type { ClientId } from "./shell-ops.js";
@@ -48,12 +49,14 @@ export interface LiveStartRequest {
   /** Literal `--model` for the agent; absent = the CLI's own default. Must be in that CLI's
    * clis.json list — anything else is rejected, never swapped for another CLI. */
   model?: string;
+  /** Optional reasoning effort for `model`; must be in that model's clis.json `efforts`. */
+  effort?: string;
 }
 
 export type LiveStartResult = { sessionId: string; handedOver: number } | { error: string };
 /** Continue live: the project comes from the recorded run, so the renderer learns it here. */
 /** `model` = the recorded run's model it resumed with (still offered); absent = the CLI's default. */
-export type LiveResumeResult = { sessionId: string; agent: LiveCli; projectPath: string; model?: string } | { error: string };
+export type LiveResumeResult = { sessionId: string; agent: LiveCli; projectPath: string; model?: string; effort?: string } | { error: string };
 
 export const HANDOFF_ITEMS = 20;
 export const HANDOFF_CHARS = 8000;
@@ -192,6 +195,8 @@ interface Session {
   resumeId?: string;
   /** Literal --model: allowlisted (fresh) or the resumed run's recorded one, still offered; unset = the CLI's default. */
   model?: string;
+  /** Optional allowlisted reasoning effort (mapped onto CLI argv or `effortIds` at spawn). */
+  effort?: string;
   /** The CLI's session id once reported — claimed like resumeId, so Continue live can't put a
    * second writer on it while this child is still stopping. */
   cliId?: string;
@@ -280,9 +285,15 @@ export function createLiveTasks(deps: LiveTasksDeps) {
     const known = mountProjects.get(s.mountId);
     mountProjects.set(s.mountId, known === undefined || known === projectPath ? projectPath : null);
     emit(sessionId, s, { type: "started", projectPath, handedOver });
+    const wire = resolveWireModel(deps.cliModels(), agent, s.model, s.effort);
     try {
       s.handle = engine(
-        { cli: agent, projectPath, prompt, ...(s.model ? { model: s.model } : {}), ...(s.resumeId ? { resume: s.resumeId } : {}) },
+        {
+          cli: agent, projectPath, prompt,
+          ...(wire.model ? { model: wire.model } : {}),
+          ...(wire.effort ? { effort: wire.effort } : {}),
+          ...(s.resumeId ? { resume: s.resumeId } : {}),
+        },
         {
           onOutput: (line) => { if (sessions.get(sessionId) === s && !s.stopping) { s.busy = true; emit(sessionId, s, { type: "output", line }); } },
           onText: (text) => { if (sessions.get(sessionId) === s && !s.stopping) { s.busy = true; emit(sessionId, s, { type: "text", text }); } },
@@ -352,13 +363,23 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (model !== undefined && !cliOffersModel(deps.cliModels(), agent, model)) {
         return { error: `${LIVE_AGENT_NAMES[agent]} doesn't offer the model "${model.slice(0, 80)}" in clis.json.` };
       }
+      const effort = req.effort;
+      if (effort !== undefined && typeof effort !== "string") return { error: "Invalid live session request." };
+      if (effort !== undefined && (!model || !cliOffersEffort(deps.cliModels(), agent, model, effort))) {
+        return { error: `${LIVE_AGENT_NAMES[agent]} doesn't offer effort "${effort.slice(0, 40)}" for that model in clis.json.` };
+      }
       const handoff = buildHandoff(parseHistory(req.history), req.ask);
       if ("error" in handoff) return handoff;
       const refused = refusal(owner);
       if (refused) return { error: refused };
       // Registered before any await, so a window close during startup finds it and cancels the spawn.
       const sessionId = deps.newId();
-      const s: Session = { ...owner, agent, seq: 0, stopping: false, queued: false, turns: 0, ask: label || req.ask.trim(), ...(model ? { model } : {}) };
+      const s: Session = {
+        ...owner, agent, seq: 0, stopping: false, queued: false, turns: 0,
+        ask: label || req.ask.trim(),
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+      };
       sessions.set(sessionId, s);
       const projectPath = req.projectPath || deps.scratchPath || "";
       let allowed = false;

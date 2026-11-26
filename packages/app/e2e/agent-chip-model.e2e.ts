@@ -15,7 +15,13 @@ test("agent chip: pick project + model, start, relaunch — the chip restores bo
   await writeFile(join(bin, "claude"), `#!/bin/sh\nprintf '%s\\n' "$@" > "$HOME/argv-claude.txt"\nexit 0\n`, "utf8");
   await chmod(join(bin, "claude"), 0o755);
   await writeFile(join(home.homeDir, ".bean", "clis.json"), JSON.stringify([
-    { provider: "claude", models: ["sonnet", "opus"] },
+    {
+      provider: "claude",
+      models: [
+        { id: "sonnet", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+        { id: "opus", efforts: ["low", "medium", "high", "max"], defaultEffort: "high" },
+      ],
+    },
   ]), "utf8");
   const stub = await startStubOpenAI();
   const env = {
@@ -32,18 +38,19 @@ test("agent chip: pick project + model, start, relaunch — the chip restores bo
     await chat.waitForLoadState("domcontentloaded");
     return chat;
   };
-  const pick = async (chat: Page, row: string): Promise<void> => {
-    await chat.locator(".bean-agent-chip").click();
+  const pick = async (chat: Page, seg: "agent" | "project" | "model", row: string): Promise<void> => {
+    await chat.locator(`.bean-agent-seg--${seg}`).click();
     await chat.locator(".bean-chip-menu-row", { hasText: row }).first().click();
   };
 
   let app = await launchBean(env);
   try {
     let chat = await openChat(app);
-    await pick(chat, "Claude Code");
-    await pick(chat, "demo");
-    await pick(chat, "opus");
-    await expect(chat.locator(".bean-agent-chip")).toContainText("Claude Code · demo · opus");
+    await pick(chat, "agent", "Claude Code");
+    await pick(chat, "project", "demo");
+    await pick(chat, "model", "opus");
+    await chat.locator(".bean-effort-btn", { hasText: "Max" }).click();
+    await expect(chat.locator(".bean-agent-chip")).toContainText("Claude Code · demo · opus · Max");
     const composer = chat.locator(".bean-input--composer");
     await composer.fill("fix X");
     await composer.press("Enter");
@@ -52,17 +59,22 @@ test("agent chip: pick project + model, start, relaunch — the chip restores bo
       .not.toBe("");
     const argv = (await readFile(join(home.homeDir, "argv-claude.txt"), "utf8")).trim().split("\n");
     expect(argv[argv.indexOf("--model") + 1]).toBe("opus");
-    // Saved after the start, model then project — wait for the project key before relaunching.
+    expect(argv[argv.indexOf("--effort") + 1]).toBe("max");
+    // Saved after the start, model then project then effort — wait for the effort key before relaunching.
     // A read can land mid-write (writeFile truncates first), so a parse failure just polls again.
     await expect.poll(async () => readFile(join(home.homeDir, ".bean", "model-memory.json"), "utf8").then((t) => JSON.parse(t) as Record<string, string>).catch(() => ({})), { timeout: 15_000 })
-      .toMatchObject({ "live:model:claude": "opus", "desktop:live:project:claude": home.projectPath });
+      .toMatchObject({
+        "live:model:claude": "opus",
+        "desktop:live:project:claude": home.projectPath,
+        "desktop:live:effort:claude:opus": "max",
+      });
 
     await app.close();
     app = await launchBean(env);
     chat = await openChat(app);
     await expect(chat.locator(".bean-agent-chip")).toContainText("Bean");
-    await pick(chat, "Claude Code");
-    await expect(chat.locator(".bean-agent-chip")).toContainText("Claude Code · demo · opus");
+    await pick(chat, "agent", "Claude Code");
+    await expect(chat.locator(".bean-agent-chip")).toContainText("Claude Code · demo · opus · Max");
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }

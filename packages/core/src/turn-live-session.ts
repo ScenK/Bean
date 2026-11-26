@@ -36,7 +36,7 @@ export interface TurnEvent {
 
 export interface TurnAdapter {
   command: string;
-  args: (req: { prompt: string; model?: string; resume?: string }) => string[];
+  args: (req: { prompt: string; model?: string; effort?: string; resume?: string }) => string[];
   /** Checked before spawning a resume; false → RESUME_REJECTED without a spawn. */
   validResume: (id: string) => boolean;
   /** A fresh stdout-event parser per turn (agy buffers prose deltas by step across events). */
@@ -129,7 +129,7 @@ export function startTurnLiveSession(
     let stderrBuf = "";
     const parse = adapter.parser();
 
-    const c = spawnFn(cli, adapter.args({ prompt, model: req.model, resume: sessionId }), req.projectPath);
+    const c = spawnFn(cli, adapter.args({ prompt, model: req.model, effort: req.effort, resume: sessionId }), req.projectPath);
     child = c;
     interruptTurn = () => {
       if (interrupted) return;

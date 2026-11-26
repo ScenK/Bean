@@ -19,8 +19,8 @@ import { spawnEnv } from "./spawn-env.js";
 export interface RoutineStepDeps {
   /** ~/.bean — scratch workspace, run records and the delegate_runs log. */
   dir: string;
-  /** The step's CLI/model: a pinned `cli` must throw (never swap harness); undefined = no CLI. */
-  selectCli: (req: { cli?: CliName; model?: string }) => CliModelSelection | undefined;
+  /** The step's CLI/model/effort: a pinned `cli` must throw (never swap harness); undefined = no CLI. */
+  selectCli: (req: { cli?: CliName; model?: string; effort?: string }) => CliModelSelection | undefined;
   /** Delegate spawn (the desktop injects its login-shell PATH); absent = core's default. */
   spawnFn?: DelegateSpawnFn;
   /** PATH for command steps (see safety-packaged-app-path-detection). */
@@ -44,13 +44,14 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
     new Promise<DelegateStepResult>((resolve, reject) => {
       let choice: CliModelSelection | undefined;
       try {
-        choice = deps.selectCli({ cli: req.cli, model: req.model });
+        choice = deps.selectCli({ cli: req.cli, model: req.model, effort: req.effort });
       } catch (err) { reject(err); return; }
       if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
       // Stopped before the spawn: nothing to start, nothing to record.
       if (req.signal?.aborted) { reject(new Error(STOPPED_BY_YOU)); return; }
       const cli = choice.cli;
       const model = choice.model;
+      const effort = choice.effort;
       const prompt =
         (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
         (req.memories ? `\n\n${req.memories}` : "") +
@@ -73,6 +74,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
           projectPath,
           prompt,
           ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
           ...(req.skill?.browser ? { browser: true } : {}),
           // Only the same harness can resume; a rejected id starts fresh (runDelegate's notice).
           ...(req.resume?.cli === cli ? { resume: req.resume.sessionId } : {}),

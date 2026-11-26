@@ -1,8 +1,9 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate, StepRoute } from "@bean/core";
-import { stepAvailabilityProblem } from "@bean/core/models";
+import { effortLabel, matchAvailableModel, modelEfforts, stepAvailabilityProblem } from "@bean/core/models";
 import { continueTargets, DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, DONE, QUIET, isDoneEnd, isQuietEnd, stepContinueCaptions, stepEdgeProblems, stepEdgeWarnings, stepGroupCaptions, stepGroups, stepLanes, stepPathCaptions, type StepGroup } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
+import { ModelEffortMenu } from "../../shared/ModelEffortMenu.js";
 import { StepFlow } from "../../shared/StepFlow.js";
 import { duplicateStep, moveStep, removeStep, setStepAlongside, setStepContinues, setStepNext, setStepRoute, switchStepKind, withStepIds } from "./step-ids.js";
 
@@ -127,12 +128,32 @@ export function StepsEditor(props: {
     const { skill: _old, ...rest } = step as RoutineStep & { skill?: string };
     setStep(i, (name ? { ...rest, skill: name } : rest) as RoutineStep);
   };
-  const setModel = (i: number, step: RoutineStep, id?: string): void =>
+  const setModel = (i: number, step: RoutineStep, id?: string): void => {
+    if (step.kind === "delegate") {
+      const targetCli = step.cli ?? models.find((m) => m.id === id)?.availableOn[0];
+      const info = id && targetCli ? modelEfforts(models, targetCli, id) : undefined;
+      const keepEffort = step.effort && info?.efforts.includes(step.effort) ? step.effort : undefined;
+      const { effort: _old, ...rest } = step;
+      setStep(i, { ...rest, model: id, ...(keepEffort ? { effort: keepEffort } : {}) });
+      return;
+    }
     setStep(i, { ...step, model: id } as RoutineStep);
-  // A pinned harness keeps only a model it offers; "auto" keeps any model.
+  };
+  const setEffort = (i: number, step: RoutineStep & { kind: "delegate" }, effort?: string): void => {
+    const hit = step.model ? matchAvailableModel(models, step.model, step.cli) : undefined;
+    const canonicalModel = hit?.model.id ?? step.model;
+    const { effort: _old, ...rest } = step;
+    setStep(i, { ...rest, ...(canonicalModel ? { model: canonicalModel } : {}), ...(effort ? { effort } : {}) });
+  };
+  // A pinned harness keeps only a model (and effort) it offers; "auto" keeps any model.
   const setCli = (i: number, step: RoutineStep & { kind: "delegate" }, cli?: CliName): void => {
-    const keepModel = !cli || !step.model || models.some((m) => m.id === step.model && m.availableOn.includes(cli));
-    setStep(i, { ...step, cli, model: keepModel ? step.model : undefined });
+    const hit = step.model ? matchAvailableModel(models, step.model, cli) : undefined;
+    const keepModel = !cli || !step.model || hit !== undefined;
+    const nextModel = keepModel ? step.model : undefined;
+    const info = nextModel && cli ? modelEfforts(models, cli, nextModel) : undefined;
+    const keepEffort = step.effort && (!cli || info?.efforts.includes(step.effort)) ? step.effort : undefined;
+    const { effort: _old, ...rest } = step;
+    setStep(i, { ...rest, cli, model: nextModel, ...(keepEffort ? { effort: keepEffort } : {}) });
   };
   const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void => setStep(i, switchStepKind(step, kind));
 
@@ -142,8 +163,13 @@ export function StepsEditor(props: {
         const missingSkill = step.kind !== "command" && skillMissing(step.skill);
         const skillLabel = step.skill ? `skill · ${step.skill}${missingSkill ? " — not found" : ""}` : "skill · none";
         const projName = projects.find((p) => p.path === (step.kind !== "chat" ? step.project : undefined))?.name;
-        const modelLabel = step.model ? (models.find((m) => m.id === step.model)?.label ?? step.model) : "Bean picks model";
         const cli = step.kind === "delegate" ? step.cli : undefined;
+        const matchedModel = step.kind !== "command" && step.model ? matchAvailableModel(models, step.model, cli) : undefined;
+        const shownModelId = matchedModel?.model.id ?? (step.kind !== "command" ? step.model : undefined);
+        const shownEffort = step.kind === "delegate" ? (step.effort ?? matchedModel?.impliedEffort) : undefined;
+        const modelLabel = shownModelId
+          ? `${matchedModel?.model.label ?? shownModelId}${shownEffort ? ` · ${effortLabel(shownEffort)}` : ""}`
+          : "Bean picks model";
         const problem = step.kind === "delegate" ? stepAvailabilityProblem(step, clis, models) : undefined;
         const onFail = step.gate?.onFail;
         const gotoIndex = typeof onFail === "object" ? indexOf(onFail.goto) : -1;
@@ -349,31 +375,19 @@ export function StepsEditor(props: {
                   menuWidth={320}
                 >
                   {(close) => (
-                    <div class="bean-chip-menu-list">
-                      <button
-                        type="button"
-                        class={`bean-chip-menu-row${step.model ? "" : " bean-chip-menu-row--on"}`}
-                        onClick={() => { setModel(i, step, undefined); close(); }}
-                      >{step.model ? "" : "✓ "}Bean picks the model</button>
-                      <div class="bean-chip-menu-divider" />
-                      {models.filter((m) => !cli || m.availableOn.includes(cli)).map((m) => {
-                        const available = m.availableOn.some((candidate) => clis.includes(candidate));
-                        return (
-                          <button
-                            key={m.id}
-                            type="button"
-                            disabled={!available}
-                            class={`bean-chip-menu-row bean-chip-menu-row--model${step.model === m.id ? " bean-chip-menu-row--on" : ""}${available ? "" : " bean-chip-menu-row--dimmed"}`}
-                            onClick={() => { if (available) { setModel(i, step, m.id); close(); } }}
-                          >
-                            <span class="bean-chip-menu-row-title">{step.model === m.id ? "✓ " : ""}{m.label}</span>
-                            <span class="bean-chip-menu-caption">
-                              {m.availableOn.join("  /  ") || "no CLI support"}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <ModelEffortMenu
+                      models={models.filter((m) => !cli || m.availableOn.includes(cli))}
+                      cli={cli ?? matchedModel?.cli}
+                      selectedModel={shownModelId}
+                      selectedEffort={step.kind === "delegate" ? shownEffort : undefined}
+                      topOption={{ label: "Bean picks the model", selected: !step.model }}
+                      allowUnsetEffort={step.kind === "delegate"}
+                      enabledClis={clis}
+                      showCliCaptions
+                      onPickModel={(id) => setModel(i, step, id)}
+                      onPickEffort={(eff) => { if (step.kind === "delegate") setEffort(i, step, eff); }}
+                      close={close}
+                    />
                   )}
                 </ChipMenu>
                 ) : null}

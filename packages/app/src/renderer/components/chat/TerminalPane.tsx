@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { Project } from "@bean/core";
 import type { TerminalEvent } from "../../../terminal-tasks.js";
+import { ChipMenu } from "../../shared/ChipMenu.js";
 import { rootedPaths } from "./chat-links.js";
 
 // The chat's own terminals (#663, tabs #674): each shell lives in main (terminal-tasks.ts), this pane
@@ -173,15 +174,23 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
   onShellsRef.current = onShells;
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
-  const projectRef = useRef(projectPath);
-  projectRef.current = projectPath;
+  // The terminal's own start-folder pick: follows `projectPath` (agent mode) when it changes, and
+  // can also be picked right from the terminal header in Bean mode (where the chat composer has no project).
+  const [pickedProject, setPickedProject] = useState(projectPath);
+  const prevProjectProp = useRef(projectPath);
+  if (prevProjectProp.current !== projectPath) {
+    prevProjectProp.current = projectPath;
+    if (pickedProject !== projectPath) setPickedProject(projectPath);
+  }
+  const projectRef = useRef(pickedProject);
+  projectRef.current = pickedProject;
   const [visible, setVisible] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [height, setHeight] = useState<number | undefined>(savedHeight);
   const [dragging, setDragging] = useState(false);
 
   const current = tabs.find((t) => t.id === active);
-  const shownPath = current?.startedIn ?? projectPath;
+  const shownPath = current?.startedIn ?? pickedProject;
   const name = shownPath ? projects.find((p) => p.path === shownPath)?.name ?? shownPath.split("/").pop() ?? shownPath : "Scratch";
   const live = tabs.filter((t) => t.alive).length;
   const liveSent = useRef(0);
@@ -564,7 +573,30 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
         >
           +
         </button>
-        <span class="bean-term-project" title={shownPath || undefined}>{name}</span>
+        {projects.length > 0 ? (
+          <ChipMenu
+            chipClass="bean-term-project-trigger"
+            chipLabel={<span class="bean-term-project" title={shownPath || undefined}>{name}</span>}
+          >
+            {(close) => (
+              <div class="bean-chip-menu-list">
+                <div class="bean-chip-menu-hint">New terminals start in</div>
+                {[{ path: "", name: "Scratch" }, ...projects].map((p) => (
+                  <button
+                    key={p.path || "__scratch__"}
+                    type="button"
+                    class={`bean-chip-menu-row${p.path === pickedProject ? " bean-chip-menu-row--on" : ""}${p.path ? "" : " bean-chip-menu-row--no-project"}`}
+                    onClick={() => { setPickedProject(p.path); close(); }}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </ChipMenu>
+        ) : (
+          <span class="bean-term-project" title={shownPath || undefined}>{name}</span>
+        )}
       </div>
       <div class="bean-term-body" ref={bodyRef}>
         {tabs.map((t) => (

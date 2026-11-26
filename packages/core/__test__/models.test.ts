@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { availableModels, pickModel, pinnedStepSelection, resolveCliModelSelection, stepAvailabilityProblem } from "../src/models.js";
+import { availableModels, pickEffort, pickModel, pinnedStepSelection, resolveCliModelSelection, stepAvailabilityProblem } from "../src/models.js";
 import type { CliModels } from "../src/cli-models.js";
 
 const CLI_MODELS: CliModels[] = [
@@ -137,4 +137,35 @@ test("stepAvailabilityProblem / pinnedStepSelection refuse instead of falling ba
   expect(pinnedStepSelection({ cli: "claude" }, [...enabled], models)).toEqual({ cli: "claude", model: "sonnet" });
   expect(pinnedStepSelection({ cli: "opencode", model: "github-copilot/claude-sonnet-5" }, [...enabled], models))
     .toEqual({ cli: "opencode", model: "github-copilot/claude-sonnet-5" });
+});
+
+test("effortsByCli, pickEffort, and legacy agy effortIds sprout compatibility", () => {
+  const cliModels: CliModels[] = [
+    {
+      provider: "claude",
+      models: ["haiku"],
+      modelDetails: { haiku: { efforts: ["low", "medium", "high"], defaultEffort: "medium" } },
+    },
+    {
+      provider: "agy",
+      models: ["gemini-4-neon"],
+      modelDetails: {
+        "gemini-4-neon": {
+          efforts: ["low", "high", "xhigh"],
+          defaultEffort: "high",
+          effortIds: { low: "gemini-4-neon-low", high: "gemini-4-neon-high", xhigh: "gemini-4-neon-xhigh" },
+        },
+      },
+    },
+  ];
+  const models = availableModels(cliModels, ["claude", "agy"]);
+  expect(pickEffort(models, "claude", "haiku")).toBe("medium");
+  expect(pickEffort(models, "claude", "haiku", "high")).toBe("high");
+  expect(pickEffort(models, "claude", "haiku", "bogus", "low")).toBe("low");
+  // Existing sprout pinning legacy "gemini-4-neon-high" stays valid and resolves cleanly.
+  expect(stepAvailabilityProblem({ cli: "agy", model: "gemini-4-neon-high" }, ["claude", "agy"], models)).toBeUndefined();
+  expect(pinnedStepSelection({ cli: "agy", model: "gemini-4-neon-high" }, ["claude", "agy"], models))
+    .toEqual({ cli: "agy", model: "gemini-4-neon", effort: "high" });
+  expect(stepAvailabilityProblem({ cli: "claude", model: "haiku", effort: "bogus" }, ["claude", "agy"], models))
+    .toMatch(/doesn't offer effort/);
 });

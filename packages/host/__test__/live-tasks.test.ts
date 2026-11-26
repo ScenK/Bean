@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   TURN_QUEUE_FULL, findDelegateRun, recordDelegateSession,
-  type CliName, type LiveSessionCallbacks, type LiveSessionRequest, type ResumableRun,
+  type CliModels, type CliName, type LiveSessionCallbacks, type LiveSessionRequest, type ResumableRun,
 } from "@bean/core";
 import {
   ASK_LIMIT, LABEL_LIMIT, HANDOFF_CHARS, HANDOFF_ITEMS, LIVE_CAP_REACHED, LIVE_SESSION_CAP, buildHandoff, createLiveTasks, liveSpawnFn,
@@ -22,7 +22,7 @@ const record = (dir: string, id: string): { pid: number } | undefined => {
 };
 
 function harness(opts: {
-  clis?: CliName[]; allowed?: (p: string) => Promise<boolean>; pid?: number; sendOk?: boolean;
+  clis?: CliName[]; cliModels?: CliModels[]; allowed?: (p: string) => Promise<boolean>; pid?: number; sendOk?: boolean;
   findResumable?: (id: string) => ResumableRun;
   modelOffered?: (cli: string, model: string) => boolean;
   /** The child's pid once the first send spawns it (a lazy resume). */
@@ -41,7 +41,7 @@ function harness(opts: {
   const live = createLiveTasks({
     dir,
     enabledClis: () => opts.clis ?? ["claude", "codex", "opencode"],
-    cliModels: () => [
+    cliModels: () => opts.cliModels ?? [
       { provider: "claude", models: ["opus", "--danger"] },
       { provider: "codex", models: ["gpt-5.5"] },
       { provider: "opencode", models: ["anthropic/claude-sonnet-4-5"] },
@@ -88,6 +88,36 @@ describe("createLiveTasks", () => {
     expect(h.reqs).toHaveLength(0);
     expect(h.events).toHaveLength(0);
     expect(h.live.canStart(A)).toBe(true);
+  });
+
+  it("validates effort against clis.json and resolves effortIds onto the wire model", async () => {
+    const h = harness({
+      clis: ["claude", "agy"],
+      cliModels: [
+        { provider: "claude", models: ["haiku"], modelDetails: { haiku: { efforts: ["low", "medium", "high"], defaultEffort: "medium" } } },
+        {
+          provider: "agy",
+          models: ["gemini-4-neon"],
+          modelDetails: {
+            "gemini-4-neon": {
+              efforts: ["low", "high", "xhigh"],
+              defaultEffort: "high",
+              effortIds: { low: "gemini-4-neon-low", high: "gemini-4-neon-high", xhigh: "gemini-4-neon-xhigh" },
+            },
+          },
+        },
+      ],
+    });
+    expect(await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go", model: "haiku", effort: "bogus" }))
+      .toEqual({ error: `Claude Code doesn't offer effort "bogus" for that model in clis.json.` });
+    expect(await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go", model: "haiku", effort: "high" }))
+      .toMatchObject({ sessionId: "s1" });
+    expect(await h.live.start(B, { agent: "agy", projectPath: "/proj", ask: "go", model: "gemini-4-neon", effort: "xhigh" }))
+      .toMatchObject({ sessionId: "s2" });
+    expect(h.reqs).toEqual([
+      { cli: "claude", projectPath: "/proj", prompt: "go", model: "haiku", effort: "high" },
+      { cli: "agy", projectPath: "/proj", prompt: "go", model: "gemini-4-neon-xhigh" },
+    ]);
   });
 
   it("starts, sends and stops a session, releasing its record only once the process exits", async () => {

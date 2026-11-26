@@ -31,7 +31,7 @@ import type { Persona } from "../persona.js";
 import type { Memory } from "../memory/memory.js";
 import type { RecallScope } from "../memory/store.js";
 import type { CliName } from "../launcher.js";
-import { cliOffersModel, type CliModels } from "../cli-models.js";
+import { cliOffersModel, resolveWireModel, type CliModels } from "../cli-models.js";
 import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type DelegateRunRow, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
@@ -670,11 +670,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const onMain = historyId(p.conversationId) === MAIN_CONVERSATION_ID;
     const resume = onMain ? undefined : deps.conversations.threadSession(p.conversationId, cli);
     const resetsAtLaunch = resets.get(p.conversationId) ?? 0;
+    const wire = resolveWireModel(deps.cliModels, cli, model);
     const req: DelegateRequest = {
       cli,
       projectPath: p.proposal.projectPath,
       prompt: skill ? composePrompt(skill, p.proposal.instruction) : p.proposal.instruction,
-      ...(model !== undefined ? { model } : {}),
+      ...(wire.model !== undefined ? { model: wire.model } : {}),
+      ...(wire.effort !== undefined ? { effort: wire.effort } : {}),
       ...(resume ? { resume } : {}),
       ...(skill?.browser ? { browser: true } : {}),
     };
@@ -820,13 +822,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     let sessionId = resume?.sessionId;
     let turns = 0;
     let lastSaid: string | undefined;
+    const liveWire = resolveWireModel(deps.cliModels, cli, liveModelFor(cli, p.proposal.model));
     const started = deps.liveSessions.start({
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
       instruction,
       ask: p.proposal.instruction,
       cli,
-      model: liveModelFor(cli, p.proposal.model),
+      ...(liveWire.model ? { model: liveWire.model } : {}),
+      ...(liveWire.effort ? { effort: liveWire.effort } : {}),
       ...(resume ? { resume: resume.sessionId } : {}),
       starterId,
       // Default restricted: only the starter (+ any co-drivers they add) steers, unless they

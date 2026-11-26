@@ -7,7 +7,7 @@ import type { DelegateSpawnFn } from "./delegate.js";
 import { deliverDispatches, interruptOpenDispatches, type Dispatch } from "./dispatch-store.js";
 import { loadMemories } from "./memory/store.js";
 import { loadPersona } from "./persona-store.js";
-import type { CliModels } from "./cli-models.js";
+import { resolveWireModel, type CliModels } from "./cli-models.js";
 import { availableModels, pinnedStepSelection, resolveDelegateSelection } from "./models.js";
 import { enqueueOutbox } from "./outbox.js";
 import { fireDueReminders, type ReminderDelivery } from "./reminders.js";
@@ -78,9 +78,14 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
   const steps = makeRoutineSteps({
     dir,
     // A pinned harness refuses here, before any reservation or spawn — never a silent swap.
-    selectCli: (req) => req.cli
-      ? pinnedStepSelection({ cli: req.cli, model: req.model }, deps.clis(), availableModels(deps.cliModels, deps.clis()))
-      : resolveDelegateSelection(deps.cliModels, deps.clis(), deps.getDelegateCli(), req.model),
+    selectCli: (req) => {
+      const picked = req.cli
+        ? pinnedStepSelection({ cli: req.cli, model: req.model, effort: req.effort }, deps.clis(), availableModels(deps.cliModels, deps.clis()))
+        : resolveDelegateSelection(deps.cliModels, deps.clis(), deps.getDelegateCli(), req.model, req.effort);
+      if (!picked) return undefined;
+      const wire = resolveWireModel(deps.cliModels, picked.cli, picked.model, picked.effort);
+      return { cli: picked.cli, ...(wire.model ? { model: wire.model } : {}), ...(wire.effort ? { effort: wire.effort } : {}) };
+    },
     ...(deps.spawnFn ? { spawnFn: deps.spawnFn } : {}),
     path: deps.path,
   });

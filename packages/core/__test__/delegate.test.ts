@@ -176,6 +176,17 @@ describe("delegateCommand codex", () => {
     expect(args).toContain("--model");
     expect(args).toContain("gpt-5.6-sol");
   });
+
+  it("maps effort onto each CLI's native flag (claude --effort, codex -c, opencode --variant, agy --effort)", () => {
+    expect(delegateCommand({ cli: "claude", projectPath: "/p", prompt: "go", model: "haiku", effort: "high" }).args)
+      .toEqual(expect.arrayContaining(["--model", "haiku", "--effort", "high"]));
+    expect(delegateCommand({ cli: "codex", projectPath: "/p", prompt: "go", model: "gpt-6.2-sol", effort: "xhigh" }).args)
+      .toEqual(expect.arrayContaining(["--model", "gpt-6.2-sol", "-c", 'model_reasoning_effort="xhigh"']));
+    expect(delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "go", model: "github-copilot/gpt-6.2-sol", effort: "low" }).args)
+      .toEqual(expect.arrayContaining(["--model", "github-copilot/gpt-6.2-sol", "--variant", "low"]));
+    expect(delegateCommand({ cli: "agy", projectPath: "/p", prompt: "go", model: "gemini-4-neon", effort: "high" }).args)
+      .toEqual(expect.arrayContaining(["--model", "gemini-4-neon", "--effort", "high"]));
+  });
 });
 
 describe("claudeTailLine", () => {

@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { cliOffersModel, loadCliModels, watchCliModels } from "../src/cli-models.js";
+import { cliOffersEffort, cliOffersModel, loadCliModels, resolveWireModel, watchCliModels } from "../src/cli-models.js";
 
 async function dir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "bean-clis-"));
@@ -111,4 +111,41 @@ test("watchCliModels refills the same array in place when the user file changes"
   } finally {
     stop();
   }
+});
+
+test("structured models parse efforts, defaultEffort, and effortIds while keeping legacy aliases valid", async () => {
+  const d = await dir();
+  await writeFile(join(d, "default.json"), JSON.stringify([
+    {
+      provider: "claude",
+      models: [
+        { id: "haiku", efforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "medium" },
+      ],
+    },
+    {
+      provider: "agy",
+      models: [
+        {
+          id: "gemini-4-neon",
+          efforts: ["low", "medium", "high", "xhigh"],
+          defaultEffort: "high",
+          effortIds: { low: "gemini-4-neon-low", medium: "gemini-4-neon-medium", high: "gemini-4-neon-high", xhigh: "gemini-4-neon-xhigh" },
+        },
+      ],
+    },
+  ]));
+  const result = await loadCliModels(join(d, "default.json"), join(d, "nope.json"));
+  expect(cliOffersModel(result, "claude", "haiku")).toBe(true);
+  expect(cliOffersEffort(result, "claude", "haiku", "max")).toBe(true);
+  expect(cliOffersEffort(result, "claude", "haiku", "bogus")).toBe(false);
+  expect(cliOffersModel(result, "agy", "gemini-4-neon")).toBe(true);
+  // Legacy suffixed agy id from an existing sprout stays valid.
+  expect(cliOffersModel(result, "agy", "gemini-4-neon-high")).toBe(true);
+  // Flag-based CLI passes effort only when explicitly provided.
+  expect(resolveWireModel(result, "claude", "haiku")).toEqual({ model: "haiku" });
+  expect(resolveWireModel(result, "claude", "haiku", "low")).toEqual({ model: "haiku", effort: "low" });
+  // effortIds CLI maps base id + effort (or defaultEffort) onto its literal wire model id.
+  expect(resolveWireModel(result, "agy", "gemini-4-neon", "xhigh")).toEqual({ model: "gemini-4-neon-xhigh" });
+  expect(resolveWireModel(result, "agy", "gemini-4-neon")).toEqual({ model: "gemini-4-neon-high" });
+  expect(resolveWireModel(result, "agy", "gemini-4-neon-low")).toEqual({ model: "gemini-4-neon-low" });
 });
