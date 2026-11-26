@@ -9,12 +9,17 @@ array, never copy it; pickers refetch on window focus. The repo default is ours 
 latest version per tier only (sol/astra/terra/luna, opus/sonnet…), superseded ones dropped —
 except when the latest regressed (e.g. gpt-6.2-sol): keep the previous one beside it until
 the new one is trusted, since sprouts pin it.
-agy is paid-tier only (agy users are on Google AI Pro or above): the latest Gemini paid tiers
-(today `gemini-4-neon`, `gemini-4-carbon`), configured with `efforts`, `defaultEffort`, and
+Within each provider, order models by API list price, most expensive first (output $/MTok,
+then input; ties newest first) — the first model is the CLI's default when nothing is picked
+or remembered (`pickModel`), so the default is the strongest/most expensive one. Re-sort on
+price changes (e.g. Gemini 4 Carbon passes Neon on 2026-12-01).
+agy users are on Google AI Pro or above: the latest Gemini 4 tiers (today `gemini-4-neon`,
+`gemini-4-carbon`, plus `gemini-4-hydrogen` — the light, fast tier, on every plan — kept at the
+owner's request as the cheap pick below Neon), configured with `efforts`, `defaultEffort`, and
 `effortIds` mapping each effort to agy's literal suffixed model ID (`gemini-4-neon-high`, etc.).
 Legacy sprouts/receipts naming a suffixed ID stay accepted via `cliOffersModel` and `resolveWireModel`.
-Never add free-tier models (Flash, Hydrogen) or the third-party models agy also serves (Claude,
-GPT-OSS). A free account's `agy models` lists none of the paid tiers, so read the IDs from
+Gemini `defaultEffort` is `medium` (Antigravity's documented default), not `high`. Never add
+Flash or the third-party models agy also serves (Claude, GPT-OSS). A free account's `agy models` lists none of the paid tiers, so read the IDs from
 antigravity.google/docs/models instead.
 Per-model reasoning effort is declared in `clis.json` (`{ id, efforts, defaultEffort?, effortIds? }`)
 alongside plain string entries; provider code maps `effort` to each CLI's native flag (`claude`
