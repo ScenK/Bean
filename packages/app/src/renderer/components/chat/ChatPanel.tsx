@@ -12,10 +12,11 @@ import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { TerminalPane, type TabShortcut } from "./TerminalPane.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
-import { ChipMenu } from "../../shared/ChipMenu.js";
+import { AgentPill } from "./AgentPill.js";
+import { effortLabel } from "@bean/core/models";
 import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGuard, pdfFileGuard, insertDroppedPath, readImageFile, itemAgent, type PinnedPdf, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import {
-  HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, imageLabelNumbers, isLiveAgent, labelPreviews, mappedImageLabels, offerAgent, parseSlash, removeImageLabel, type ImageLabels,
+  HANDOFF_ITEMS, canContinueLive, chatHeader, handoffItems, imageLabel, imageLabelNumbers, isLiveAgent, labelPreviews, mappedImageLabels, offerAgent, parseSlash, removeImageLabel, type ImageLabels,
 } from "./agent-mode.js";
 import { dividerLabel, timeDividers, TRIM_NOTICE, trimNoticeText } from "./chat-thread.js";
 import { usePersonaName } from "../../shared/persona-name.js";
@@ -106,6 +107,7 @@ export function ChatPanel({
   projects,
   runModels,
   lastUsedModels,
+  lastUsedEfforts,
   skills,
   delegateCli,
   onSlashOpen,
@@ -152,11 +154,13 @@ export function ChatPanel({
   mode,
   agentProject,
   agentModel,
+  agentEffort,
   live,
   offerLaunch,
   onPickAgent,
   onPickProject,
   onPickModel,
+  onPickEffort,
   onEndAgent,
   stopTarget,
   onStopTurn,
@@ -194,6 +198,7 @@ export function ChatPanel({
   projects: Project[];
   runModels: PickableModel[];
   lastUsedModels: Record<string, string>;
+  lastUsedEfforts?: Record<string, string>;
   // Full current skill list — SkillCard uses it to live-recompute "replaces existing"
   // against the user's edited name, not just the model's originally-proposed one.
   skills: Skill[];
@@ -218,7 +223,7 @@ export function ChatPanel({
     id: string,
     editedPrompt: string,
     run: RouteSuggestion,
-    choice: { cli?: CliName; projectPath?: string; model?: string },
+    choice: { cli?: CliName; projectPath?: string; model?: string; effort?: string },
   ) => void;
   onCancel: (id: string) => void;
   onNoteSave: (id: string, edited: ProposedNote, asNew: boolean, images?: string[]) => void;
@@ -235,7 +240,7 @@ export function ChatPanel({
   onRoutineDraftDismiss: (id: string) => void;
   onOfferStart: (id: string) => void;
   onOfferDismiss: (id: string) => void;
-  onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }) => void;
+  onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; effort?: string; cli?: CliName }) => void;
   /** The delegate card a `/` send just created — the only card that takes focus. */
   autoFocusDelegateId?: string;
   onDelegateDismiss: (id: string) => void;
@@ -261,15 +266,18 @@ export function ChatPanel({
   // the window's running session (busy = a turn is in flight; the composer stays usable).
   mode: AgentId;
   agentProject: string;
-  /** The model the next fresh start uses ("" = the agent's default) — already checked against clis.json. */
+  /** The model the next fresh start uses ("" = CLI has no models in clis.json) — already checked against clis.json. */
   agentModel: string;
-  /** `model` = what the running session launched with (unset = the agent's default). */
-  live?: { agent: LiveCli; projectPath: string; model?: string; busy: boolean; continuing?: boolean; stopping?: boolean };
+  /** The effort the next fresh start uses (undefined when the model declares none). */
+  agentEffort?: string;
+  /** `model`/`effort` = what the running session launched with. */
+  live?: { agent: LiveCli; projectPath: string; model?: string; effort?: string; busy: boolean; continuing?: boolean; stopping?: boolean };
   /** What a hand-off offer's Start launches (the same function startOffer uses). */
-  offerLaunch: (offerPath: string) => { projectPath: string; model?: string };
+  offerLaunch: (offerPath: string) => { projectPath: string; model?: string; effort?: string };
   onPickAgent: (agent: AgentId) => void;
   onPickProject: (path: string) => void;
   onPickModel: (model: string) => void;
+  onPickEffort: (effort: string) => void;
   onEndAgent: () => void;
   stopTarget?: StopTarget;
   /** Stop `stopTarget`; a live session stays (banner / working-row Stop, composer Esc Esc). */
@@ -317,8 +325,9 @@ export function ChatPanel({
   const agentName = AGENT_NAMES[mode];
   const projectName = (path: string): string => projects.find((p) => p.path === path)?.name ?? "scratch";
   const modelName = (id: string): string => runModels.find((m) => m.id === id)?.label ?? id;
-  // The chip names the running session's actual model, else the next start's; none = the default.
-  const chipModel = live ? live.model : agentModel;
+  // The chip names the running session's actual model/effort, else the next start's.
+  const chipModel = live ? live.model : agentModel || undefined;
+  const chipEffort = live ? live.effort : agentEffort;
   // The `/` menu: the `/word` before the caret ("" = closed), whether it sits mid-text (skills only,
   // a pick completes the name in place), and the picked row.
   const [slashText, setSlashText] = useState("");
@@ -693,7 +702,9 @@ export function ChatPanel({
             <button type="button" class="bean-chat-unlink" aria-label="Unlink note" onClick={onUnlink}>✕</button>
           </span>
         ) : (
-          <span class="bean-chat-model">{header.model ? modelName(header.model) : ""}</span>
+          <span class="bean-chat-model">
+            {header.model ? `${modelName(header.model)}${header.effort ? ` · ${effortLabel(header.effort)}` : ""}` : ""}
+          </span>
         )}
         <span class="bean-chat-meta-divider" />
         <button
@@ -986,6 +997,7 @@ export function ChatPanel({
                 agent={offerAgent(clis)}
                 projectName={projectName(launch.projectPath)}
                 modelName={launch.model ? modelName(launch.model) : undefined}
+                effortName={launch.effort ? effortLabel(launch.effort) : undefined}
                 state={it.state}
                 onStart={() => onOfferStart(it.id)}
                 onDismiss={() => onOfferDismiss(it.id)}
@@ -1007,6 +1019,7 @@ export function ChatPanel({
                 modelOptions={runModels}
                 projectOptions={assignedFirst}
                 lastUsedModel={skillName ? lastUsedModels[skillName] : undefined}
+                lastUsedEffort={skillName ? lastUsedEfforts?.[skillName] : undefined}
                 autoFocus={it.id === autoFocusDelegateId}
                 onReturnFocus={() => inputRef.current?.focus()}
                 browser={skills.find((s) => s.name === skillName)?.browser === true}
@@ -1030,6 +1043,7 @@ export function ChatPanel({
               projectOptions={assigned.length > 0 ? assigned : projects}
               modelOptions={runModels}
               lastUsedModel={lastUsedModels[it.run.skillName]}
+              lastUsedEffort={lastUsedEfforts?.[it.run.skillName]}
               onConfirm={(edited, choice) => onConfirm(it.id, edited, it.run, choice)}
               onCancel={() => onCancel(it.id)}
             />
@@ -1056,7 +1070,10 @@ export function ChatPanel({
             <span class="bean-agent-banner-dot" aria-hidden="true">●</span>
             {live.continuing ? <span>Continuing</span> : null}
             <AgentAvatar agent={live.agent} size={16} />
-            <span>{AGENT_NAMES[live.agent]} · {projectName(live.projectPath)}{live.model ? ` · ${modelName(live.model)}` : ""}</span>
+            <span>
+              {AGENT_NAMES[live.agent]} · {projectName(live.projectPath)}
+              {live.model ? ` · ${modelName(live.model)}${live.effort ? ` · ${effortLabel(live.effort)}` : ""}` : ""}
+            </span>
             {escHint("live")}
             {live.busy ? (
               <button
@@ -1188,57 +1205,21 @@ export function ChatPanel({
             }}
           />
           <div class="bean-chat-composer-bar">
-            <ChipMenu
+            <AgentPill
               disabled={busy}
-              chipClass="bean-agent-chip"
-              chipLabel={<><AgentAvatar agent={mode} size={16} /> {agentName}{agentMode ? ` · ${projectName(live?.projectPath ?? agentProject)}${chipModel ? ` · ${modelName(chipModel)}` : ""}` : ""}</>}
-            >
-              {(close) => (
-                <div class="bean-chip-menu-list">
-                  {(["bean", ...liveAgents] as AgentId[]).map((a) => (
-                    <button
-                      type="button"
-                      class={`bean-chip-menu-row${a === mode ? " bean-chip-menu-row--on" : ""}`}
-                      onClick={() => { onPickAgent(a); close(); }}
-                    >
-                      <span class="bean-chip-menu-row-title"><AgentAvatar agent={a} size={16} /> {AGENT_NAMES[a]}</span>
-                    </button>
-                  ))}
-                  {liveAgents.length > 0 ? (
-                    <>
-                      <div class="bean-chip-menu-divider" />
-                      <div class="bean-chip-menu-hint">Agents work in</div>
-                      {[{ path: "", name: "No project — scratch workspace" }, ...projects].map((p) => (
-                        <button
-                          type="button"
-                          class={`bean-chip-menu-row${p.path === agentProject ? " bean-chip-menu-row--on" : ""}${p.path ? "" : " bean-chip-menu-row--no-project"}`}
-                          onClick={() => { onPickProject(p.path); close(); }}
-                        >
-                          {p.name}
-                        </button>
-                      ))}
-                    </>
-                  ) : null}
-                  {isLiveAgent(mode) ? (
-                    <>
-                      <div class="bean-chip-menu-divider" />
-                      <div class="bean-chip-menu-hint">{live ? "Model · End session to change model" : "Model"}</div>
-                      {[{ id: "", label: "Agent default" }, ...agentModels(runModels, mode)].map((m) => (
-                        <button
-                          type="button"
-                          class={`bean-chip-menu-row bean-chip-menu-row--model${m.id === (chipModel ?? "") ? " bean-chip-menu-row--on" : ""}`}
-                          disabled={!!live}
-                          title={m.id || undefined}
-                          onClick={() => { onPickModel(m.id); close(); }}
-                        >
-                          {m.label}
-                        </button>
-                      ))}
-                    </>
-                  ) : null}
-                </div>
-              )}
-            </ChipMenu>
+              mode={mode}
+              liveAgents={liveAgents}
+              projects={projects}
+              agentProject={agentProject}
+              runModels={runModels}
+              model={chipModel}
+              effort={chipEffort}
+              live={live}
+              onPickAgent={onPickAgent}
+              onPickProject={onPickProject}
+              onPickModel={onPickModel}
+              onPickEffort={onPickEffort}
+            />
             <button
               type="button"
               class="bean-save-notes"

@@ -98,9 +98,9 @@ const chatRequest = shape({
 // Home over SSH (#997): its open and its saves, so a remote shell reaches the main conversation too.
 const threadSave = shape({ id: str, title: str, items: arr(() => true), noteSlug: opt(str), turns: opt(arr(keyedTurn)), mainCursor: opt(num) });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
-const delegateStart = shape({ projectPath: str, prompt: str, instruction: str, model: opt(str), cli: opt(str), skillName: opt(str) });
+const delegateStart = shape({ projectPath: str, prompt: str, instruction: str, model: opt(str), effort: opt(str), cli: opt(str), skillName: opt(str) });
 const liveStart = shape({
-  agent: str, projectPath: str, ask: str, label: opt(str), model: opt(str),
+  agent: str, projectPath: str, ask: str, label: opt(str), model: opt(str), effort: opt(str),
   history: opt(arr(shape({ role: oneOf("user", "reply"), text: str, agent: opt(str) }))),
 });
 

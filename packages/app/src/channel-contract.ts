@@ -43,12 +43,12 @@ const memory = shape({
   id: str, text: str, createdAt: str, projectPath: opt(str), subjectId: opt(str), category: opt(str),
   sourceId: opt(str), sourceTitle: opt(str),
 });
-const delegateStart = shape({ projectPath: str, prompt: str, instruction: str, model: opt(str), cli: opt(str), skillName: opt(str) });
+const delegateStart = shape({ projectPath: str, prompt: str, instruction: str, model: opt(str), effort: opt(str), cli: opt(str), skillName: opt(str) });
 const liveStart = shape({
-  agent: str, projectPath: str, ask: str, label: opt(str), model: opt(str),
+  agent: str, projectPath: str, ask: str, label: opt(str), model: opt(str), effort: opt(str),
   history: opt(arr(shape({ role: oneOf("user", "reply"), text: str, agent: opt(str) }))),
 });
-const launch = shape({ mode: str, projectPath: str, prompt: opt(str), model: opt(str) });
+const launch = shape({ mode: str, projectPath: str, prompt: opt(str), model: opt(str), effort: opt(str) });
 const threadSave = shape({ id: str, title: str, items: list, noteSlug: opt(str), turns: opt(arr(keyedTurn)), mainCursor: opt(num) });
 const closeOpts = shape({ incognito: bool, rejected: arr(str), mountId: str });
 const deskContinue = shape({ channelId: str, title: str, sessionId: opt(str) });

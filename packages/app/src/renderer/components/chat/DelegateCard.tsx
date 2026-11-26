@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ChatItem } from "../../shared/chat-types.js";
 import type { PickableModel } from "../../shared/ProposalCard.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
+import { ModelEffortMenu } from "../../shared/ModelEffortMenu.js";
 import { AgentAvatar } from "../../shared/AgentAvatar.js";
 import type { CliName, Project } from "@bean/core";
-import { pickModel, resolveCliModelSelection } from "@bean/core/models";
+import { effortLabel, normalizeModelSelection, pickEffort, pickModel, resolveCliModelSelection } from "@bean/core/models";
 import { useCoreStatus } from "../../shared/core-status.js";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
@@ -48,13 +49,14 @@ export function DelegateCard({
   granted,
   onContinueLive,
   lastUsedModel,
+  lastUsedEffort,
   autoFocus,
   onReturnFocus,
 }: {
   item: DelegateItem;
   /** projectPath "" = scratch workspace (main maps it). `cli` is the CLI the card shows; main runs
    * exactly it or fails the task. `model` is unset when that CLI lists none (it runs its default). */
-  onConfirm: (editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }) => void;
+  onConfirm: (editedPrompt: string, choice: { projectPath: string; model?: string; effort?: string; cli?: CliName }) => void;
   onDismiss: () => void;
   onCancelTask: () => void;
   cliOptions?: CliName[];
@@ -73,6 +75,8 @@ export function DelegateCard({
   onContinueLive?: () => void;
   /** The skill's remembered model — a default only, so a late read never overwrites a pick. */
   lastUsedModel?: string;
+  /** The skill's remembered effort — a default only, so a late read never overwrites a pick. */
+  lastUsedEffort?: string;
   /** Only the card a `/` send just created: its Start takes focus so ↵ ↵ runs it. */
   autoFocus?: boolean;
   /** Start, Dismiss and Esc hand focus back to the composer. */
@@ -83,6 +87,7 @@ export function DelegateCard({
   const [elapsed, setElapsed] = useState(0);
   const pending = item.state === "pending";
   const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
+  const [effortChoice, setEffortChoice] = useState<string | undefined>(undefined);
   const [cliChoice, setCliChoice] = useState<CliName | undefined>(undefined);
   const [projectPath, setProjectPath] = useState(item.proposal.projectPath);
   const startRef = useRef<HTMLButtonElement>(null);
@@ -96,7 +101,10 @@ export function DelegateCard({
     ...(preferred ? { cli: preferred } : {}), ...(lastUsedModel ? { lastUsed: lastUsedModel } : {}),
   })?.cli;
   const cliModels = cli ? models.filter((m) => m.availableOn.includes(cli)) : [];
-  const model = cli ? pickModel(models, cli, modelChoice, lastUsedModel) : undefined;
+  const pickedModel = cli ? pickModel(models, cli, modelChoice, lastUsedModel) : undefined;
+  const norm = cli ? normalizeModelSelection(models, cli, pickedModel) : {};
+  const model = norm.model;
+  const effort = cli && model ? pickEffort(models, cli, model, effortChoice, lastUsedEffort ?? norm.effort) : undefined;
   const modelLabel = model ? (models.find((m) => m.id === model)?.label ?? model) : "default model";
   // Once started, the card shows the project the run committed to (confirmDelegate writes it back).
   const shownPath = pending ? projectPath : item.proposal.projectPath;
@@ -105,7 +113,7 @@ export function DelegateCard({
   useEffect(() => { if (autoFocus && pending) startRef.current?.focus(); }, []);
 
   const start = (): void => {
-    onConfirm(prompt, { projectPath, ...(model ? { model } : {}), ...(cli ? { cli } : {}) });
+    onConfirm(prompt, { projectPath, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(cli ? { cli } : {}) });
     onReturnFocus?.();
   };
 
@@ -206,7 +214,10 @@ export function DelegateCard({
                       onClick={() => {
                         setCliChoice(c);
                         // A pick the new CLI doesn't offer is cleared, not carried back on a later switch.
-                        if (modelChoice && !models.some((m) => m.id === modelChoice && m.availableOn.includes(c))) setModelChoice(undefined);
+                        if (modelChoice && !models.some((m) => m.id === modelChoice && m.availableOn.includes(c))) {
+                          setModelChoice(undefined);
+                          setEffortChoice(undefined);
+                        }
                         close();
                       }}
                     >
@@ -217,20 +228,17 @@ export function DelegateCard({
               )}
             </ChipMenu>
             {cliModels.length > 0 ? (
-              <ChipMenu chipLabel={<>{modelLabel}</>}>
+              <ChipMenu chipLabel={<>{modelLabel}{effort ? ` · ${effortLabel(effort)}` : ""}</>}>
                 {(close) => (
-                  <div class="bean-chip-menu-list">
-                    {cliModels.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        class={`bean-chip-menu-row bean-chip-menu-row--model${model === m.id ? " bean-chip-menu-row--on" : ""}`}
-                        onClick={() => { setModelChoice(m.id); close(); }}
-                      >
-                        {model === m.id ? "✓ " : ""}{m.label}
-                      </button>
-                    ))}
-                  </div>
+                  <ModelEffortMenu
+                    models={cliModels}
+                    cli={cli}
+                    selectedModel={model}
+                    selectedEffort={effort}
+                    onPickModel={(id) => { setModelChoice(id); if (id !== model) setEffortChoice(undefined); }}
+                    onPickEffort={(eff) => { setEffortChoice(eff); }}
+                    close={close}
+                  />
                 )}
               </ChipMenu>
             ) : (

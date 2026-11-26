@@ -1,4 +1,5 @@
 import type { AvailableModel, CliName, KeyedTurn, LiveCli } from "@bean/core";
+import { normalizeModelSelection, pickEffort } from "@bean/core/models";
 import type { HandoffItem, LiveEvent } from "@bean/host";
 import type { CloseTurn } from "@bean/host";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
@@ -26,16 +27,21 @@ export const TAIL_LINES = 30;
 
 type ChatStatus = "idle" | "working" | "done" | "error";
 /** Who the chat header shows (#794): Bean while Bean's own turn runs, else the open live session's
- * agent (working while it runs or stops; model = its launch `--model`, unset = the agent's default),
- * else Bean with its own status and model. */
+ * agent (working while it runs or stops; model/effort = its launch picks), else Bean with its own
+ * status and model. */
 export function chatHeader(p: {
-  live?: { agent: LiveCli; model?: string; busy: boolean; stopping?: boolean };
+  live?: { agent: LiveCli; model?: string; effort?: string; busy: boolean; stopping?: boolean };
   status: ChatStatus;
   model: string;
-}): { agent: AgentId; status: ChatStatus; model?: string } {
+}): { agent: AgentId; status: ChatStatus; model?: string; effort?: string } {
   const { live, status, model } = p;
   if (status === "working" || !live) return { agent: "bean", status, model };
-  return { agent: live.agent, status: live.busy || live.stopping ? "working" : "idle", ...(live.model ? { model: live.model } : {}) };
+  return {
+    agent: live.agent,
+    status: live.busy || live.stopping ? "working" : "idle",
+    ...(live.model ? { model: live.model } : {}),
+    ...(live.effort ? { effort: live.effort } : {}),
+  };
 }
 
 /** The engine a hand-off offer starts: Claude Code when it's enabled, else the first enabled live agent. */
@@ -44,37 +50,64 @@ export function offerAgent(enabled: readonly CliName[]): LiveCli | undefined {
 }
 
 /** One agent's chip picks, remembered per agent (#612). `project`: undefined = keep the window's,
- * "" = scratch. `model`: undefined or "" = the agent's own default. */
-export type AgentPick = { project?: string; model?: string };
+ * "" = scratch. `model`: concrete id from clis.json. `efforts`: remembered effort per model id. */
+export type AgentPick = { project?: string; model?: string; efforts?: Record<string, string> };
 export type AgentPicks = Partial<Record<LiveCli, AgentPick>>;
 
 /** Model-memory keys. The model key is shared with chatops (bot.ts liveModelKey), so a pick on one
- * surface is the next default on the other; the project key is desktop-only — chatops' global
- * `live:project` is never read or written here. */
+ * surface is the next default on the other; project and effort keys are desktop-only — chatops'
+ * global `live:project` is never read or written here. */
 export const liveModelKey = (cli: LiveCli): string => `live:model:${cli}`;
 export const liveProjectKey = (cli: LiveCli): string => `desktop:live:project:${cli}`;
+export const liveEffortKey = (cli: LiveCli, model: string): string => `desktop:live:effort:${cli}:${model}`;
 
 /** The models the chip offers an agent: clis.json's, for that CLI. */
 export const agentModels = (models: readonly AvailableModel[], agent: LiveCli): AvailableModel[] =>
   models.filter((m) => m.availableOn.includes(agent));
 
-/** A picked/remembered model the agent still offers; anything stale is the agent default (undefined). */
+/** A picked/remembered model the agent still offers (normalizing legacy `effortIds` values like
+ * `"gemini-4-neon-high"` → `"gemini-4-neon"`); anything stale falls back to the CLI's first
+ * configured model, and undefined only when the CLI lists no models in clis.json. */
 export const validModel = (models: readonly AvailableModel[], agent: LiveCli, model: string | undefined): string | undefined =>
-  model && agentModels(models, agent).some((m) => m.id === model) ? model : undefined;
+  normalizeModelSelection(models, agent, model).model ?? agentModels(models, agent)[0]?.id;
+
+/** Resolves an agent's concrete `(model, effort)` pair: remembered/chosen model (else first
+ * configured model), and effort (chosen → remembered for that model → implied from legacy id →
+ * model's `defaultEffort` → first offered effort; undefined when the model has no efforts). */
+export function resolveAgentSelection(
+  models: readonly AvailableModel[],
+  agent: LiveCli,
+  pickedModel: string | undefined,
+  pickedEffort?: string,
+  rememberedEfforts?: Record<string, string>,
+): { model?: string; effort?: string } {
+  const norm = normalizeModelSelection(models, agent, pickedModel);
+  const model = norm.model ?? agentModels(models, agent)[0]?.id;
+  if (!model) return {};
+  const effort = pickEffort(
+    models,
+    agent,
+    model,
+    pickedEffort,
+    rememberedEfforts?.[model] ?? norm.effort,
+  );
+  return { model, ...(effort ? { effort } : {}) };
+}
 
 /** A remembered project to restore: a removed one becomes scratch; undefined = keep the window's. */
 export const validProject = (projects: readonly { path: string }[], project: string | undefined): string | undefined =>
   project === undefined || project === "" || projects.some((p) => p.path === project) ? project : "";
 
 /** What a hand-off offer's Start launches — the card shows the same. A registered project in the
- * offer wins, else the agent's remembered one (else scratch); the model is the agent's remembered one. */
+ * offer wins, else the agent's remembered one (else scratch); the model and effort are the agent's
+ * remembered ones (falling back to the CLI's first configured model and default effort). */
 export function offerLaunch(
   offerPath: string, agent: LiveCli, picks: AgentPicks, projects: readonly { path: string }[], models: readonly AvailableModel[],
-): { projectPath: string; model?: string } {
+): { projectPath: string; model?: string; effort?: string } {
   const pick = picks[agent];
   const projectPath = projects.some((p) => p.path === offerPath) ? offerPath : validProject(projects, pick?.project) ?? "";
-  const model = validModel(models, agent, pick?.model);
-  return { projectPath, ...(model ? { model } : {}) };
+  const { model, effort } = resolveAgentSelection(models, agent, pick?.model, undefined, pick?.efforts);
+  return { projectPath, ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
 
 /** Whether a delegate card or an ended live session's status row offers Continue live: its receipt

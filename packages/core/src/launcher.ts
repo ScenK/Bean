@@ -65,6 +65,7 @@ export interface LaunchRequest {
   projectPath: string;
   prompt?: string; // required for every CLI mode, ignored for "open"
   model?: string; // literal --model value (clis.json); ignored for "open"
+  effort?: string; // optional reasoning effort (clis.json); ignored for "open"
 }
 
 export function launchCommand(req: LaunchRequest, editorApp?: string): { command: string; args: string[] } {
@@ -81,15 +82,32 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
       };
     }
     case "claude":
-      return { command: "claude", args: [...(req.model ? ["--model", req.model] : []), req.prompt ?? ""] };
+      return {
+        command: "claude",
+        args: [...(req.model ? ["--model", req.model] : []), ...(req.effort ? ["--effort", req.effort] : []), req.prompt ?? ""],
+      };
     case "codex":
       // `--` terminates option parsing: a prompt starting with "-"/"--" (a markdown bullet,
       // leftover "---" frontmatter, "--help") would otherwise be parsed as a codex flag.
-      return { command: "codex", args: [...(req.model ? ["--model", req.model] : []), "--", req.prompt ?? ""] };
+      return {
+        command: "codex",
+        args: [
+          ...(req.model ? ["--model", req.model] : []),
+          ...(req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []),
+          "--", req.prompt ?? "",
+        ],
+      };
     case "agy":
       // Antigravity's Go flag parser: `--prompt-interactive=<text>` as one token keeps a "-"-leading
       // prompt from being read as a flag (verified agy 1.5.14).
-      return { command: "agy", args: [...(req.model ? ["--model", req.model] : []), `--prompt-interactive=${req.prompt ?? ""}`] };
+      return {
+        command: "agy",
+        args: [
+          ...(req.model ? ["--model", req.model] : []),
+          ...(req.effort ? ["--effort", req.effort] : []),
+          `--prompt-interactive=${req.prompt ?? ""}`,
+        ],
+      };
     case "open":
       // editorApp is the user-configured editor .app (Settings); empty = not configured yet,
       // caught by launchInTerminal before ever spawning. `.app` bundles aren't executables

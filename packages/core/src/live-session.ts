@@ -26,6 +26,8 @@ export interface LiveSessionRequest {
   prompt: string;
   /** Literal --model value (clis.json); flag omitted when unset. */
   model?: string;
+  /** Optional reasoning effort (clis.json); flag omitted when unset. */
+  effort?: string;
   /** Session id to continue (claude `--resume`, codex `exec resume`, opencode `--session`, agy `--conversation`). Only pass an id Bean recorded in delegate_runs. */
   resume?: string;
 }
@@ -36,6 +38,7 @@ export const RESUME_REJECTED = "Couldn't reopen that session (expired or removed
 
 export function liveSessionCommand(req: LiveSessionRequest): { command: string; args: string[] } {
   const modelArgs = req.model ? ["--model", req.model] : [];
+  const effortArgs = req.effort ? ["--effort", req.effort] : [];
   return {
     command: "claude",
     args: [
@@ -51,6 +54,7 @@ export function liveSessionCommand(req: LiveSessionRequest): { command: string; 
       // skill sent into one must find Claude in Chrome. Headless claude loads it only with the flag.
       "--chrome",
       ...modelArgs,
+      ...effortArgs,
       ...(req.resume ? ["--resume", req.resume] : []),
     ],
   };

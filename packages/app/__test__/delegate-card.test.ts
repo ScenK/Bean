@@ -1,14 +1,21 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import type { CliName } from "@bean/core";
 
-// useState calls with an undefined initial are, in order, the card's model pick and CLI pick.
-const hookState = vi.hoisted(() => ({ model: undefined as string | undefined, cli: undefined as string | undefined, n: 0 }));
+// useState calls with an undefined initial are, in order, the card's model, effort, and CLI picks.
+const hookState = vi.hoisted(() => ({
+  model: undefined as string | undefined,
+  effort: undefined as string | undefined,
+  cli: undefined as string | undefined,
+  n: 0,
+}));
 
 vi.mock("preact/hooks", () => ({
   useEffect: () => {},
   useRef: <T,>(current: T) => ({ current }),
   useState: <T,>(initial: T) => [
-    initial === undefined ? (hookState.n++ % 2 === 0 ? hookState.model : hookState.cli) : initial,
+    initial === undefined
+      ? ([hookState.model, hookState.effort, hookState.cli][hookState.n++ % 3])
+      : initial,
     () => {},
   ] as const,
 }));
@@ -27,14 +34,14 @@ function nodes(value: unknown): TestVNode[] {
   return [node, ...nodes(node.props?.children)];
 }
 
-type Choice = { projectPath: string; model?: string; cli?: CliName };
-const MODELS = [
+type Choice = { projectPath: string; model?: string; effort?: string; cli?: CliName };
+const MODELS: Array<{ id: string; label: string; availableOn: CliName[]; effortsByCli?: Partial<Record<CliName, { efforts: string[]; defaultEffort?: string }>> }> = [
   { id: "sonnet", label: "sonnet", availableOn: ["claude" as const] },
   { id: "gpt-5.6-sol", label: "gpt-5.6-sol", availableOn: ["codex" as const] },
   { id: "shared", label: "shared", availableOn: ["claude" as const, "opencode" as const] },
 ];
 
-function confirmed(opts: { lastUsedModel?: string; delegateCli?: string; clis?: CliName[]; models?: typeof MODELS } = {}): Choice | undefined {
+function confirmed(opts: { lastUsedModel?: string; lastUsedEffort?: string; delegateCli?: string; clis?: CliName[]; models?: typeof MODELS } = {}): Choice | undefined {
   hookState.n = 0;
   const onConfirm = vi.fn();
   const card = DelegateCard({
@@ -47,6 +54,7 @@ function confirmed(opts: { lastUsedModel?: string; delegateCli?: string; clis?: 
     },
     onConfirm,
     lastUsedModel: opts.lastUsedModel,
+    lastUsedEffort: opts.lastUsedEffort,
     delegateCli: opts.delegateCli ?? "",
     onDismiss: () => {},
     onCancelTask: () => {},
@@ -59,7 +67,7 @@ function confirmed(opts: { lastUsedModel?: string; delegateCli?: string; clis?: 
   return onConfirm.mock.calls[0]?.[1] as Choice | undefined;
 }
 
-beforeEach(() => { hookState.model = undefined; hookState.cli = undefined; });
+beforeEach(() => { hookState.model = undefined; hookState.effort = undefined; hookState.cli = undefined; });
 
 test("an untouched card sends the pair it shows: the Settings CLI and its first model", () => {
   expect(confirmed({ delegateCli: "codex" })).toEqual({ projectPath: "/p", cli: "codex", model: "gpt-5.6-sol" });
@@ -97,6 +105,16 @@ test("a remembered model no enabled CLI supports is dropped, not sent", () => {
 
 test("no enabled CLI: Start is disabled", () => {
   expect(confirmed({ clis: [] })).toBeUndefined();
+});
+
+test("model with efforts sends its default, remembered, or explicitly picked effort", () => {
+  const models = [
+    { id: "opus", label: "opus", availableOn: ["claude" as const], effortsByCli: { claude: { efforts: ["low", "medium", "high", "max"], defaultEffort: "high" } } },
+  ];
+  expect(confirmed({ models, clis: ["claude"] })).toEqual({ projectPath: "/p", cli: "claude", model: "opus", effort: "high" });
+  expect(confirmed({ models, clis: ["claude"], lastUsedEffort: "low" })).toEqual({ projectPath: "/p", cli: "claude", model: "opus", effort: "low" });
+  hookState.effort = "max";
+  expect(confirmed({ models, clis: ["claude"], lastUsedEffort: "low" })).toEqual({ projectPath: "/p", cli: "claude", model: "opus", effort: "max" });
 });
 
 const text = (value: unknown): string => nodes(value).map((n) => (typeof n.props?.children === "string" ? n.props.children : Array.isArray(n.props?.children) ? n.props.children.filter((c) => typeof c === "string").join("") : "")).join("|");

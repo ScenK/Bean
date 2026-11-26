@@ -44,3 +44,19 @@ test("memoryUpdatesFor emits namespaced keys", () => {
   });
   expect(memoryUpdatesFor({ cli: "claude" })).toEqual({ "teams:cli": "claude" });
 });
+
+test("legacy effortIds alias in memory preserves implied effort", () => {
+  const agyModels: CliModels[] = [{
+    provider: "agy",
+    models: ["gemini-4-neon"],
+    modelDetails: {
+      "gemini-4-neon": {
+        efforts: ["low", "high"],
+        defaultEffort: "high",
+        effortIds: { low: "gemini-4-neon-low", high: "gemini-4-neon-high" },
+      },
+    },
+  }];
+  const r = resolveCliModel(["agy"], {}, { "teams:model:agy": "gemini-4-neon-low" }, agyModels);
+  expect(r).toEqual({ cli: "agy", model: "gemini-4-neon-low" });
+});

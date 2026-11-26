@@ -1,7 +1,8 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, ProposedRun } from "@bean/core";
-import { resolveCliModelSelection } from "@bean/core/models";
+import { effortLabel, pickEffort, resolveCliModelSelection } from "@bean/core/models";
 import { ChipMenu } from "./ChipMenu.js";
+import { ModelEffortMenu } from "./ModelEffortMenu.js";
 
 export type PickableModel = AvailableModel;
 
@@ -15,12 +16,6 @@ function urlHostLabel(url: string): string {
   }
 }
 
-// Which CLIs offer a model, as the row caption — shown regardless of which CLI is
-// currently picked, so switching CLI later doesn't hide where a model is available.
-function aliasCaption(m: PickableModel): string {
-  return m.availableOn.join("  /  ");
-}
-
 export function ProposalCard({
   run,
   state,
@@ -30,12 +25,13 @@ export function ProposalCard({
   projectOptions,
   modelOptions,
   lastUsedModel,
+  lastUsedEffort,
 }: {
   run: ProposedRun;
   state: "pending" | "confirmed" | "cancelled" | "expired";
   onConfirm: (
     editedPrompt: string,
-    choice: { cli?: CliName; projectPath?: string; model?: string },
+    choice: { cli?: CliName; projectPath?: string; model?: string; effort?: string },
   ) => void;
   onCancel: () => void;
   /** CLIs found on this machine — a picker shows only when there's a real choice (2+, terminal target). */
@@ -46,6 +42,8 @@ export function ProposalCard({
   modelOptions?: PickableModel[];
   /** The model last confirmed for this skill, if any — drives the "LAST USED" badge. */
   lastUsedModel?: string;
+  /** The effort last confirmed for this skill, if any. */
+  lastUsedEffort?: string;
 }) {
   const [prompt, setPrompt] = useState(run.composedPrompt);
   const [extra, setExtra] = useState("");
@@ -56,6 +54,7 @@ export function ProposalCard({
   const [projectPath, setProjectPath] = useState<string | undefined>(run.projectPath || undefined); // "" = no project too
   const [sourceUrl, setSourceUrl] = useState(run.sourceUrl ?? "");
   const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
+  const [effortChoice, setEffortChoice] = useState<string | undefined>(undefined);
   const done = state !== "pending";
   const isChat = run.target === "chat";
   const models = modelOptions ?? [];
@@ -68,6 +67,11 @@ export function ProposalCard({
   });
   const model = selection?.model;
   const cli = selection?.cli;
+  // Interactive terminal launches of opencode (launchCommand) cannot pass --variant (only `opencode run` does).
+  const supportsEffort = (c: CliName): boolean => c !== "opencode";
+  const effort = !isChat && cli && model && supportsEffort(cli)
+    ? pickEffort(models, cli, model, effortChoice, lastUsedEffort ?? selection?.effort)
+    : undefined;
   const hasModelMenu = !isChat && models.length > 0;
   const showCliOnlyPicker = !isChat && !hasModelMenu && (cliOptions?.length ?? 0) > 1;
   const canConfirm = isChat || selection !== undefined;
@@ -82,7 +86,7 @@ export function ProposalCard({
     const withTask = task ? `${prompt}\n\n## Task\n${task}` : prompt;
     const url = projectPath === undefined ? sourceUrl.trim() : "";
     const finalPrompt = url ? `${withTask}\n\n## Source\n${url}` : withTask;
-    onConfirm(finalPrompt, { ...(cli ? { cli } : {}), projectPath, ...(model ? { model } : {}) });
+    onConfirm(finalPrompt, { ...(cli ? { cli } : {}), projectPath, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
   };
 
   const projectName = projectOptions?.find((p) => p.path === projectPath)?.name ?? projectPath;
@@ -145,34 +149,26 @@ export function ProposalCard({
         {hasModelMenu ? (
           <ChipMenu
             chipLabel={selection
-              ? <>{modelLabel ?? "Default model"} <span class="bean-chip-menu-sub">via {cli}</span></>
+              ? <>{modelLabel ?? "Default model"}{effort ? ` · ${effortLabel(effort)}` : ""} <span class="bean-chip-menu-sub">via {cli}</span></>
               : <>No CLI enabled <span class="bean-chip-menu-sub">· Settings</span></>}
             disabled={done}
             menuWidth={360}
           >
             {(close) => (
-              <div class="bean-chip-menu-list">
-                {models.map((m) => {
-                  const available = m.availableOn.some((candidate) => cliOptions?.includes(candidate));
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      disabled={!available}
-                      class={`bean-chip-menu-row bean-chip-menu-row--model${model === m.id ? " bean-chip-menu-row--on" : ""}${available ? "" : " bean-chip-menu-row--dimmed"}`}
-                      onClick={() => { if (available) { setModelChoice(m.id); close(); } }}
-                    >
-                      <span class="bean-chip-menu-row-title">
-                        {model === m.id ? "✓ " : ""}{m.label}
-                        {m.id === lastUsedModel ? <em class="bean-chip-menu-badge">LAST USED · {run.skillName.toUpperCase()}</em> : null}
-                      </span>
-                      <span class="bean-chip-menu-caption">
-                        {aliasCaption(m) || "no CLI support"}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              <ModelEffortMenu
+                models={models}
+                cli={cli}
+                selectedModel={model}
+                selectedEffort={effort}
+                enabledClis={cliOptions}
+                showCliCaptions
+                supportsEffort={supportsEffort}
+                lastUsedModel={lastUsedModel}
+                lastUsedBadge={`LAST USED · ${run.skillName.toUpperCase()}`}
+                onPickModel={(id) => { setModelChoice(id); if (id !== model) setEffortChoice(undefined); }}
+                onPickEffort={(eff) => { setEffortChoice(eff); }}
+                close={close}
+              />
             )}
           </ChipMenu>
         ) : !isChat && !showCliOnlyPicker ? (

@@ -39,6 +39,7 @@ export interface LiveSessionStart {
    * Absent = `instruction`. */
   ask?: string;
   model?: string;
+  effort?: string;
   /** Engine; absent = claude. */
   cli?: LiveCli;
   /** Session id to continue (see LiveSessionRequest.resume). */
@@ -267,7 +268,7 @@ export class LiveSessionRegistry {
     // One session per channel, so the channel id doubles as the session's activity id.
     this.opts.onActivity?.({ type: "live", phase: "start", id: input.channelId, name: basename(input.projectPath) || "live session" });
     s.handle = this.startFn(
-      { cli: input.cli, projectPath: input.projectPath, prompt: input.instruction, model: input.model, resume: input.resume },
+      { cli: input.cli, projectPath: input.projectPath, prompt: input.instruction, model: input.model, ...(input.effort ? { effort: input.effort } : {}), resume: input.resume },
       {
         onOutput: (line) => {
           if (this.opts.proseOnly) return;

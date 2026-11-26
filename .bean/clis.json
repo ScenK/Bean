@@ -1,28 +1,59 @@
 [
-  { "provider": "claude", "models": ["opus", "sonnet", "haiku", "fable"] },
+  {
+    "provider": "claude",
+    "models": [
+      { "id": "opus", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "high" },
+      { "id": "sonnet", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "high" },
+      { "id": "haiku", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "medium" },
+      { "id": "fable", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "high" }
+    ]
+  },
   {
     "provider": "opencode",
     "models": [
-      "github-copilot/gpt-6.2-sol",
-      "github-copilot/gpt-6.1-sol",
-      "github-copilot/gpt-6.2-astra",
-      "github-copilot/gpt-6.1-terra",
-      "github-copilot/gpt-6-luna",
-      "github-copilot/claude-opus-5.5",
-      "github-copilot/claude-sonnet-5.5"
+      { "id": "github-copilot/gpt-6.2-sol", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
+      { "id": "github-copilot/gpt-6.1-sol", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
+      { "id": "github-copilot/gpt-6.2-astra", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
+      { "id": "github-copilot/gpt-6.1-terra", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" },
+      { "id": "github-copilot/gpt-6-luna", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" },
+      { "id": "github-copilot/claude-opus-5.5", "efforts": ["low", "medium", "high", "max"], "defaultEffort": "high" },
+      { "id": "github-copilot/claude-sonnet-5.5", "efforts": ["low", "medium", "high", "max"], "defaultEffort": "high" }
     ]
   },
-  { "provider": "codex", "models": ["gpt-6.2-sol", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6-luna"] },
+  {
+    "provider": "codex",
+    "models": [
+      { "id": "gpt-6.2-sol", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
+      { "id": "gpt-6.1-sol", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
+      { "id": "gpt-6.2-astra", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high" },
+      { "id": "gpt-6.1-terra", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" },
+      { "id": "gpt-6-luna", "efforts": ["low", "medium", "high"], "defaultEffort": "medium" }
+    ]
+  },
   {
     "provider": "agy",
     "models": [
-      "gemini-4-neon-xhigh",
-      "gemini-4-neon-high",
-      "gemini-4-neon-medium",
-      "gemini-4-neon-low",
-      "gemini-4-carbon-high",
-      "gemini-4-carbon-medium",
-      "gemini-4-carbon-low"
+      {
+        "id": "gemini-4-neon",
+        "efforts": ["low", "medium", "high", "xhigh"],
+        "defaultEffort": "high",
+        "effortIds": {
+          "low": "gemini-4-neon-low",
+          "medium": "gemini-4-neon-medium",
+          "high": "gemini-4-neon-high",
+          "xhigh": "gemini-4-neon-xhigh"
+        }
+      },
+      {
+        "id": "gemini-4-carbon",
+        "efforts": ["low", "medium", "high"],
+        "defaultEffort": "high",
+        "effortIds": {
+          "low": "gemini-4-carbon-low",
+          "medium": "gemini-4-carbon-medium",
+          "high": "gemini-4-carbon-high"
+        }
+      }
     ]
   }
 ]

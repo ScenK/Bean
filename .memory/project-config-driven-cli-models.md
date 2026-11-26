@@ -10,10 +10,15 @@ latest version per tier only (sol/astra/terra/luna, opus/sonnet…), superseded 
 except when the latest regressed (e.g. gpt-6.2-sol): keep the previous one beside it until
 the new one is trusted, since sprouts pin it.
 agy is paid-tier only (agy users are on Google AI Pro or above): the latest Gemini paid tiers
-(today `gemini-4-neon-*`, `gemini-4-carbon-*`), one entry per effort level. Never add free-tier
-models (Flash, Hydrogen) or the third-party models agy also serves (Claude, GPT-OSS). A free
-account's `agy models` lists none of the paid tiers, so read the IDs from
+(today `gemini-4-neon`, `gemini-4-carbon`), configured with `efforts`, `defaultEffort`, and
+`effortIds` mapping each effort to agy's literal suffixed model ID (`gemini-4-neon-high`, etc.).
+Legacy sprouts/receipts naming a suffixed ID stay accepted via `cliOffersModel` and `resolveWireModel`.
+Never add free-tier models (Flash, Hydrogen) or the third-party models agy also serves (Claude,
+GPT-OSS). A free account's `agy models` lists none of the paid tiers, so read the IDs from
 antigravity.google/docs/models instead.
+Per-model reasoning effort is declared in `clis.json` (`{ id, efforts, defaultEffort?, effortIds? }`)
+alongside plain string entries; provider code maps `effort` to each CLI's native flag (`claude`
+`--effort`, `codex` `-c model_reasoning_effort="…"`, `opencode` `--variant`, `agy` `effortIds` or `--effort`).
 Users keep an older one with `add` — prefer `add`/`hide` over `models`, which freezes the
 provider's list against future defaults. Dropping a model fails any sprout step pinned to it
 (`pinnedStepSelection`), so call drops out in release notes. Tests seed their own

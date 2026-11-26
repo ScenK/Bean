@@ -50,6 +50,7 @@ export interface DelegateStartRequest {
   // delegated CLI itself.
   instruction: string;
   model?: string; // literal configured model id (models.ts)
+  effort?: string; // optional reasoning effort (clis.json)
   // The CLI the card showed. Set → that CLI or nothing: a resolve that lands elsewhere (disabled
   // since render, or it no longer offers `model`) fails the task instead of running another CLI.
   cli?: CliName;
@@ -66,7 +67,7 @@ export interface DelegateStartRequest {
 
 export interface DelegateTasksDeps {
   /** `cli` overrides the Settings preference (the routine adapter never passes it). */
-  resolveCli: (model?: string, cli?: CliName) => CliModelSelection | undefined;
+  resolveCli: (model?: string, cli?: CliName, effort?: string) => CliModelSelection | undefined;
   send: (event: DelegateEvent) => void;
   newId: () => string;
   // Finder-launched Electron gets launchd's minimal PATH; detectClis already resolves the
@@ -166,7 +167,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     if (!(await deps.projectAllowed(req.projectPath).catch(() => false))) return fail("That project isn't configured in Bean.");
     // Runs on one project overlap freely: each agent isolates itself in its own worktree.
     const browser = opts.browserAllowed !== false && req.skillName && deps.skillBrowser ? await deps.skillBrowser(req.skillName) : false;
-    const choice = deps.resolveCli(req.model, req.cli);
+    const choice = deps.resolveCli(req.model, req.cli, req.effort);
     if (!choice) return fail("No enabled delegate CLI found — enable one in Settings.");
     if (req.cli && choice.cli !== req.cli) {
       return fail(`${req.cli} is turned off in Settings${req.model ? ` or doesn't offer ${req.model}` : ""} — nothing was run.`);
@@ -184,6 +185,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         projectPath: req.projectPath,
         prompt: req.prompt,
         ...(choice.model ? { model: choice.model } : {}),
+        ...(choice.effort ? { effort: choice.effort } : {}),
         ...(browser ? { browser: true } : {}),
         ...(opts.resume ? { resume: opts.resume, strictResume: true } : {}),
       },

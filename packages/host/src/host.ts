@@ -16,7 +16,7 @@ import {
   deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, migrateOwnerDmSinks, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
-  saveModelMemory, resolveDelegateSelection, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID, MAIN_CONVERSATION_ID,
+  saveModelMemory, resolveDelegateSelection, cliOffersModel, resolveWireModel, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID, MAIN_CONVERSATION_ID,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -192,7 +192,12 @@ export async function createHost(deps: HostDeps) {
     scratchPath: scratchDir(dir),
     projectAllowed,
     // One resolver for the chat's delegates; routine steps resolve the same preference in core.
-    resolveCli: (model, cli) => resolveDelegateSelection(cliModels, enabledClis(), cli ?? runtime.getDelegateCli(), model),
+    resolveCli: (model, cli, effort) => {
+      const picked = resolveDelegateSelection(cliModels, enabledClis(), cli ?? runtime.getDelegateCli(), model, effort);
+      if (!picked) return undefined;
+      const wire = resolveWireModel(cliModels, picked.cli, picked.model, picked.effort);
+      return { cli: picked.cli, ...(wire.model ? { model: wire.model } : {}), ...(wire.effort ? { effort: wire.effort } : {}) };
+    },
     skillBrowser: async (name) => (await loadSkills()).find((s) => s.name === name)?.browser === true,
     send: (event) => {
       if (event.type === "started") {
@@ -219,7 +224,7 @@ export async function createHost(deps: HostDeps) {
     cliModels: () => cliModels,
     scratchPath: scratchDir(dir),
     findResumable: (sessionId) => findDelegateRun(db, sessionId, undefined, "desktop"),
-    modelOffered: (cli, model) => (cliModels.find((e) => e.provider === cli)?.models ?? []).includes(model),
+    modelOffered: (cli, model) => cliOffersModel(cliModels, cli, model),
     projectAllowed,
     newId: () => randomUUID(),
     send: (event) => {
@@ -365,6 +370,7 @@ export async function createHost(deps: HostDeps) {
       if (updating) return { done: Promise.reject(new Error(UPDATING)), cancel: () => {} };
       const choice = resolveDelegateSelection(cliModels, enabledClis(), brief.builder?.cli ?? runtime.getDelegateCli(), brief.builder?.model);
       if (!choice) return { done: Promise.reject(new Error("No enabled delegate CLI found — enable one in Settings.")), cancel: () => {} };
+      const wire = resolveWireModel(cliModels, choice.cli, choice.model, choice.effort);
       const cwd = join(scratchDir(dir), `build-${brief.name}`); // name validated kebab-case in builder.start
       mkdirSync(cwd, { recursive: true });
       let cancel = (): void => {};
@@ -377,7 +383,7 @@ export async function createHost(deps: HostDeps) {
           rmSync(cwd, { recursive: true, force: true });
         };
         const handle = runDelegate(
-          { cli: choice.cli, projectPath: cwd, prompt, ...(choice.model ? { model: choice.model } : {}) },
+          { cli: choice.cli, projectPath: cwd, prompt, ...(wire.model ? { model: wire.model } : {}), ...(wire.effort ? { effort: wire.effort } : {}) },
           { onOutput: onLine, onDone: (out) => { cleanup(); resolve(out); }, onError: (err) => { cleanup(); reject(err); } },
           resolvedPathSpawnFn(resolvedPath),
           ROUTINE_STEP_TIMEOUT_MS,

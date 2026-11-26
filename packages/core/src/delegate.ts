@@ -11,6 +11,8 @@ export interface DelegateRequest {
   projectPath: string;
   prompt: string;
   model?: string; // literal --model value (clis.json); flag omitted when unset
+  /** Optional reasoning effort (clis.json); flag omitted when unset. */
+  effort?: string;
   /** This CLI's own session id to continue (thread sessions); runDelegate falls back to a
    * fresh run if the CLI rejects it. */
   resume?: string;
@@ -73,7 +75,7 @@ const CODEX_PLAN_ARGS = [
 
 /** `codex exec [resume <id>]` argv, shared by delegate runs and codex live sessions (one spawn
  * per turn). `prompt` is passed as-is — callers append their own rules (withCliRules). */
-export function codexExecArgs(req: { prompt: string; model?: string; resume?: string }): string[] {
+export function codexExecArgs(req: { prompt: string; model?: string; effort?: string; resume?: string }): string[] {
   return [
     // `codex exec resume <id> <prompt>` accepts these flags too (not --sandbox; codex-cli 0.160).
     "exec",
@@ -85,6 +87,7 @@ export function codexExecArgs(req: { prompt: string; model?: string; resume?: st
     // codex exec refuses non-git dirs; Bean's scratch workspace isn't a repo.
     "--skip-git-repo-check",
     ...(req.model ? ["--model", req.model] : []),
+    ...(req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []),
     // `--` terminates option parsing so a prompt starting with "-"/"--" (a markdown
     // bullet, "---" frontmatter, "--help") is read as text, not parsed as a codex flag.
     "--",
@@ -96,16 +99,18 @@ export function codexExecArgs(req: { prompt: string; model?: string; resume?: st
 // Headless one-shot delegation, unlike launcher.ts's interactive TUI launches.
 export function delegateCommand(req: DelegateRequest): { command: string; args: string[] } {
   const modelArgs = req.model ? ["--model", req.model] : [];
+  const claudeEffortArgs = req.effort ? ["--effort", req.effort] : [];
+  const codexEffortArgs = req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : [];
   const prompt = withCliRules(req.prompt, "delegate");
   const resume = req.resume;
   if (req.mode === "plan") {
     if (req.cli === "claude") {
       return {
         command: "claude",
-        args: ["-p", prompt, "--output-format", "stream-json", "--verbose", ...CLAUDE_PLAN_ARGS, ...(resume ? ["--resume", resume] : []), ...modelArgs],
+        args: ["-p", prompt, "--output-format", "stream-json", "--verbose", ...CLAUDE_PLAN_ARGS, ...(resume ? ["--resume", resume] : []), ...modelArgs, ...claudeEffortArgs],
       };
     }
-    if (req.cli === "codex") return { command: "codex", args: [...CODEX_PLAN_ARGS, ...modelArgs, "--", prompt] };
+    if (req.cli === "codex") return { command: "codex", args: [...CODEX_PLAN_ARGS, ...modelArgs, ...codexEffortArgs, "--", prompt] };
     throw new Error(planRefusal(req.cli)); // runDelegate refuses before this; never fall back to the bypass argv
   }
   if (req.cli === "claude") {
@@ -124,32 +129,34 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
         req.browser ? "--chrome" : "--no-chrome",
         ...(resume ? ["--resume", resume] : []),
         ...modelArgs,
+        ...claudeEffortArgs,
       ],
     };
   }
   switch (req.cli) {
-    case "codex": return { command: "codex", args: codexExecArgs({ prompt, model: req.model, resume }) };
-    case "opencode": return { command: "opencode", args: opencodeRunArgs({ prompt, model: req.model, resume }) };
-    case "agy": return { command: "agy", args: agyPrintArgs({ prompt, model: req.model, resume }) };
+    case "codex": return { command: "codex", args: codexExecArgs({ prompt, model: req.model, effort: req.effort, resume }) };
+    case "opencode": return { command: "opencode", args: opencodeRunArgs({ prompt, model: req.model, effort: req.effort, resume }) };
+    case "agy": return { command: "agy", args: agyPrintArgs({ prompt, model: req.model, effort: req.effort, resume }) };
   }
 }
 
 /** `agy -p=<prompt>` argv (agy 1.5.14). `-p=` as one token is the only form that keeps a
  * "-"-leading prompt (a bullet, "---" frontmatter) from being parsed as a flag. Full permission
  * bypass, as on claude/codex: headless runs can't answer prompts. `prompt` is passed as-is. */
-export function agyPrintArgs(req: { prompt: string; model?: string; resume?: string }): string[] {
+export function agyPrintArgs(req: { prompt: string; model?: string; effort?: string; resume?: string }): string[] {
   return [
     `-p=${req.prompt}`,
     "--output-format", "stream-json",
     "--dangerously-skip-permissions",
     ...(req.model ? ["--model", req.model] : []),
+    ...(req.effort ? ["--effort", req.effort] : []),
     ...(req.resume ? ["--conversation", req.resume] : []),
   ];
 }
 
 /** `opencode run [--session <id>]` argv, shared by delegate runs and opencode live sessions (one
  * spawn per turn). `prompt` is passed as-is — callers append their own rules (withCliRules). */
-export function opencodeRunArgs(req: { prompt: string; model?: string; resume?: string }): string[] {
+export function opencodeRunArgs(req: { prompt: string; model?: string; effort?: string; resume?: string }): string[] {
   // --format json: the only opencode output that carries the session id (sessionID on every event).
   // `--` as in codexExecArgs: opencode's yargs otherwise parses a "-"-leading prompt as flags
   // and prints help instead of running (verified opencode 1.18.32).
@@ -157,6 +164,7 @@ export function opencodeRunArgs(req: { prompt: string; model?: string; resume?: 
     "run", "--auto", "--format", "json",
     ...(req.resume ? ["--session", req.resume] : []),
     ...(req.model ? ["--model", req.model] : []),
+    ...(req.effort ? ["--variant", req.effort] : []),
     "--", req.prompt,
   ];
 }
