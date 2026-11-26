@@ -2550,8 +2550,10 @@ button, input, textarea, select, a {
 }
 .bean-routines-dot--failed { background: var(--bean-error); opacity: 1; }
 .bean-routines-dot--off { background: var(--bean-text-dim); }
+.bean-routines-dot--demand { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bean-text-dim); }
 .bean-skills-row--selected .bean-routines-dot { box-shadow: 0 0 0 1.5px var(--bean-accent-ink); }
 .bean-skills-row--selected .bean-routines-dot--off { background: var(--bean-accent-ink); }
+.bean-skills-row--selected .bean-routines-dot--demand { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bean-accent-ink); }
 
 .bean-routines-new {
   width: 100%;
