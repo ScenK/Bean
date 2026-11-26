@@ -149,7 +149,8 @@ function dotKind(r: Routine, state: RoutineStateView | undefined): DotKind {
   if (r.watch && failureCount(state) > 0) return "failed"; // matches the row's "check failing"
   if (state?.running) return "running";
   const last = state?.history[0]?.status;
-  if (state?.missed || (last && last !== "ok")) return "failed"; // needs-attention reds too
+  // `missed` is a schedule's flag: an on-demand sprout keeps a stale one from before it went on demand.
+  if ((r.enabled && state?.missed) || (last && last !== "ok")) return "failed"; // needs-attention reds too
   return r.enabled ? "enabled" : "demand";
 }
 
@@ -379,8 +380,9 @@ export function RoutinesPanel() {
     const list = q
       ? routines.filter((r) => r.name.toLowerCase().includes(q) || (r.description ?? "").toLowerCase().includes(q))
       : routines;
-    // Enabled routines first, paused sink to the bottom (dimmed), original order otherwise.
-    return [...list].sort((a, b) => Number(b.enabled) - Number(a.enabled));
+    // Automatic first, then on demand, paused watches sink to the bottom (dimmed); original order otherwise.
+    const rank = (r: Routine): number => (r.enabled ? 0 : r.watch ? 2 : 1);
+    return [...list].sort((a, b) => rank(a) - rank(b));
   }, [routines, query]);
   // `listSkills` omits hidden skills, so a step naming one reads as missing here (as in the steps editor).
   // Archived is the core's call (core time), so a remote shell lists exactly what the core does.
