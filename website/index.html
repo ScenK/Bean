@@ -119,8 +119,9 @@
   .crew-groups { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 4fr); gap: 0 22px; }
   .crew-group { display: grid; gap: 10px; align-content: start; }
   .crew-group.clis { padding-left: 22px; border-left: 1px solid var(--line); }
-  .crew-label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-height: 24px; font-size: 13px; color: var(--dim); }
+  .crew-label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 10px; min-height: 24px; font-size: 13px; color: var(--dim); }
   .crew-label b { color: var(--ink); font-weight: 600; }
+  .crew-label > span { margin-left: auto; }
   .crew-pills { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
   .opt-tag {
     white-space: nowrap; padding: 5px 10px; border-radius: 999px; font: 600 12px/1 var(--sans);
