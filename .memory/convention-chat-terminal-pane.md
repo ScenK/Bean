@@ -22,6 +22,13 @@
   absolute and `~/` paths, also after a `key=` / `--flag=` prefix (#780, a `registerLinkProvider` over `chat-links.ts`'s `rootedPaths`) go
   to main's `chatOpenPath`. Relative paths are never linked — the shell's cwd after a `cd` isn't
   tracked. A path wrapped onto the next row isn't joined (accepted).
+- **WebGL renderer** (`@xterm/addon-webgl`, loaded after `open`): its `customGlyphs` draws block,
+  box and Powerline (U+E0B0–E0BF) glyphs so they join at `lineHeight` 1.2 — the DOM renderer can't.
+  No WebGL2 / context loss → DOM. The font list leads with Menlo: canvas resolves neither
+  `ui-monospace` nor `SF Mono` to a monospace face. Chromium 156 rejects a leading space in a canvas
+  `font` and the addon emits ` normal 12px …`, so `TerminalPane.tsx` trims the `font` setter — without
+  it the atlas silently draws 10px sans-serif (spaced-out, proportional text). e2e stubs `getContext("webgl2")` → null in
+  `launch-app.ts` (Chromium's `--disable-webgl` doesn't take in Electron) so specs keep reading `.xterm-rows`.
 - jsdom (unit tests) has no `ResizeObserver` — the pane guards it rather than a test shim.
 - Height is a renderer view pref (`bean.chat.terminalHeight` in localStorage); fold state is never saved.
 
