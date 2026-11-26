@@ -153,6 +153,8 @@ test("Bring Bean Back reloads a crashed avatar with its running job's bubble, wi
       avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
     ]);
     await chat.waitForLoadState("domcontentloaded");
+    // A bare open lands on Home after a blank mount; a send before the switch is lost (#1043).
+    await expect(chat.locator(".bean-chat-sidebar-home--active")).toBeVisible();
     stub.queue({ hang: true }); // a turn that keeps running until stopped
     await chat.locator(".bean-input--composer").fill("keep working");
     await chat.locator(".bean-send").click();
