@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { ChatTurn, LiveCli } from "@bean/core";
 import {
-  AGENT_FINAL_CHARS, applyLiveEvent, consumeLive, canContinueLive, chatHeader, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
+  AGENT_FINAL_CHARS, TAIL_LINES, applyLiveEvent, consumeLive, canContinueLive, chatHeader, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
   parseSlash, turnFooter, validModel, validProject, handoffItems, nextImageNumber, withImagePaths, mappedImageLabels, removeImageLabel, IMAGE_NOT_HANDED, pdfNotHanded,
 } from "../src/renderer/components/chat/agent-mode.js";
 import { slashMenu } from "../src/renderer/components/chat/slash-commands.js";
@@ -139,8 +139,38 @@ describe("agent-mode helpers", () => {
     // Next turn's output opens a new bubble; ending the session closes it.
     items = applyLiveEvent(items, ev({ type: "output", line: "▸ shell" }), id);
     items = applyLiveEvent(items, ev({ type: "ended", reason: "stopped" }), id);
-    expect(items[1]).toMatchObject({ streaming: false, footer: "— turn interrupted" });
+    expect(items[1]).toMatchObject({ streaming: false, footer: "— turn interrupted", stepCount: 1 });
     expect(turnFooter({ failed: "boom" })).toBe("— turn failed: boom");
+  });
+
+  it("keeps tail capped at TAIL_LINES while stepCount tracks the real total", () => {
+    const ev = (line: string): LiveEvent => ({ sessionId: "s1", agent: "agy", seq: 1, type: "output", line } as LiveEvent);
+    let items = applyLiveEvent([], { sessionId: "s1", agent: "agy", seq: 1, type: "started", projectPath: "/p", handedOver: 0 } as LiveEvent, id);
+    const total = TAIL_LINES + 5;
+    for (let i = 1; i <= total; i++) items = applyLiveEvent(items, ev(`▸ tool_${i}`), id);
+    const reply = items[0] as Extract<ChatItem, { kind: "reply" }>;
+    expect(reply.stepCount).toBe(total);
+    expect(reply.tail).toHaveLength(TAIL_LINES);
+    expect(reply.tail![0]).toBe("▸ tool_6");
+    expect(reply.tail!.at(-1)).toBe(`▸ tool_${total}`);
+  });
+
+  it("doesn't duplicate multi-step prose when agy's turn result joins the same steps with single newlines", () => {
+    const ev = (e: Partial<LiveEvent> & { type: LiveEvent["type"] }): LiveEvent => ({ sessionId: "s1", agent: "agy", seq: 1, ...e } as LiveEvent);
+    let items = applyLiveEvent([], ev({ type: "started", projectPath: "/p", handedOver: 0 }), id);
+    items = applyLiveEvent(items, ev({ type: "text", text: "Waiting on build." }), id);
+    items = applyLiveEvent(items, ev({ type: "text", text: "Build passed.\n\nAll done." }), id);
+    items = applyLiveEvent(items, ev({ type: "turn", result: "Waiting on build.\nBuild passed.\n\nAll done.\n", durationMs: 5000 }), id);
+    expect(items[0]).toMatchObject({
+      display: "Waiting on build.\n\nBuild passed.\n\nAll done.",
+      text: "Waiting on build.\nBuild passed.\n\nAll done.\n",
+      streaming: false,
+    });
+    // Genuine new text in the final result still appends.
+    let items2 = applyLiveEvent([], ev({ type: "started", projectPath: "/p", handedOver: 0 }), id);
+    items2 = applyLiveEvent(items2, ev({ type: "text", text: "Working on it." }), id);
+    items2 = applyLiveEvent(items2, ev({ type: "turn", result: "Final answer.", durationMs: 1000 }), id);
+    expect(items2[0]).toMatchObject({ display: "Working on it.\n\nFinal answer.", text: "Final answer." });
   });
 
   it("an interrupted turn closes its bubble with the partial text kept; turn-start changes nothing", () => {
@@ -395,7 +425,11 @@ describe("ChatWindow agent mode", () => {
     expect(bean.liveStart!.mock.calls[0]![0].history.map((h: { text: string }) => h.text)).toEqual(["hi bean", "on it"]);
     await live({ type: "started", projectPath: "/scratch", handedOver: 2 });
     expect(root.textContent).toContain("Handed over 2 messages");
-    await live({ type: "output", line: "Edit x.ts" });
+    for (let i = 1; i <= TAIL_LINES + 2; i++) await live({ type: "output", line: `▸ step_${i}` });
+    expect(root.querySelector(".bean-agent-tail summary")?.textContent).toBe(`${TAIL_LINES + 2} steps`);
+    const pre = root.querySelector(".bean-agent-tail pre")?.textContent ?? "";
+    expect(pre.startsWith("… 2 earlier steps\n▸ step_3\n")).toBe(true);
+    expect(pre.endsWith(`▸ step_${TAIL_LINES + 2}`)).toBe(true);
     await live({ type: "turn", result: "Fixed X in x.ts", durationMs: 1000 });
     expect(root.textContent).toContain("Fixed X in x.ts");
 
