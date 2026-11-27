@@ -18,7 +18,8 @@ test("the moved trailer and sentinel stay byte-identical", () => {
     "\n\nIf you could not fully complete the task — including when you couldn't read a source the task " +
     "needs (the page blocked you, needs JavaScript or a login, or a tool failed), when browser tools are " +
     "missing or the browser isn't reachable, or when you would need to ask the user anything (permission, " +
-    "login, which browser) — your final message's first line must be `FAILED: <one-line reason>`. Never " +
+    "login, which browser) — your final message's first line must be `FAILED: <one-line reason>`, and the " +
+    "rest of it must say what you did finish and what you didn't. Never " +
     "report \"nothing new\" for data you couldn't read. " +
     "A headless run ends when you answer; there are no background retries.");
 });

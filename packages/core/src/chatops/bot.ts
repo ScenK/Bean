@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedDelegate, type ProposedLiveSession, type ProposedSend } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
-import { composePrompt } from "../prompt.js";
+import { composePrompt, delegateOutcomeRecord } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { extractMemories, memoryCategories } from "../memory/extract.js";
@@ -781,6 +781,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           settleGrant(sessionId);
           void (async () => {
             recordCard(p.conversationId, "delegate", "failed", p.proposal.skillName);
+            appendHistory(p.conversationId, { role: "assistant", content: delegateOutcomeRecord(p.proposal.instruction, { type: "failed", message, final: last }) });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId, last) })).catch(logRunEffectError);
             await fx.post(`Delegate run failed: ${message}`);
           })().catch(logRunEffectError);
@@ -790,6 +791,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           settleGrant(sessionId);
           void (async () => {
             recordCard(p.conversationId, "delegate", "cancelled", p.proposal.skillName);
+            appendHistory(p.conversationId, { role: "assistant", content: delegateOutcomeRecord(p.proposal.instruction, { type: "cancelled", final: last }) });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId, last) })).catch(logRunEffectError);
             await fx.post("Run cancelled.");
           })().catch(logRunEffectError);

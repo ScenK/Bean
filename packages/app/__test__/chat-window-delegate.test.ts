@@ -3,6 +3,7 @@ import {
   addDelegateProposal, adoptContinued, applyDelegateEventToItems, attachDelegateTaskId, continuedDelegateItems, grantCardAfter, hasActiveDelegates,
   markDelegateStarting, placeContinued,
 } from "../src/renderer/components/chat/ChatSession.js";
+import { delegateOutcomeTurn } from "@bean/core/prompt";
 import { insertDroppedPath, type ChatItem } from "../src/renderer/shared/chat-types.js";
 import type { DelegateEvent } from "@bean/host";
 
@@ -33,7 +34,7 @@ describe("ChatWindow delegate state", () => {
 
     expect(result.items[0]).toMatchObject({ state: "done", result: "fixed" });
     expect(result.loopback).toEqual({
-      text: `[delegate result for "check it"]: fixed\n\nBriefly summarize this outcome for the user in your own words.`,
+      text: delegateOutcomeTurn("check it", { type: "done", result: "fixed" }),
       display: "📦 Delegate finished",
       source: "loopback",
     });
@@ -67,7 +68,7 @@ describe("ChatWindow delegate state", () => {
 
     expect(result.items[0]).toMatchObject({ state: "done", taskId: "t1", tail: ["already done"], result: "fixed" });
     expect(result.loopbacks).toEqual([{
-      text: `[delegate result for "edited prompt"]: fixed\n\nBriefly summarize this outcome for the user in your own words.`,
+      text: delegateOutcomeTurn("edited prompt", { type: "done", result: "fixed" }),
       display: "📦 Delegate finished",
       source: "loopback",
     }]);
@@ -93,6 +94,16 @@ describe("desktop cardless continuation (#1113)", () => {
     expect(applyDelegateEventToItems(failed.items, { taskId: "t1", type: "failed", message: "tests broke" }).loopback).toBeUndefined();
     const cancelled = applyDelegateEventToItems([delegate], { taskId: "t1", type: "cancelled" });
     expect(cancelled.loopback).toMatchObject({ text: expect.stringContaining('[delegate cancelled for "check it"]'), display: "📦 Delegate stopped" });
+  });
+
+  it("a failed run's outcome turn carries the agent's final message as quoted data (#1131)", () => {
+    const final = "FAILED: couldn't push\n\nDone: fixed the bug, tests pass. Not done: the push (no token).";
+    const failed = applyDelegateEventToItems([delegate], { taskId: "t1", type: "failed", message: "couldn't push", final });
+    expect(failed.loopback?.text).toContain('[delegate failed for "check it"]: couldn\'t push');
+    expect(failed.loopback?.text).toContain(`<<<\n${final}\n>>>`);
+    expect(failed.loopback?.text).toMatch(/partly done/);
+    const stopped = applyDelegateEventToItems([delegate], { taskId: "t1", type: "cancelled", final: "half way" });
+    expect(stopped.loopback?.text).toContain("<<<\nhalf way\n>>>");
   });
 
   it("a continuation that finished before the reply came settles from its buffered events", () => {

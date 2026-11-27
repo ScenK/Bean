@@ -12,7 +12,7 @@ import type { TabShortcut } from "./TerminalPane.js";
 import { applyMainPull, applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, resumesAfterGap, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
-import { composePrompt, linkedNoteData } from "@bean/core/prompt";
+import { composePrompt, delegateOutcomeTurn, linkedNoteData, type DelegateOutcome } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { CARD_LEAD } from "@bean/core/card-record";
 import { GRANT_IDLE_MS, GRANT_MISMATCH_TEXT } from "@bean/core/delegate-grant";
@@ -124,19 +124,13 @@ export function applyDelegateEventToItems(
 /** A continuation's card again, after its resume was refused: same instruction, a fresh session. */
 const retryProposal = ({ continue: _c, ...p }: ProposedDelegate): ProposedDelegate => p;
 
-/** A settled run's result turn, so Bean knows how the task stands before it continues it — done,
- * failed or cancelled (#1113). Undefined for any other event. */
+/** A settled run's outcome turn, so Bean judges how the task stands from the agent's own report before
+ * it continues it — done, failed or cancelled (#1113, #1131). Undefined for any other event. */
 function delegateLoopback(instruction: string, e: DelegateEvent): QueuedSend | undefined {
-  const head = `[delegate ${e.type === "done" ? "result" : e.type} for "${instruction}"]`;
-  if (e.type === "done") {
-    return { text: `${head}: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`, display: "📦 Delegate finished", source: "loopback" };
-  }
-  if (e.type === "failed") {
-    return { text: `${head}: ${e.message}\n\nBriefly tell the user it failed and why, in your own words.`, display: "📦 Delegate failed", source: "loopback" };
-  }
-  if (e.type === "cancelled") {
-    return { text: `${head}: stopped before it finished.\n\nBriefly acknowledge that, in your own words.`, display: "📦 Delegate stopped", source: "loopback" };
-  }
+  const turn = (o: DelegateOutcome, display: string): QueuedSend => ({ text: delegateOutcomeTurn(instruction, o), display, source: "loopback" });
+  if (e.type === "done") return turn({ type: "done", result: e.result }, "📦 Delegate finished");
+  if (e.type === "failed") return turn({ type: "failed", message: e.message, final: e.final }, "📦 Delegate failed");
+  if (e.type === "cancelled") return turn({ type: "cancelled", final: e.final }, "📦 Delegate stopped");
   return undefined;
 }
 

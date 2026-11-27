@@ -17,10 +17,16 @@ Bean **does** track these: `host/src/delegate-tasks.ts` keeps a task registry an
 push channel) to the chat's DelegateCard.
 
 Key contracts:
-- **Loopback:** on `done`, `failed` and `cancelled` (#1113) the renderer auto-sends
-  `[delegate result|failed|cancelled for "…"]: …` once (deduped by settled task id) through the
-  normal chat flow (collapsed display label), so Bean knows how the task stands before it
-  continues it. A loopback turn (`source: "loopback"`) is never offered the session — it can't
+- **Loopback:** on `done`, `failed` and `cancelled` (#1113) the renderer auto-sends one outcome
+  turn (deduped by settled task id) through the normal chat flow (collapsed display label), built
+  by core's `delegateOutcomeTurn()` (`prompt.ts`, #1131): `[delegate result|failed|cancelled for
+  "…"]: <reason>` + the agent's final message `quoteFence`d as data + a "judge it: done / partly
+  done / blocked / waiting on the user; say what was done and what was skipped" ask — never a
+  one-line status. `failed`/`cancelled` events carry `final` (the host's latest `onText`, trimmed,
+  capped by `trimDelegateFinal`); the `FAILED:` sentinel asks the agent to list done/not-done
+  under its first line. ChatOps appends the same `delegateOutcomeRecord()` (no ask) to history on
+  failed/cancelled (its `last`), so the next turn can answer "what happened?"; `done` keeps
+  `[delegate result] …`. No partial state — `FAILED:` stays the only failure signal. A loopback turn (`source: "loopback"`) is never offered the session — it can't
   start a run or refresh the grant. A refused cardless resume doesn't loop back: it re-offers its
   instruction as a normal card.
 - **Tasks live for the chat window, not the shown chat — no ghosts:** switching chats keeps a

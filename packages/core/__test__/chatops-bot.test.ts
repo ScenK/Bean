@@ -1365,6 +1365,27 @@ test("run onError posts the failure message and updates the card", async () => {
   expect(JSON.stringify(last?.card)).toContain("error");
 });
 
+test("a failed or cancelled run leaves its outcome and the agent's final message in history (#1131)", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: await proposeThenGetId(deps, effects) } }, effects);
+  delegateCalls[0]?.cb.onOutput("FAILED: no token — fixed the bug, didn't push");
+  delegateCalls[0]?.cb.onError(new Error("no token"));
+  await vi.waitFor(() => expect(deps.conversations.history("c1").some((t) => t.content.startsWith("[delegate failed for "))).toBe(true));
+  const failed = deps.conversations.history("c1").find((t) => t.content.startsWith("[delegate failed for "))!;
+  expect(failed).toMatchObject({ role: "assistant" });
+  expect(failed.content).toContain(": no token\n");
+  expect(failed.content).toContain("<<<\nFAILED: no token — fixed the bug, didn't push\n>>>");
+
+  const c = makeDeps({ converseResult: delegateResult });
+  const bot2 = buildTeamsBot(c.deps);
+  await bot2.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: await proposeThenGetId(c.deps, effects) } }, effects);
+  const runId = (effects.updates.at(-1)?.card as { runId?: string }).runId;
+  await bot2.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-run", runId } }, effects);
+  await vi.waitFor(() => expect(c.deps.conversations.history("c1").at(-1)?.content).toBe('[delegate cancelled for "fix it"]: stopped before it finished.'));
+});
+
 test("a failed run's finished card carries the resume command; an unregistered project shows its folder name, never the path", async () => {
   const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
   const effects = fx();

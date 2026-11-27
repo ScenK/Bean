@@ -222,6 +222,21 @@ describe("createDelegateTasks", () => {
     ]);
   });
 
+  it("failed and cancelled events carry the agent's final message, trimmed (#1131)", async () => {
+    const h = harness();
+    const a = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
+    h.cbs().onText?.("working on it");
+    h.cbs().onText?.("  FAILED: no token\n\nFixed the bug; didn't push.  ");
+    h.cbs().onError(new Error("no token"));
+    expect(h.sent.at(-1)).toEqual({ taskId: a, type: "failed", message: "no token", final: "FAILED: no token\n\nFixed the bug; didn't push." });
+    const b = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
+    h.cbs().onText?.("x".repeat(5000));
+    h.tasks.cancel(b);
+    h.cancelCallbacks.at(-1)!();
+    const cancelled = h.sent.at(-1) as Extract<DelegateEvent, { type: "cancelled" }>;
+    expect(cancelled.final).toMatch(/^x{4000}\n…\(trimmed\)$/);
+  });
+
   it("cancel emits cancelled only after the handle confirms termination; later callbacks are ignored", async () => {
     const h = harness();
     const id = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
