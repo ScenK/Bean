@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import {
-  runDelegate, recordRun, releaseRun, updateRunPid, enqueueOutbox, outboxDir, dbFile,
+  runDelegate, trimDelegateFinal, recordRun, releaseRun, updateRunPid, enqueueOutbox, outboxDir, dbFile,
   interruptedRunNotice, BEAN_GIT_IDENTITY, resumeRefusal,
   isValidSessionId, isLiveSessionId, isLiveCli, recordDelegateSession, resumeCommand, shQuote, spawnEnv,
 } from "@bean/core";
@@ -23,8 +23,9 @@ export type DelegateEvent = { mountId?: string } & (
   // `granted` = the chat's live task grant (chat-sessions) anchors this run's session: its card may
   // say follow-ups continue it. `resumeRefused` = a cardless continuation couldn't resume — nothing ran.
   | { taskId: string; type: "done"; result: string; receipt?: DelegateReceipt; granted?: true }
-  | { taskId: string; type: "failed"; message: string; receipt?: DelegateReceipt; granted?: true; resumeRefused?: true }
-  | { taskId: string; type: "cancelled"; receipt?: DelegateReceipt; granted?: true }
+  // `final` = the agent's final message (trimmed, capped), for the outcome turn to judge (#1131).
+  | { taskId: string; type: "failed"; message: string; final?: string; receipt?: DelegateReceipt; granted?: true; resumeRefused?: true }
+  | { taskId: string; type: "cancelled"; final?: string; receipt?: DelegateReceipt; granted?: true }
 );
 
 /** Host-internal start options (chat-sessions) — never from the renderer's request. */
@@ -113,7 +114,8 @@ interface Task {
   projectPath: string;
   instruction: string;
   mountId?: string;
-  receipt: () => { receipt?: DelegateReceipt };
+  /** What a cancelled event carries: the receipt and the agent's final message so far. */
+  ending: (given?: string) => { receipt?: DelegateReceipt; final?: string };
   /** The CLI session it drives (a continuation's from the start) — busy for a continuation. */
   sessionId?: string;
   onEnd?: DelegateStartOpts["onEnd"];
@@ -151,7 +153,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     for (const [taskId, t] of [...tasks]) {
       if (t.cancelling || !pick(t)) continue;
       t.cancelling = true;
-      t.cancel(() => emit({ taskId, type: "cancelled", ...t.receipt() }));
+      t.cancel((given) => emit({ taskId, type: "cancelled", ...t.ending(given) }));
     }
   };
 
@@ -179,6 +181,8 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     let settled = false;
     // Set up before run(): its callbacks can fire synchronously.
     let receipt: { receipt?: DelegateReceipt } = {};
+    let last: string | undefined; // the agent's latest prose: the fallback when core gives no final message
+    const final = (given?: string): { final?: string } => { const f = trimDelegateFinal(given ?? last); return f ? { final: f } : {}; };
     const handle = run(
       {
         cli: choice.cli,
@@ -191,11 +195,12 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       },
       {
         onOutput: (line) => emit({ taskId, type: "output", line }),
+        onText: (text) => { last = text; },
         onDone: (result) => { settled = true; emit({ taskId, type: "done", result, ...receipt }); },
-        onError: (err) => {
+        onError: (err, given) => {
           settled = true;
           const refused = opts.resume !== undefined && err.message === resumeRefusal(choice.cli);
-          emit({ taskId, type: "failed", message: err.message, ...receipt, ...(refused ? { resumeRefused: true as const } : {}) });
+          emit({ taskId, type: "failed", message: err.message, ...final(given), ...receipt, ...(refused ? { resumeRefused: true as const } : {}) });
         },
         onSessionStart: (_pid, sessionId) => {
           recordDelegateSession(dbFile(deps.dir), {
@@ -228,7 +233,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     tasks.set(taskId, {
       cancel: handle.cancel,
       cancelling: false, projectPath: req.projectPath, instruction: req.instruction, mountId: req.mountId,
-      receipt: () => receipt,
+      ending: (given) => ({ ...receipt, ...final(given) }),
       ...(opts.resume ? { sessionId: opts.resume } : {}),
       ...(opts.onEnd ? { onEnd: opts.onEnd } : {}),
     });
@@ -249,7 +254,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       if (!t) return;
       if (t.cancelling) return;
       t.cancelling = true;
-      t.cancel(() => emit({ taskId, type: "cancelled", ...t.receipt() }));
+      t.cancel((given) => emit({ taskId, type: "cancelled", ...t.ending(given) }));
     },
 
     cancelAll: (): void => cancelWhere(() => true),

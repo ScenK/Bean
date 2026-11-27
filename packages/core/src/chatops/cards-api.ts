@@ -38,6 +38,8 @@ export interface RunningCardInput {
   /** A follow-up continuing the confirmed task's agent session with no card (epic #1111): the
    * compact card. */
   continued?: true;
+  /** Bean's own automatic follow-up on the task (#1133): which one of FOLLOW_UP_MAX it is. */
+  followUp?: number;
 }
 
 /** The delegate proposal card's grant line (epic #1111): what confirming it allows. */

@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -109,8 +109,9 @@ function clampTail(tail: string): string {
 function runningCard(input: RunningCardInput): object {
   return {
     embeds: [{
-      title: input.continued
-        ? `↻ Continuing in ${input.projectName}… (asked by ${input.startedBy})`
+      title: input.followUp
+        ? `↻ Following up (${input.followUp}/${FOLLOW_UP_MAX}) in ${input.projectName}…`
+        : input.continued ? `↻ Continuing in ${input.projectName}… (asked by ${input.startedBy})`
         : `Running in ${input.projectName}… (started by ${input.startedBy})`,
       description: clampInstruction(input.instruction),
       ...(input.tail ? { fields: [{ name: "Progress", value: clampTail(input.tail) }] } : {}),

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GRANT_IDLE_MS, GRANT_MISMATCH_TEXT, type ChatRequest, type ConverseResult, type ProposedDelegate } from "@bean/core";
+import { followUpRefusedText, GRANT_IDLE_MS, GRANT_MISMATCH_TEXT, type ChatRequest, type ConverseResult, type ProposedDelegate } from "@bean/core";
 import { buildChatThreadHandlers, type OfferedSession } from "../src/chat.js";
 import { createChatSessions } from "../src/chat-sessions.js";
 import type { DelegateStartOpts, DelegateStartRequest } from "../src/delegate-tasks.js";
@@ -18,6 +18,7 @@ function setup() {
   let reply: ConverseResult = { reply: "ok" };
   let gate: Promise<void> | undefined;
   const offeredTo: (OfferedSession | undefined)[] = [];
+  const notes: (string | undefined)[] = [];
   const starts: { req: DelegateStartRequest; opts: DelegateStartOpts }[] = [];
   const busy = new Set<string>();
   const held = new Set<string>();
@@ -34,8 +35,9 @@ function setup() {
   });
   const sessions = createChatSessions({
     isChatClient: (c) => c === CLIENT,
-    chat: (async (_req: ChatRequest, _c: number, _k: string, _s: AbortSignal, active?: OfferedSession) => {
+    chat: (async (_req: ChatRequest, _c: number, _k: string, _s: AbortSignal, active?: OfferedSession, note?: string) => {
       offeredTo.push(active);
+      notes.push(note);
       await gate;
       return structuredClone(reply);
     }) as never,
@@ -55,7 +57,7 @@ function setup() {
     return opts;
   };
   return {
-    sessions, starts, offeredTo, busy, held, delegateTasks,
+    sessions, starts, offeredTo, notes, busy, held, delegateTasks,
     answer: (r: ConverseResult) => { reply = r; },
     /** Holds the next model turns until the returned release. */
     hold: (): (() => void) => { let open!: () => void; gate = new Promise((r) => { open = r; }); return () => { gate = undefined; open(); }; },
@@ -176,5 +178,127 @@ describe("desktop cardless continuation (#1113)", () => {
     const res = await t.sessions.chat(CLIENT, A, typed());
     expect(res.continuedDelegate?.taskId).toBe("task-late");
     expect(t.delegateTasks.cancelMount).toHaveBeenCalledWith(A);
+  });
+});
+
+const loopback = (settledTask?: string): ChatRequest => ({ history: [], message: "[delegate failed]", source: "loopback", ...(settledTask ? { settledTask } : {}) });
+
+describe("desktop automatic follow-up (#1132)", () => {
+  /** A confirmed card's run that settled failed with `why`; Bean's outcome turn then follows it up. */
+  const failedCard = async (t: ReturnType<typeof setup>, why = "FAILED: one sub-task") => {
+    const opts = await t.confirm();
+    opts.onEnd?.({ taskId: "task-1", type: "failed", message: why });
+  };
+
+  it("Bean's outcome turn on a settled run follows it up once, strictly, with n/2 on its card, without renewing the idle clock", async () => {
+    const t = setup();
+    await failedCard(t);
+    t.tick(60_000);
+    t.answer({ reply: "Finishing it.", proposedDelegate: FOLLOW });
+    const res = await t.sessions.chat(CLIENT, A, loopback("task-1"));
+    expect(t.offeredTo.at(-1)).toEqual({ cli: "claude", projectPath: "/p", lastInstruction: "fix the bug" });
+    expect(t.notes.at(-1)).toMatch(/follow-up 1 of 2/);
+    expect(res.continuedDelegate?.proposal).toMatchObject({ followUp: 1, cli: "claude" });
+    expect(t.starts.at(-1)!.opts).toMatchObject({ resume: SESSION, continued: { followUp: 1 } });
+    // Its settle doesn't renew the grant: 30 minutes from the card's run, it has lapsed.
+    t.starts.at(-1)!.opts.onEnd?.({ taskId: "task-2", type: "failed", message: "FAILED: lint" });
+    t.tick(GRANT_IDLE_MS - 60_000);
+    await t.sessions.chat(CLIENT, A, loopback("task-2"));
+    expect(t.offeredTo.at(-1)).toBeUndefined();
+    expect(t.notes.at(-1)).toMatch(/No automatic follow-up/);
+  });
+
+  it("a forged or reused settled task id, or a cancelled run, gets no session", async () => {
+    const t = setup();
+    await failedCard(t);
+    t.answer({ reply: "", proposedDelegate: FOLLOW });
+    await t.sessions.chat(CLIENT, A, loopback()); // no id
+    await t.sessions.chat(CLIENT, A, loopback("task-9")); // never settled here
+    expect(t.offeredTo).toEqual([undefined, undefined]);
+    t.answer({ reply: "" });
+    await t.sessions.chat(CLIENT, A, loopback("task-1"));
+    expect(t.offeredTo.at(-1)).toBeDefined();
+    t.answer({ reply: "", proposedDelegate: FOLLOW });
+    const res = await t.sessions.chat(CLIENT, A, loopback("task-1")); // reused
+    expect(t.offeredTo.at(-1)).toBeUndefined();
+    expect(res.continuedDelegate).toBeUndefined();
+    const opts = await t.confirm();
+    opts.onEnd?.({ taskId: "task-3", type: "cancelled" });
+    await t.sessions.chat(CLIENT, A, loopback("task-3"));
+    expect(t.offeredTo.at(-1)).toBeUndefined();
+    expect(t.starts).toHaveLength(2); // the two confirmed cards only
+  });
+
+  it("a third attempt is refused, and Bean is told to ask the user", async () => {
+    const t = setup();
+    await failedCard(t, "FAILED: a");
+    t.answer({ reply: "", proposedDelegate: FOLLOW });
+    await t.sessions.chat(CLIENT, A, loopback("task-1"));
+    t.starts.at(-1)!.opts.onEnd?.({ taskId: "task-2", type: "failed", message: "FAILED: b" });
+    const second = await t.sessions.chat(CLIENT, A, loopback("task-2"));
+    expect(second.continuedDelegate?.proposal.followUp).toBe(2);
+    t.starts.at(-1)!.opts.onEnd?.({ taskId: "task-3", type: "done", result: "partly" });
+    const third = await t.sessions.chat(CLIENT, A, loopback("task-3"));
+    expect(t.offeredTo.at(-1)).toBeUndefined();
+    expect(t.notes.at(-1)).toMatch(/already followed up twice/);
+    expect(third.continuedDelegate).toBeUndefined();
+    expect(t.starts).toHaveLength(3);
+  });
+
+  it("the same failure twice stops the chain with a question", async () => {
+    const t = setup();
+    await failedCard(t, "FAILED: no access to the ledger");
+    t.answer({ reply: "", proposedDelegate: FOLLOW });
+    await t.sessions.chat(CLIENT, A, loopback("task-1"));
+    t.starts.at(-1)!.opts.onEnd?.({ taskId: "task-2", type: "failed", message: "FAILED: no access to the ledger" });
+    await t.sessions.chat(CLIENT, A, loopback("task-2"));
+    expect(t.offeredTo.at(-1)).toBeUndefined();
+    expect(t.notes.at(-1)).toMatch(/same failure again/);
+    expect(t.starts).toHaveLength(2);
+  });
+
+  it("a typed turn before or during the follow-up ends the chain", async () => {
+    const t = setup();
+    await failedCard(t);
+    t.answer({ reply: "" });
+    await t.sessions.chat(CLIENT, A, typed("wait")); // before Bean's outcome turn
+    t.answer({ reply: "", proposedDelegate: FOLLOW });
+    await t.sessions.chat(CLIENT, A, loopback("task-1"));
+    expect(t.offeredTo.at(-1)).toBeUndefined();
+
+    // During: a follow-up running when the user types can't be followed up again.
+    const t2 = setup();
+    await failedCard(t2);
+    t2.answer({ reply: "", proposedDelegate: FOLLOW });
+    await t2.sessions.chat(CLIENT, A, loopback("task-1"));
+    t2.answer({ reply: "" });
+    await t2.sessions.chat(CLIENT, A, typed("how's it going?"));
+    t2.starts.at(-1)!.opts.onEnd?.({ taskId: "task-2", type: "failed", message: "FAILED: b" });
+    t2.answer({ reply: "", proposedDelegate: FOLLOW });
+    await t2.sessions.chat(CLIENT, A, loopback("task-2"));
+    expect(t2.offeredTo.at(-1)).toBeUndefined();
+    expect(t2.starts).toHaveLength(2);
+  });
+
+  it("a refused follow-up is a needs-you line, never a card; another skill is a normal card", async () => {
+    const t = setup();
+    await failedCard(t);
+    const release = t.hold();
+    t.answer({ reply: "", proposedDelegate: FOLLOW });
+    const pending = t.sessions.chat(CLIENT, A, loopback("task-1"));
+    t.sessions.revokeGrant(CLIENT, A); // Dismiss while Bean answers the outcome
+    release();
+    const res = await pending;
+    expect(res.proposedDelegate).toBeUndefined();
+    expect(res.delegateNotice).toBe(followUpRefusedText("revoked"));
+
+    const t2 = setup();
+    await failedCard(t2);
+    t2.answer({ reply: "", proposedDelegate: { ...FOLLOW, skillName: "other" } });
+    const card = await t2.sessions.chat(CLIENT, A, loopback("task-1"));
+    expect(card.proposedDelegate).toMatchObject({ skillName: "other" });
+    expect(card.proposedDelegate?.continue).toBeUndefined();
+    expect(card.delegateNotice).toBe(GRANT_MISMATCH_TEXT.skill);
+    expect(t2.starts).toHaveLength(1);
   });
 });

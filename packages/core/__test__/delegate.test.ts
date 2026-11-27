@@ -899,6 +899,25 @@ describe("FAILED: sentinel", () => {
     expect(dones).toEqual([]);
   });
 
+  it("onError and onCancelled carry the final answer, not just the latest prose (#1131)", () => {
+    const report = "FAILED: no push token\n\nDone: fixed the bug, tests pass. Not done: the push.";
+    const assistant = (t: string): string => JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: t }] } });
+    const child = new FakeChild();
+    const finals: (string | undefined)[] = [];
+    runDelegate({ cli: "claude", projectPath: "/p", prompt: "go" }, { onOutput: () => {}, onDone: () => {}, onError: (_e, f) => finals.push(f) }, () => asChild(child));
+    child.stdout.emit("data", Buffer.from([assistant("Checking."), claudeResultLine(report)].join("\n") + "\n"));
+    child.emit("close", 0);
+    expect(finals).toEqual([report]);
+
+    const stopped = new FakeChild();
+    const h = runDelegate({ cli: "claude", projectPath: "/p", prompt: "go" }, { onOutput: () => {}, onDone: () => {}, onError: () => {} }, () => asChild(stopped));
+    stopped.stdout.emit("data", Buffer.from(assistant("Half way: fixed A.") + "\n"));
+    let cancelled: string | undefined;
+    h.cancel((f) => { cancelled = f; });
+    stopped.emit("close", null);
+    expect(cancelled).toBe("Half way: fixed A.");
+  });
+
   it("no sentinel, or FAILED: mid-text, is success", () => {
     expect(finish("claude", [claudeResultLine("Posted it.")]).dones).toEqual(["Posted it."]);
     expect(finish("claude", [claudeResultLine("Posted.\nEarlier step FAILED: retried")]).errors).toEqual([]);

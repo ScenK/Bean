@@ -439,9 +439,12 @@ describe("ChatWindow agent mode", () => {
     expect(bean.liveSend).toHaveBeenCalledWith("s1", "also add a test", expect.any(String));
 
     // The delegate finishes while the agent is live: its loopback is a Bean turn, never live-send.
+    // A follow-up the host refused comes back as a needs-you line with no card (#1132).
+    bean.chat!.mockResolvedValueOnce({ reply: "", model: "m", delegateNotice: "Bean stopped following up on its own: x" });
     await act(async () => { listeners.onDelegateEvent!({ taskId: "task1", type: "done", result: "audit ok" } satisfies DelegateEvent); });
     await flush();
     expect(chatCalls().at(-1)).toMatchObject({ source: "loopback" });
+    expect(root.textContent).toContain("Bean stopped following up on its own: x");
     expect(bean.liveSend).toHaveBeenCalledTimes(1);
 
     await send("/bean");
@@ -734,6 +737,8 @@ describe("ChatWindow agent mode", () => {
     await act(async () => { first({ reply: "done", model: "m" }); });
     await flush();
     expect(chatCalls().at(-1)).toMatchObject({ source: "loopback" });
+    // Queued behind the user's own turn: it still reports, but names no task to follow up (#1132).
+    expect(chatCalls().at(-1)).not.toHaveProperty("settledTask");
     expect(hint()).toBeNull();
     await esc();
     expect(bean.chatStop).not.toHaveBeenCalled();

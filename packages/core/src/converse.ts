@@ -168,6 +168,8 @@ export interface ProposedDelegate {
    * only when one was passed. `cli`/`model`/`skillName` absent = inherit the session's (matchGrant);
    * an omitted project is the session's `projectPath`. The host decides: grant match = resume, else a card. */
   continue?: true;
+  /** Set by the host on an automatic follow-up's card (#1132): which one of FOLLOW_UP_MAX it is. */
+  followUp?: number;
 }
 /** The chat's continuable agent session (a live delegate grant), for converse(). The model sees
  * `cli`, `projectName` and `lastInstruction` as quoted data — never `projectPath` or a session id. */
@@ -253,6 +255,10 @@ export interface ChatRequest {
   /** The main conversation (#997, after the cutover): the shell's turns new since its last ack, which
    * the host appends to the log — `history` and `summary` are then unused. */
   delta?: KeyedTurn[];
+  /** A delegate outcome turn (`source: "loopback"`, #1132): the settled task it answers. The host
+   * offers an automatic follow-up only for a task it saw settle in this chat, once — never on this
+   * field alone. */
+  settledTask?: string;
 }
 
 const pad = (n: number): string => String(n).padStart(2, "0");
@@ -810,7 +816,8 @@ export interface ConverseInput {
   skillAuthoringAvailable?: boolean;
   /** Offer propose_note_archive (default false — chatops only; the desktop has its own Archive). */
   noteArchiveAvailable?: boolean;
-  /** Per-turn guidance about the speaker's role (chatops); rides the trailing system message. */
+  /** Per-turn code-built guidance — the speaker's role (chatops), an automatic follow-up's budget
+   * (desktop, #1132); rides the trailing system message. */
   roleNote?: string;
   /** Offer propose_routine (chatops owner/admins; the desktop host for a local chat). */
   routineAuthoring?: RoutineAuthoring;

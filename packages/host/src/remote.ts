@@ -93,7 +93,7 @@ const keyedTurn = shape({ key: str, role: oneOf("user", "assistant"), content: s
 const chatRequest = shape({
   history: arr(turn), summary: opt(str), message: str, gap: opt(bool), source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
   linkedNote: opt(obj), images: opt(arr(shape({ data: str, mimeType: str }))), documents: opt(arr(() => true)), turnId: opt(str),
-  delta: opt(arr(keyedTurn)), effort: opt(str),
+  delta: opt(arr(keyedTurn)), effort: opt(str), settledTask: opt(str),
 });
 // Home over SSH (#997): its open and its saves, so a remote shell reaches the main conversation too.
 const threadSave = shape({ id: str, title: str, items: arr(() => true), noteSlug: opt(str), turns: opt(arr(keyedTurn)), mainCursor: opt(num) });

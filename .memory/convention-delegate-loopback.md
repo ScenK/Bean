@@ -17,12 +17,23 @@ Bean **does** track these: `host/src/delegate-tasks.ts` keeps a task registry an
 push channel) to the chat's DelegateCard.
 
 Key contracts:
-- **Loopback:** on `done`, `failed` and `cancelled` (#1113) the renderer auto-sends
-  `[delegate result|failed|cancelled for "…"]: …` once (deduped by settled task id) through the
-  normal chat flow (collapsed display label), so Bean knows how the task stands before it
-  continues it. A loopback turn (`source: "loopback"`) is never offered the session — it can't
-  start a run or refresh the grant. A refused cardless resume doesn't loop back: it re-offers its
-  instruction as a normal card.
+- **Loopback:** on `done`, `failed` and `cancelled` (#1113) the renderer auto-sends one outcome
+  turn (deduped by settled task id) through the normal chat flow (collapsed display label), built
+  by core's `delegateOutcomeTurn()` (`prompt.ts`, #1131): `[delegate result|failed|cancelled for
+  "…"]: <reason>` + the agent's final message `quoteFence`d as data + a "judge it: done / partly
+  done / blocked / waiting on the user; say what was done and what was skipped" ask — never a
+  one-line status. `failed`/`cancelled` events carry `final` — core `runDelegate` hands it to
+  `onError(err, final)` / `cancel((final) => …)` (the final answer a `FAILED:` is judged from, else
+  the latest prose; `onText` alone misses claude/agy result events), trimmed and capped by `trimDelegateFinal`; the `FAILED:` sentinel asks the agent to list done/not-done
+  under its first line. ChatOps appends the same `delegateOutcomeRecord()` (no ask) to history on
+  every terminal outcome (`last` = core's final, else the latest prose), so the next turn can answer "what happened?", and
+  Bean's outcome turn (#1133, `convention-delegate-task-grant.md`) judges it in place of the raw post. No partial state — `FAILED:` stays the only failure signal. A loopback turn (`source: "loopback"`) is offered the
+  session only as a bounded **automatic follow-up** (#1132, see `convention-delegate-task-grant.md`):
+  it names its `settledTask`, and the host admits it only for a run it saw settle in that chat —
+  `source` alone authorizes nothing; it never refreshes the grant. A refused cardless resume doesn't
+  loop back: a user's continuation re-offers its instruction as a normal card; Bean's own follow-up
+  becomes a needs-you line instead (never a card). A delegate outcome queued behind the user's own
+  turn still reports (Bean sees every outcome) but carries no `settledTask`.
 - **Tasks live for the chat window, not the shown chat — no ghosts:** switching chats keeps a
   chat with a running delegate mounted, hidden (#517); every event carries the starting chat's
   `mountId` (stamped by `delegate-tasks` from the task, set by the host's `chat-sessions.ts`) and the shell routes it there,

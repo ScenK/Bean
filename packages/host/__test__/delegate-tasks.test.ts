@@ -20,7 +20,7 @@ function tmp(): string {
 function harness(opts: { cli?: CliName; dir?: string } = {}) {
   const sent: DelegateEvent[] = [];
   const cancels: string[] = [];
-  const cancelCallbacks: (() => void)[] = [];
+  const cancelCallbacks: ((final?: string) => void)[] = [];
   const captured: DelegateCallbacks[] = [];
   const reqs: DelegateRequest[] = [];
   let nextId = 0;
@@ -220,6 +220,23 @@ describe("createDelegateTasks", () => {
       { taskId: id, type: "output", line: "▸ Edit" },
       { taskId: id, type: "done", result: "all done" },
     ]);
+  });
+
+  it("failed and cancelled events carry the agent's final message, trimmed (#1131)", async () => {
+    const h = harness();
+    const a = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
+    h.cbs().onText?.("working on it");
+    h.cbs().onError(new Error("no token"), "  FAILED: no token\n\nFixed the bug; didn't push.  ");
+    expect(h.sent.at(-1)).toEqual({ taskId: a, type: "failed", message: "no token", final: "FAILED: no token\n\nFixed the bug; didn't push." });
+    const b = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
+    h.cbs().onText?.("latest prose");
+    h.cbs().onError(new Error("exited"));
+    expect(h.sent.at(-1)).toMatchObject({ taskId: b, type: "failed", final: "latest prose" }); // no final from core: prose fallback
+    const c = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
+    h.tasks.cancel(c);
+    h.cancelCallbacks.at(-1)!("x".repeat(5000));
+    const cancelled = h.sent.at(-1) as Extract<DelegateEvent, { type: "cancelled" }>;
+    expect(cancelled.final).toMatch(/^x{4000}\n…\(trimmed\)$/);
   });
 
   it("cancel emits cancelled only after the handle confirms termination; later callbacks are ignored", async () => {

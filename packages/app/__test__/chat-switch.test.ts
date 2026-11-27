@@ -308,7 +308,8 @@ describe("ChatWindow switches chats in place", () => {
     bean.chat!.mockResolvedValueOnce({ reply: "the audit found nothing", model: "m" });
     await act(async () => { listeners.onDelegateEvent!({ taskId: "task1", type: "done", result: "clean", mountId: first }); });
     await flush();
-    expect(bean.chat!.mock.calls.at(-1)).toEqual([expect.objectContaining({ source: "loopback" }), first]);
+    // It names its settled task: the host's only key to an automatic follow-up (#1132).
+    expect(bean.chat!.mock.calls.at(-1)).toEqual([expect.objectContaining({ source: "loopback", settledTask: "task1" }), first]);
     expect(shownChat().textContent).not.toContain("the audit found nothing");
     expect(rowOf("hello there")!.querySelector(".bean-chat-sidebar-spinner")).toBeNull();
     expect(rowOf("hello there")!.querySelector(".bean-chat-sidebar-dot")).not.toBeNull();

@@ -2,9 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
-import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedDelegate, type ProposedLiveSession, type ProposedSend } from "../converse.js";
+import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ConverseResult, type ImageAttachment, type ProposedDelegate, type ProposedLiveSession, type ProposedSend } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
-import { composePrompt } from "../prompt.js";
+import { composePrompt, delegateOutcomeRecord, delegateOutcomeTurn, trimDelegateFinal, type DelegateOutcome } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { extractMemories, memoryCategories } from "../memory/extract.js";
@@ -33,7 +33,11 @@ import type { RecallScope } from "../memory/store.js";
 import type { CliName } from "../launcher.js";
 import { cliOffersModel, resolveWireModel, type CliModels } from "../cli-models.js";
 import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
-import { createGrant, GRANT_MISMATCH_TEXT, matchGrant, refreshGrant, revokeGrant, type DelegateGrant } from "../delegate-grant.js";
+import {
+  createGrant, followUpNote, followUpRefusedNote, followUpRefusedText, GRANT_MISMATCH_TEXT, matchFollowUp, matchGrant,
+  refreshGrant, reserveFollowUp, revokeGrant, type DelegateGrant,
+} from "../delegate-grant.js";
+import type { TurnCap } from "./turn-cap.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type DelegateRunRow, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
@@ -262,6 +266,9 @@ export interface TeamsBotDeps {
   imageGen?: Pick<ImageGenDeps, "generate" | "model" | "imagesDir">;
   /** Bean's turns (converse path only) for the desktop app's status bubbles (see activity.ts). */
   onActivity?: ChatopsActivitySink;
+  /** The surface's daily turn cap (Discord): Bean's turn on a delegate's end (#1133) counts against
+   * the person it answers for, like their own turn would (never the owner). Absent = uncapped. */
+  turnCap?: Pick<TurnCap, "admit">;
   /** Enables the chatops reminder tools (member+): reminders.json path plus this surface's
    * outbox transport. Teams targets are always the asking conversation (its outbox can't DM
    * a specific user); Discord DMs target the speaker. */
@@ -368,6 +375,14 @@ export function parseResumeArg(rest: string): { id: string } | { error: string }
   if (ids.length > 1) return { error: "Send just one session id." };
   return { id: ids[0]! };
 }
+
+/** Whom a delegate run answers to (#1133): the confirming tap's — or the continuing turn's — platform
+ * identity (never a display name for authority), re-checked before Bean follows up on its own. */
+interface RunActor { id: string; altId?: string; scopeId?: string; name: string }
+
+/** Why Bean's automatic follow-up didn't run (#1133), closing its one final message. */
+const FOLLOW_UP_REPLIED = "Follow-up skipped — you replied, so I'll go with that instead.";
+const FOLLOW_UP_CAPPED = "Follow-up skipped — daily limit reached.";
 
 export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;
@@ -634,6 +649,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // revokes. One surface per process, so the grant's surface tag only has to be consistent.
   const grantSurface = deps.mainLog?.surface ?? "discord";
   const grants = new Map<string, { grant: DelegateGrant; instruction: string }>();
+  // Bean's turn on a delegate's end (#1133): each person's addressed turns per conversation (one
+  // after the run ended drops its automatic follow-up — ambient chatter never reaches onMessage), and
+  // the runs whose end was already answered (a completion delivered twice gets one turn). Memory only.
+  // ponytail: `addressed` grows by conversation × speaker until restart.
+  const addressed = new Map<string, number>();
+  const spoke = (conv: string, id: string): number => addressed.get(`${conv}\n${id}`) ?? 0;
+  const answeredRuns = new Set<string>();
 
   // The model's record of a confirm card (#941): one code-built assistant line after each card
   // post and at each authorized outcome — kind, state and a catalog name only (card-record.ts).
@@ -655,7 +677,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   async function startRun(
     p: Pick<PendingProposal, "proposal" | "conversationId" | "cardActivityId" | "fresh">, cli: CliName, model: string | undefined,
     startedBy: string, fx: BotEffects, confirmed?: { actorId: string; resets: number },
-    continued?: { grant: DelegateGrant; recheck: () => string | undefined },
+    continued?: {
+      grant: DelegateGrant; recheck: () => string | undefined;
+      /** Bean's own follow-up (#1133): its number; never renews the idle clock; `refused` replaces
+       * the default notice when the recheck stops it. */
+      followUp?: number; refused?: (why: string) => Promise<void>;
+    },
+    actor?: RunActor,
   ): Promise<void> {
     // Before any await: a `/new` from here on must not let this run store a session or grant.
     const resetsAtLaunch = confirmed?.resets ?? resets.get(p.conversationId) ?? 0;
@@ -712,7 +740,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const held = grants.get(conv);
       if (continued) {
         if (!held || held.grant.revoked || held.grant.generation !== continued.grant.generation) return;
-        const grant = sessionId === continued.grant.sessionId ? refreshGrant(held.grant, Date.now()) : revokeGrant(held.grant);
+        const grant = sessionId !== continued.grant.sessionId ? revokeGrant(held.grant)
+          : continued.followUp ? held.grant : refreshGrant(held.grant, Date.now());
         grants.set(conv, { ...held, grant });
         return;
       }
@@ -742,22 +771,46 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     let runId = "";
     const running = (tail?: string): object => deps.cards.runningCard({
       projectName, instruction: p.proposal.instruction, startedBy, runId, ...(tail !== undefined ? { tail } : {}),
-      ...(continued ? { continued: true as const } : {}),
+      ...(continued ? { continued: true as const } : {}), ...(continued?.followUp ? { followUp: continued.followUp } : {}),
     });
     let ended = false; // a launch that fails synchronously ends before start() returns
     if (continued) {
       // No proposal card to edit: the compact card (no Cancel until the run has an id) is posted first.
-      p.cardActivityId = await fx.postCard(running());
+      // Bean's follow-up edits the run's own card in place.
+      if (p.cardActivityId === undefined) p.cardActivityId = await fx.postCard(running());
       // Checked again after the turn's last await, right before dispatch: a `/new`, a role change or a
       // skill that gained `browser: true` (the request's own `skill`) meanwhile refuses — never runs.
       const why = continued.recheck() ?? (skill?.browser && !continued.grant.browser ? GRANT_MISMATCH_TEXT.browser : undefined);
       if (why) {
         recordCard(p.conversationId, "delegate", "didn't start");
+        if (continued.refused) return continued.refused(why);
         await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", agent: cli }));
         await fx.post(`${why} Nothing ran — ask me again.`);
         return;
       }
     }
+    // The run's end, answered once (#1133): Bean's turn for the person it answers to — taken at the
+    // end, synchronously: the grant it settled on and how often they had spoken here — else the
+    // run's own words (`raw`: a failure keeps the agent's report of what it did finish).
+    // Not `runId`: a launch that fails synchronously ends before it has one.
+    const endKey = randomUUID();
+    const answerFor = (sessionId: string | undefined, outcome: Exclude<DelegateOutcome, { type: "cancelled" }>): (() => Promise<void>) => {
+      const conv = p.conversationId;
+      const failure = outcome.type === "failed" ? outcome.message : undefined;
+      const final = outcome.type === "failed" ? trimDelegateFinal(outcome.final) : undefined;
+      const raw = outcome.type === "done" ? outcome.result : `Delegate run failed: ${outcome.message}${final ? `\n\n${final}` : ""}`;
+      const g = grants.get(conv)?.grant;
+      const generation = actor && sessionId && g && !g.revoked && g.sessionId === sessionId && g.actorId === actor.id ? g.generation : undefined;
+      const spokeAtEnd = actor ? spoke(conv, actor.id) : 0;
+      // This run's own outcome turn, not just "the latest record": two runs ending together each judge theirs.
+      const turn = delegateOutcomeTurn(p.proposal.instruction, outcome);
+      return () => actor
+        ? outcomeTurn({
+            endKey, conv, actor, fx, raw, turn, spokeAtEnd, card: p.cardActivityId,
+            ...(generation !== undefined ? { generation } : {}), ...(failure !== undefined ? { failure } : {}),
+          })
+        : (fx.postResult ?? fx.post)(raw);
+    };
     const started = await deps.runs.start(
       req,
       {
@@ -766,23 +819,26 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         },
         onDone: (result, sessionId) => {
           ended = true;
+          if (sessionId && !onMain && (resets.get(p.conversationId) ?? 0) === resetsAtLaunch) {
+            deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
+          }
+          settleGrant(sessionId);
+          const answer = answerFor(sessionId, { type: "done", result });
           void (async () => {
-            if (sessionId && !onMain && (resets.get(p.conversationId) ?? 0) === resetsAtLaunch) {
-              deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
-            }
-            settleGrant(sessionId);
-            appendHistory(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
+            appendHistory(p.conversationId, { role: "assistant", content: delegateOutcomeRecord(p.proposal.instruction, { type: "done", result }) });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done", ...receipt(sessionId, result) })).catch(logRunEffectError);
-            await (fx.postResult ?? fx.post)(result);
+            await answer();
           })().catch(logRunEffectError);
         },
         onError: (message, sessionId, last) => {
           ended = true;
           settleGrant(sessionId);
+          const answer = answerFor(sessionId, { type: "failed", message, ...(last !== undefined ? { final: last } : {}) });
           void (async () => {
             recordCard(p.conversationId, "delegate", "failed", p.proposal.skillName);
+            appendHistory(p.conversationId, { role: "assistant", content: delegateOutcomeRecord(p.proposal.instruction, { type: "failed", message, final: last }) });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId, last) })).catch(logRunEffectError);
-            await fx.post(`Delegate run failed: ${message}`);
+            await answer();
           })().catch(logRunEffectError);
         },
         onCancelled: (sessionId, last) => {
@@ -790,6 +846,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           settleGrant(sessionId);
           void (async () => {
             recordCard(p.conversationId, "delegate", "cancelled", p.proposal.skillName);
+            appendHistory(p.conversationId, { role: "assistant", content: delegateOutcomeRecord(p.proposal.instruction, { type: "cancelled", final: last }) });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId, last) })).catch(logRunEffectError);
             await fx.post("Run cancelled.");
           })().catch(logRunEffectError);
@@ -840,8 +897,112 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const now = matchGrant(grants.get(conv)?.grant, { surface: grantSurface, scopeKey: conv, actorId: msg.fromId, generation: g.generation }, Date.now());
       return now.ok ? undefined : GRANT_MISMATCH_TEXT[now.reason];
     };
-    await startRun({ proposal, conversationId: conv }, g.cli, g.model, msg.fromName, fx, undefined, { grant: g, recheck });
+    await startRun({ proposal, conversationId: conv }, g.cli, g.model, msg.fromName, fx, undefined, { grant: g, recheck }, {
+      id: msg.fromId, ...(msg.fromAltId ? { altId: msg.fromAltId } : {}),
+      ...(msg.direct || !msg.scopeId ? {} : { scopeId: msg.scopeId }), name: msg.fromName,
+    });
     return undefined;
+  }
+
+  /** Bean's turn on a delegate's end (#1133), for `o.actor` (who confirmed or continued the run).
+   * Bean judges the run's own `delegateOutcomeTurn` (`o.turn`) and answers with one message in place of the
+   * run's raw words (`o.raw` stays the fallback: the daily cap, a failed model call, no reply). While
+   * the grant the run settled on holds (`o.generation`) and its follow-up budget lasts, Bean may
+   * continue the same session once more: the run's card turns running again in place and this reply
+   * waits in history for that run's end. A follow-up that doesn't run ends this message with why. */
+  async function outcomeTurn(o: {
+    /** One per run (its end may be delivered twice): the execution dedupe and the cap's turn id. */
+    endKey: string; conv: string; actor: RunActor; fx: BotEffects; raw: string; turn: string; spokeAtEnd: number;
+    card?: string; generation?: number; failure?: string;
+  }): Promise<void> {
+    const { conv, actor, fx } = o;
+    if (answeredRuns.has(o.endKey)) return;
+    if (answeredRuns.size >= 1000) answeredRuns.clear();
+    answeredRuns.add(o.endKey);
+    const post = (text: string): Promise<void> => (fx.postResult ?? fx.post)(text);
+    const role = deps.roles.roleOf({ fromId: actor.id, fromAltId: actor.altId, scopeId: actor.scopeId });
+    // Stable per completion, so a redelivery is never counted twice (the cap admits a known id again).
+    if (role !== "owner" && deps.turnCap && !deps.turnCap.admit({ turnId: `delegate-outcome:${o.endKey}`, userId: actor.id, userName: actor.name })) {
+      return post(`${o.raw}\n\n${FOLLOW_UP_CAPPED}`);
+    }
+    const hid = historyId(conv);
+    const held = grants.get(conv);
+    const m = o.generation !== undefined && can(role, "delegate")
+      ? matchFollowUp(held?.grant, { surface: grantSurface, scopeKey: conv, actorId: actor.id, generation: o.generation }, o.failure, Date.now())
+      : undefined;
+    const offered = m?.ok ? held : undefined;
+    const note = m === undefined ? undefined : m.ok ? followUpNote((m.grant.followUps ?? 0) + 1) : followUpRefusedNote(m.reason);
+    let result: ConverseResult;
+    let skills: Skill[] = [];
+    try {
+      const [loaded, projects, persona] = await Promise.all([offered ? loadActiveSkills() : [], deps.loadProjects(), deps.loadPersona()]);
+      skills = loaded;
+      const detected = deps.detectClis();
+      result = await converse({
+        skills, projects, persona, memories: [],
+        deps: { chat: deps.chat, model: deps.model, rankByMeaning: deps.rankByMeaning },
+        history: hid === MAIN_CONVERSATION_ID ? await boundMainLog(deps.conversations, { chat: deps.chat, model: deps.model }) : deps.conversations.history(hid),
+        latestUserText: o.turn,
+        delegateAvailable: offered !== undefined, ...(offered ? { scratchPath: deps.scratchPath } : {}), availableClis: detected, models: availableModels(deps.cliModels, detected),
+        runAvailable: false, noteAvailable: false, skillAuthoringAvailable: false, liveSessionAvailable: false,
+        roleNote: [roleLine(role, deps.roles, actor.scopeId), note].filter(Boolean).join("\n\n"),
+        ...(offered ? { activeSession: {
+          cli: offered.grant.cli, projectPath: offered.grant.projectPath, lastInstruction: offered.instruction,
+          projectName: delegateProjectLabel(offered.grant.projectPath, projects),
+        } } : {}),
+      });
+    } catch (err) {
+      console.error(`[chatops] delegate outcome turn failed: ${err instanceof Error ? err.message : String(err)}`);
+      return post(o.raw);
+    }
+    const cont = offered && result.proposedDelegate?.continue ? result.proposedDelegate : undefined;
+    const reply = result.error !== undefined || (!cont && result.reply === CARD_LEAD) ? "" : result.reply.trim();
+    if (!reply) return post(o.raw);
+    appendHistory(conv, { role: "assistant", content: reply }, hid);
+    if (!cont) return post(reply);
+    const skipped = (why: string): Promise<void> => post(`${reply}\n\n${why}`);
+    // Re-checked here and again right before dispatch (startRun's recheck): the person spoke since
+    // the run ended, their role, the grant (generation, revocation, budget, same failure), the task's
+    // skill gaining `browser`, a live session bound here, the CLI still installed.
+    const recheck = (): string | undefined => {
+      if (spoke(conv, actor.id) !== o.spokeAtEnd) return FOLLOW_UP_REPLIED;
+      const now = deps.roles.roleOf({ fromId: actor.id, fromAltId: actor.altId, scopeId: actor.scopeId });
+      if (!can(now, "delegate")) return refusal(needs("delegate"), now, "run tasks", deps.roles, actor.scopeId);
+      if (deps.liveSessions.has(conv)) return followUpRefusedText("busy");
+      return undefined;
+    };
+    const early = recheck();
+    if (early) return skipped(early);
+    const { continue: _c, ...plain } = cont;
+    const skillName = plain.skillName ?? held?.grant.skillName;
+    const browser = skillName !== undefined && skills.find((s) => s.name === skillName)?.browser === true;
+    const fm = matchFollowUp(grants.get(conv)?.grant, {
+      surface: grantSurface, scopeKey: conv, actorId: actor.id, projectPath: plain.projectPath,
+      ...(plain.cli ? { cli: plain.cli } : {}), ...(plain.model ? { model: plain.model } : {}),
+      ...(plain.skillName ? { skillName: plain.skillName } : {}), ...(browser ? { browser } : {}),
+      generation: o.generation!,
+    }, o.failure, Date.now());
+    if (!fm.ok) return skipped(followUpRefusedText(fm.reason));
+    const g = fm.grant;
+    if (!deps.detectClis().includes(g.cli)) return skipped(followUpRefusedText("cli"));
+    if (deps.runs.busy(conv, g.cli)) return skipped(followUpRefusedText("busy"));
+    // Spends the budget before the run starts: a stopped or refused follow-up still counts.
+    const next = reserveFollowUp(g, o.failure);
+    grants.set(conv, { grant: next, instruction: plain.instruction });
+    const proposal: ProposedDelegate = {
+      ...plain, projectPath: g.projectPath, cli: g.cli,
+      ...(g.model !== undefined ? { model: g.model } : {}), ...(g.skillName !== undefined ? { skillName: g.skillName } : {}),
+    };
+    const dispatchCheck = (): string | undefined => {
+      const why = recheck();
+      if (why) return why;
+      const live = matchGrant(grants.get(conv)?.grant, { surface: grantSurface, scopeKey: conv, actorId: actor.id, generation: g.generation }, Date.now());
+      return live.ok ? undefined : followUpRefusedText(live.reason);
+    };
+    await startRun(
+      { proposal, conversationId: conv, ...(o.card !== undefined ? { cardActivityId: o.card } : {}) }, g.cli, g.model, actor.name, fx, undefined,
+      { grant: next, recheck: dispatchCheck, followUp: next.followUps ?? 1, refused: skipped }, actor,
+    );
   }
 
   // A picked skill must still exist and be enabled (never a silent bare-instruction start), and a
@@ -2167,6 +2328,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       // Captured for a session that has since ended or been replaced: not a Bean turn.
       if (msg.liveRun !== undefined && deps.liveSessions.generation(msg.conversationId) !== msg.liveRun) return;
+      // Any addressed turn from a run's asker drops Bean's pending follow-up on it (#1133).
+      addressed.set(`${msg.conversationId}\n${msg.fromId}`, spoke(msg.conversationId, msg.fromId) + 1);
       // Set once the message reaches converse(); the finally reports the turn's end.
       let turnId: string | undefined;
       let turnFailed = false;
@@ -2901,7 +3064,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await fx.post(NO_CLI);
         return;
       }
-      await startRun(p, choice.cli, choice.model, action.fromName, fx, { actorId: action.fromId, resets: resetsAtTap });
+      await startRun(p, choice.cli, choice.model, action.fromName, fx, { actorId: action.fromId, resets: resetsAtTap }, undefined, {
+        id: action.fromId, ...(action.fromAltId ? { altId: action.fromAltId } : {}),
+        ...(action.scopeId ? { scopeId: action.scopeId } : {}), name: action.fromName,
+      });
     },
   };
   return bot;

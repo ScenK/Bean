@@ -12,10 +12,10 @@ import type { TabShortcut } from "./TerminalPane.js";
 import { applyMainPull, applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, resumesAfterGap, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
-import { composePrompt, linkedNoteData } from "@bean/core/prompt";
+import { composePrompt, delegateOutcomeTurn, linkedNoteData, type DelegateOutcome } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { CARD_LEAD } from "@bean/core/card-record";
-import { GRANT_IDLE_MS, GRANT_MISMATCH_TEXT } from "@bean/core/delegate-grant";
+import { followUpRefusedText, GRANT_IDLE_MS, GRANT_MISMATCH_TEXT } from "@bean/core/delegate-grant";
 import { beanEfforts } from "@bean/core/models";
 import { dataUrlToAttachment, labelNoteImages } from "../../shared/note-images.js";
 import type {
@@ -55,7 +55,8 @@ interface LiveState {
   continuing?: boolean; receipt?: LiveReceipt; unopened?: string[]; stopping?: boolean;
 }
 
-type QueuedSend = { text: string; display?: string; source?: TurnSource };
+/** `settledTask` = a delegate outcome turn's task (#1132): the host admits a follow-up only for it. */
+type QueuedSend = { text: string; display?: string; source?: TurnSource; settledTask?: string };
 
 /** A chat continued in Discord starts no work here any more: every card still awaiting a tap expires. */
 export const expirePending = (items: readonly ChatItem[]): ChatItem[] =>
@@ -116,27 +117,24 @@ export function applyDelegateEventToItems(
       if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message, ...receipt };
       if (e.type === "cancelled") return { ...it, state: "cancelled" as const, ...receipt };
       return it;
-    }).concat(refused ? [{ kind: "delegate", id: newId(), proposal: retryProposal(match.proposal), state: "pending", tail: [] }] : []),
+    }).concat(!refused ? [] : match.proposal.followUp
+      // Bean's own follow-up couldn't resume: it needs the user, never a new card (#1132).
+      ? [{ kind: "status", id: newId(), text: followUpRefusedText("revoked"), tone: "info" }]
+      : [{ kind: "delegate", id: newId(), proposal: retryProposal(match.proposal), state: "pending", tail: [] }]),
     loopback: refused ? undefined : delegateLoopback(match.proposal.instruction, e),
   };
 }
 
 /** A continuation's card again, after its resume was refused: same instruction, a fresh session. */
-const retryProposal = ({ continue: _c, ...p }: ProposedDelegate): ProposedDelegate => p;
+const retryProposal = ({ continue: _c, followUp: _f, ...p }: ProposedDelegate): ProposedDelegate => p;
 
-/** A settled run's result turn, so Bean knows how the task stands before it continues it — done,
- * failed or cancelled (#1113). Undefined for any other event. */
+/** A settled run's outcome turn, so Bean judges how the task stands from the agent's own report before
+ * it continues it — done, failed or cancelled (#1113, #1131). Undefined for any other event. */
 function delegateLoopback(instruction: string, e: DelegateEvent): QueuedSend | undefined {
-  const head = `[delegate ${e.type === "done" ? "result" : e.type} for "${instruction}"]`;
-  if (e.type === "done") {
-    return { text: `${head}: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`, display: "📦 Delegate finished", source: "loopback" };
-  }
-  if (e.type === "failed") {
-    return { text: `${head}: ${e.message}\n\nBriefly tell the user it failed and why, in your own words.`, display: "📦 Delegate failed", source: "loopback" };
-  }
-  if (e.type === "cancelled") {
-    return { text: `${head}: stopped before it finished.\n\nBriefly acknowledge that, in your own words.`, display: "📦 Delegate stopped", source: "loopback" };
-  }
+  const turn = (o: DelegateOutcome, display: string): QueuedSend => ({ text: delegateOutcomeTurn(instruction, o), display, source: "loopback", settledTask: e.taskId });
+  if (e.type === "done") return turn({ type: "done", result: e.result }, "📦 Delegate finished");
+  if (e.type === "failed") return turn({ type: "failed", message: e.message, final: e.final }, "📦 Delegate failed");
+  if (e.type === "cancelled") return turn({ type: "cancelled", final: e.final }, "📦 Delegate stopped");
   return undefined;
 }
 
@@ -520,9 +518,10 @@ export function ChatSession({
   const offersClaimedRef = useRef(new Set<string>());
   const busyRef = useRef(false);
   // Bean's own running turn (its turnId) and whether a Stop is in flight for it.
-  const beanTurnRef = useRef<{ id: string; stopping?: boolean } | undefined>(undefined);
+  // `user` = the user's own turn (typed or skill), which ends a chain of automatic follow-ups (#1132).
+  const beanTurnRef = useRef<{ id: string; stopping?: boolean; user?: true } | undefined>(undefined);
   const [beanTurn, setBeanTurnState] = useState<{ id: string; stopping?: boolean } | undefined>(undefined);
-  const setBeanTurn = (t: { id: string; stopping?: boolean } | undefined): void => { beanTurnRef.current = t; setBeanTurnState(t); };
+  const setBeanTurn = (t: { id: string; stopping?: boolean; user?: true } | undefined): void => { beanTurnRef.current = t; setBeanTurnState(t); };
   const queuedSendsRef = useRef<QueuedSend[]>([]);
   const [turnsSettled, setTurnsSettled] = useState(0);
   const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
@@ -560,7 +559,7 @@ export function ChatSession({
   };
   // Async callbacks (a chat prompt after its note lookup, delegate loopbacks) reach sendMessage
   // through a ref — a direct reference would close over a stale render's `busy`/`items`.
-  const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[], source?: TurnSource) => Promise<void>>(async () => {});
+  const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[], source?: TurnSource, settledTask?: string) => Promise<void>>(async () => {});
 
   const snapshot = (): string => JSON.stringify([normalizeForSave(itemsRef.current), linkedNoteRef.current?.slug ?? null, logRef.current ? mainCursorRef.current : null]);
   // Writes run one at a time, in order; a failed one is retried by the next change. Resolves to
@@ -835,11 +834,15 @@ export function ChatSession({
 
   const sendMessage = async (
     text: string, display?: string, queueIfBusy = false, images?: ImageAttachment[], source: TurnSource = "typed",
+    settledTask?: string,
   ): Promise<void> => {
     const message = text.trim();
     if (!message || continuedTo(itemsRef.current)) return; // read-only: no turn, so no new cards
     if (busyRef.current) {
-      if (queueIfBusy) queuedSendsRef.current.push({ text: message, display, source });
+      // A delegate outcome queued behind the user's own turn still reports (Bean sees every outcome,
+      // #1131) but can't follow up: the user's turn ended the chain (#1132; the host refuses it too).
+      const follow = settledTask !== undefined && !beanTurnRef.current?.user ? { settledTask } : {};
+      if (queueIfBusy) queuedSendsRef.current.push({ text: message, display, source, ...follow });
       return;
     }
     busyRef.current = true;
@@ -847,7 +850,7 @@ export function ChatSession({
     setStatus("working");
     const workingId = newId();
     const turnId = newId();
-    setBeanTurn({ id: turnId });
+    setBeanTurn({ id: turnId, ...(source === "typed" || source === "skill" ? { user: true } : {}) });
     // The pinned PDF goes with every Bean turn; only the turn that attaches it shows its chip.
     const doc = pdfRef.current;
     const attaching = doc !== undefined && !doc.sent;
@@ -873,7 +876,7 @@ export function ChatSession({
 
     try {
       const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
-      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), ...(delta ? { delta } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId, ...(beanEffortRef.current ? { effort: beanEffortRef.current } : {}) }, mountId);
+      const res = await window.bean.chat({ history, ...(summary ? { summary } : {}), ...(delta ? { delta } : {}), message, ...(gap ? { gap } : {}), source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId, ...(settledTask ? { settledTask } : {}), ...(beanEffortRef.current ? { effort: beanEffortRef.current } : {}) }, mountId);
       // The host appended the delta, this turn and its reply.
       if (delta) ackKeys([...delta.map((x) => x.key), turnId, replyId]);
       if (res.model) setModel(res.model);
@@ -946,6 +949,8 @@ export function ChatSession({
             }, () => {});
           }
         }
+        // An automatic follow-up the host refused (#1132): a needs-you line, no card.
+        else if (res.delegateNotice) next.push({ kind: "status", id: newId(), text: res.delegateNotice, tone: "info" });
         if (res.proposedLiveSession) next.push({ kind: "offer", id: newId(), offer: res.proposedLiveSession, state: "pending" });
         for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}${m.category ? ` (${m.category})` : ""}`, tone: "done" });
         for (const m of res.forgotten ?? []) next.push({ kind: "forgot", id: newId(), text: m.text, row: m, state: "saved" });
@@ -957,7 +962,7 @@ export function ChatSession({
         }
         return next;
       });
-      for (const l of continued?.loopbacks ?? []) void sendRef.current(l.text, l.display, true, undefined, l.source);
+      for (const l of continued?.loopbacks ?? []) void sendRef.current(l.text, l.display, true, undefined, l.source, l.settledTask);
       flushRef.current = true;
       setStatus("idle");
       if (hiddenRef.current) onUnread();
@@ -987,7 +992,7 @@ export function ChatSession({
     if (!next) return;
     busyRef.current = false;
     setBusy(false); // the send below takes the turn straight back (or leaves it free if it sends nothing)
-    void sendRef.current(next.text, next.display, true, undefined, next.source);
+    void sendRef.current(next.text, next.display, true, undefined, next.source, next.settledTask);
   }, [turnsSettled]);
 
   const addStatus = (text: string, tone: "info" | "done" | "error", details?: string[], id = newId()): void => {
@@ -1421,7 +1426,7 @@ export function ChatSession({
       const result = attachDelegateTaskId(itemsRef.current, id, taskId, prompt, buffered);
       for (const e of buffered) noteGrant(result.items, e);
       setItems(result.items);
-      for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
+      for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source, loopback.settledTask);
     } catch (err) {
       // Refused, or (remote core) the connection dropped before the core confirmed it: the card says so
       // instead of sitting on "Starting…".
@@ -1770,7 +1775,7 @@ export function ChatSession({
       noteGrant(itemsRef.current, e);
     }
     setItems((prev) => applyDelegateEventToItems(prev, e).items);
-    if (loopback) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
+    if (loopback) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source, loopback.settledTask);
   };
 
   // Close-time memory for this chat, handed to main fire-and-forget — sent before the release (same
