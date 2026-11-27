@@ -10,7 +10,7 @@ import { ConversationStore } from "../src/chatops/conversation.js";
 import { appendDelivery } from "../src/chatops/compact.js";
 import { insertHomePost, listPendingHomePosts, saveDesktopChatDraining } from "../src/home-posts.js";
 import { HOME_THREAD_ID } from "../src/desktop-chats.js";
-import { postTurn } from "../src/prompt.js";
+import { delegateOutcomeRecord, postTurn } from "../src/prompt.js";
 import { MAIN_CONVERSATION_ID, MAIN_CUTOVER_KEY, mainCutover } from "../src/main-conversation.js";
 import type { ChatTurn } from "../src/converse.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
@@ -102,6 +102,16 @@ function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: 
   };
 }
 
+/** Bean's turn on a delegate's end (#1133) in these fakes: it relays the agent's own message (the
+ * history record's fenced block; "" when there is none, so the run's raw words post instead).
+ * undefined = not an outcome turn. */
+const OUTCOME_ASK = "Judge from this how the task stands";
+function outcomeEcho(messages: { content: unknown }[]): string | undefined {
+  const turn = messages.findLast((m) => String(m.content).includes(OUTCOME_ASK));
+  if (!turn) return undefined;
+  return /<<<\n([\s\S]*?)\n>>>/.exec(String(turn.content))?.[1] ?? "";
+}
+
 function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: ConverseResult } = {}) {
   const delegateCalls: { req: DelegateRequest; cb: DelegateCallbacks }[] = [];
   // Fresh tmp dir per makeDeps() call: keeps each test's run records (run-queue.ts) isolated.
@@ -120,7 +130,9 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
   const deps: TeamsBotDeps = {
     // bot.ts calls converse() internally; we exercise it through a chat fn that
     // triggers the delegate tool path only when the test wants a proposal.
-    chat: async () => {
+    chat: async ({ messages }) => {
+      const echo = outcomeEcho(messages);
+      if (echo !== undefined) return { content: echo, toolCalls: [] };
       if (result.proposedSkill) {
         return { content: result.reply, toolCalls: [{ name: "propose_skill", args: {
           name: result.proposedSkill.name, body: result.proposedSkill.body,
@@ -389,7 +401,11 @@ test("confirm starts the run, updates the card, and persists model memory", asyn
   // run finishes → result posted and fed into history
   delegateCalls[0]?.cb.onDone("all fixed");
   await vi.waitFor(() => expect(effects.posted).toContain("all fixed"));
-  expect(deps.conversations.history("c1").at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed" });
+  // The record (the agent's words fenced as data), then Bean's own answer on it (#1133).
+  expect(deps.conversations.history("c1").slice(-2)).toEqual([
+    { role: "assistant", content: delegateOutcomeRecord("fix it", { type: "done", result: "all fixed" }) },
+    { role: "assistant", content: "all fixed" },
+  ]);
 });
 
 test("a delegate that fails to launch records failed, never running after it (#941)", async () => {
@@ -462,6 +478,8 @@ test("/new while a delegate runs: its session is not stored afterwards", async (
 /** A chat fn that proposes a delegate — with `continue: true` once the turn offers an active session. */
 function grantChat(seen: string[][], args: Record<string, unknown> = {}): TeamsBotDeps["chat"] {
   return async ({ messages }) => {
+    const echo = outcomeEcho(messages);
+    if (echo !== undefined) return { content: echo, toolCalls: [] };
     seen.push(messages.map((m) => String(m.content)));
     const offered = messages.some((m) => String(m.content).startsWith("Active agent session"));
     return { content: "on it", toolCalls: [{ name: "propose_delegate", args: {
@@ -5397,7 +5415,11 @@ describe("owner DMs share the main conversation's history (#998)", () => {
     await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({ outcome: "done", resumeLiveId: "sess-9" }));
     expect(deps.conversations.threadSession("d1", "claude")).toBe("old-sess");
     expect(deps.conversations.threadSession(MAIN_CONVERSATION_ID, "claude")).toBe("main-sess");
-    expect(m.rows(MAIN_CONVERSATION_ID).at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed", surface: "discord" });
+    await vi.waitFor(() => expect(effects.posted).toContain("all fixed"));
+    expect(m.rows(MAIN_CONVERSATION_ID).slice(-2)).toEqual([
+      { role: "assistant", content: delegateOutcomeRecord("fix it", { type: "done", result: "all fixed" }), surface: "discord" },
+      { role: "assistant", content: "all fixed", surface: "discord" },
+    ]);
     expect(m.rows("d1")).toEqual([]);
   });
   test.each(["discord", "teams"] as const)("%s owner DM: confirm once, then a follow-up continues the same session with no card (#1114)", async (surface) => {
@@ -5506,5 +5528,161 @@ describe("appendDelivery (#998)", () => {
     appendDelivery(conversations, "a:dm1", "digest", deps, { mainLog, deliveryId: "o1" });
     expect(conversations.history("a:dm1")).toEqual([{ role: "assistant", content: "digest" }]);
     expect(conversations.history(MAIN_CONVERSATION_ID)).toEqual([]);
+  });
+});
+
+describe("Bean takes a turn on a delegate's end and may follow up (#1133)", () => {
+  const PARTIAL = "FAILED: the ledger is read-only\nDone: unstarred the email. Not done: the ledger update.";
+  /** Outcome turns: Bean follows up while `follow(n)` says so (n = its nth outcome turn) and the turn
+   * offers the session; any other turn proposes the first card. */
+  function outcomeChat(seen: string[][], follow: (n: number) => boolean, gate?: Promise<void>): TeamsBotDeps["chat"] {
+    return async ({ messages }) => {
+      const all = messages.map((m) => String(m.content));
+      if (!all.some((c) => c.includes(OUTCOME_ASK))) {
+        return seen.length === 0
+          ? { content: "delegating", toolCalls: [{ name: "propose_delegate", args: { project: "/p/bean", instruction: "fix it" } }] }
+          : { content: "noted", toolCalls: [] };
+      }
+      seen.push(all);
+      await gate;
+      const offered = all.some((c) => c.startsWith("Active agent session"));
+      return offered && follow(seen.length)
+        ? { content: "The email is unstarred; finishing the rest.", toolCalls: [{ name: "propose_delegate", args: { project: "/p/bean", instruction: "finish the rest", continue: true } }] }
+        : { content: `Outcome ${seen.length}: unstarred the email; the ledger is still open.`, toolCalls: [] };
+    };
+  }
+  async function confirmed(chat: TeamsBotDeps["chat"], over: Partial<TeamsBotDeps> = {}) {
+    const made = makeDeps({ chat, ...over });
+    const bot = buildTeamsBot(made.deps);
+    await bot.onMessage(msg, fx());
+    const asked = fx();
+    const proposed = fx();
+    await bot.onMessage({ ...msg, text: "unstar it" }, proposed);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(proposed.cards[0]))?.[1];
+    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, asked);
+    made.delegateCalls[0]?.cb.onSessionStart?.(1, "sess-1");
+    return { ...made, bot, asked, card: (proposed.cards[0] as { proposalId: string }) };
+  }
+
+  test("a partial failure: Bean follows up on the same session in place, then posts one settled message", async () => {
+    const seen: string[][] = [];
+    // The proposal card is posted by an earlier turn; the run's updates edit it.
+    const { delegateCalls, asked } = await confirmed(outcomeChat(seen, (n) => n === 1));
+    delegateCalls[0]!.cb.onError(new Error("the ledger is read-only"), PARTIAL);
+    await vi.waitFor(() => expect(delegateCalls).toHaveLength(2));
+    // Bean judged the agent's own report, offered the session with its budget.
+    expect(seen[0]!.join("\n")).toContain("Done: unstarred the email.");
+    expect(seen[0]!.join("\n")).toContain("follow-up 1 of 2");
+    expect(delegateCalls[1]!.req).toMatchObject({ resume: "sess-1", strictResume: true, prompt: expect.stringContaining("finish the rest") });
+    // The running card is edited in place (no new card); nothing posted yet.
+    expect(asked.cards).toEqual([]);
+    await vi.waitFor(() => expect(asked.updates.at(-1)?.card).toMatchObject({ kind: "running", followUp: 1, instruction: "finish the rest" }));
+    expect(asked.posted).toEqual([]);
+    delegateCalls[1]!.cb.onSessionStart?.(2, "sess-1");
+    delegateCalls[1]!.cb.onDone("All done.", "sess-1");
+    await vi.waitFor(() => expect(asked.posted).toHaveLength(1));
+    expect(asked.posted[0]).toBe("Outcome 2: unstarred the email; the ledger is still open.");
+    expect(asked.posted.some((p) => p.includes("Delegate run failed"))).toBe(false);
+    expect(asked.updates.at(-1)?.card).toMatchObject({ kind: "finished", outcome: "done" });
+  });
+
+  test("the budget holds at two: the third outcome turn gets no session and asks", async () => {
+    const seen: string[][] = [];
+    const { delegateCalls, asked } = await confirmed(outcomeChat(seen, () => true));
+    delegateCalls[0]!.cb.onError(new Error("ledger read-only"), PARTIAL);
+    await vi.waitFor(() => expect(delegateCalls).toHaveLength(2));
+    delegateCalls[1]!.cb.onSessionStart?.(2, "sess-1");
+    delegateCalls[1]!.cb.onError(new Error("flaky network"), "FAILED: flaky network");
+    await vi.waitFor(() => expect(delegateCalls).toHaveLength(3));
+    expect(asked.updates.at(-1)?.card).toMatchObject({ kind: "running", followUp: 2 });
+    delegateCalls[2]!.cb.onSessionStart?.(3, "sess-1");
+    delegateCalls[2]!.cb.onError(new Error("disk full"), "FAILED: disk full");
+    await vi.waitFor(() => expect(asked.posted).toHaveLength(1));
+    expect(seen[2]!.join("\n")).not.toContain("Active agent session");
+    expect(seen[2]!.join("\n")).toContain("No automatic follow-up: Bean already followed up twice");
+    expect(delegateCalls).toHaveLength(3);
+  });
+
+  test("the confirmer replied after the run ended: the follow-up is skipped with the reason", async () => {
+    const seen: string[][] = [];
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const { bot, delegateCalls, asked } = await confirmed(outcomeChat(seen, () => true, gate));
+    delegateCalls[0]!.cb.onError(new Error("ledger read-only"), PARTIAL);
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await bot.onMessage({ ...msg, text: "never mind the ledger" }, fx());
+    open();
+    await vi.waitFor(() => expect(asked.posted).toHaveLength(1));
+    expect(asked.posted[0]).toBe("The email is unstarred; finishing the rest.\n\nFollow-up skipped — you replied, so I'll go with that instead.");
+    expect(delegateCalls).toHaveLength(1);
+    expect(asked.updates.at(-1)?.card).toMatchObject({ kind: "finished", outcome: "error" });
+  });
+
+  test("someone else's message doesn't stop the confirmer's follow-up", async () => {
+    const seen: string[][] = [];
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const { bot, delegateCalls } = await confirmed(outcomeChat(seen, () => true, gate));
+    delegateCalls[0]!.cb.onError(new Error("ledger read-only"), PARTIAL);
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await bot.onMessage({ ...msg, fromId: "u2", fromName: "bob", text: "hi" }, fx());
+    open();
+    await vi.waitFor(() => expect(delegateCalls).toHaveLength(2));
+  });
+
+  test("a completion delivered twice runs one turn", async () => {
+    const ends: { onDone: (r: string, s?: string) => void }[] = [];
+    const runs = { start: async (_req: unknown, events: (typeof ends)[number]) => { ends.push(events); return "run-1"; }, busy: () => false, cancel: () => false, cancelAll: () => {} };
+    const seen: string[][] = [];
+    const { asked } = await confirmed(outcomeChat(seen, () => false), { runs: runs as never });
+    ends[0]!.onDone("all fixed");
+    ends[0]!.onDone("all fixed");
+    await vi.waitFor(() => expect(asked.posted).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toHaveLength(1);
+    expect(asked.posted).toHaveLength(1);
+  });
+
+  test("a member over the daily cap gets the run's own words with the reason, and no model turn", async () => {
+    const seen: string[][] = [];
+    const turnIds: string[] = [];
+    const { delegateCalls, asked } = await confirmed(outcomeChat(seen, () => true), {
+      roles: { ...makeRoles({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-bot-"))), surface: "discord", ownerId: "u9", ownerName: "Scen" }), roleOf: () => "admin" },
+      turnCap: { admit: (t) => { turnIds.push(t.turnId); return false; } },
+    });
+    delegateCalls[0]!.cb.onDone("all fixed", "sess-1");
+    await vi.waitFor(() => expect(asked.posted).toHaveLength(1));
+    expect(asked.posted[0]).toBe("all fixed\n\nFollow-up skipped — daily limit reached.");
+    expect(seen).toEqual([]);
+    expect(turnIds).toEqual([expect.stringMatching(/^delegate-outcome:/)]);
+  });
+
+  test("the outcome turn's model call fails: the raw failure keeps the agent's report", async () => {
+    const seen: string[][] = [];
+    const chat = outcomeChat(seen, () => false);
+    const { delegateCalls, asked } = await confirmed(async (req) => {
+      if (req.messages.some((m) => String(m.content).includes(OUTCOME_ASK))) throw new Error("model down");
+      return chat(req);
+    });
+    delegateCalls[0]!.cb.onError(new Error("the ledger is read-only"), PARTIAL);
+    await vi.waitFor(() => expect(asked.posted).toHaveLength(1));
+    expect(asked.posted[0]).toBe(`Delegate run failed: the ledger is read-only\n\n${PARTIAL}`);
+  });
+
+  test("losing delegate rights before dispatch: the follow-up doesn't run", async () => {
+    const seen: string[][] = [];
+    let role: "owner" | "guest" = "owner";
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const { delegateCalls, asked } = await confirmed(outcomeChat(seen, () => true, gate), {
+      roles: { ...makeRoles({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-bot-"))), surface: "discord", ownerId: "u1", ownerName: "Scen" }), roleOf: () => role },
+    });
+    delegateCalls[0]!.cb.onError(new Error("ledger read-only"), PARTIAL);
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    role = "guest";
+    open();
+    await vi.waitFor(() => expect(asked.posted).toHaveLength(1));
+    expect(asked.posted[0]).toMatch(/^The email is unstarred; finishing the rest\.\n\n/);
+    expect(delegateCalls).toHaveLength(1);
   });
 });

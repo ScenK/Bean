@@ -139,6 +139,21 @@ test("a continued run is a compact card: what it continues, its instruction and 
   expect(onCancelTask).toHaveBeenCalledOnce();
 });
 
+test("Bean's own follow-up shows which of its budget it is (#1132)", () => {
+  hookState.n = 0;
+  const card = DelegateCard({
+    item: {
+      kind: "delegate", id: "d3", continued: true, taskId: "t3", state: "running", tail: [],
+      proposal: { projectPath: "/p", instruction: "finish the ledger step", composedPrompt: "x", cli: "claude", followUp: 1 },
+    },
+    onConfirm: vi.fn(), onDismiss: vi.fn(), onCancelTask: vi.fn(),
+    projectOptions: [{ name: "Bean", path: "/p" }],
+  });
+  expect(text(card)).toContain("↻ following up (1/2) claude · Bean");
+  expect(text(card)).toContain("finish the ledger step");
+  expect(nodes(card).some((n) => n.type === "button" && n.props?.children === "Stop")).toBe(true);
+});
+
 test("the grant line shows only while the card's grant is live (#1113)", () => {
   const item = {
     kind: "delegate" as const, id: "d1", taskId: "t1", state: "done" as const, tail: [], result: "ok",

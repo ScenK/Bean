@@ -6,7 +6,7 @@ import type {
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CardBuilders,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -79,8 +79,9 @@ export function runningCard(input: RunningCardInput): object {
     version: "1.4",
     body: [
       {
-        type: "TextBlock", weight: "bolder", text: input.continued
-          ? `↻ Continuing in ${input.projectName}… (asked by ${input.startedBy})`
+        type: "TextBlock", weight: "bolder", text: input.followUp
+          ? `↻ Following up (${input.followUp}/${FOLLOW_UP_MAX}) in ${input.projectName}…`
+          : input.continued ? `↻ Continuing in ${input.projectName}… (asked by ${input.startedBy})`
           : `Running in ${input.projectName}… (started by ${input.startedBy})`,
       },
       { type: "TextBlock", text: input.instruction, wrap: true, isSubtle: true },

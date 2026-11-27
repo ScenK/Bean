@@ -1,6 +1,7 @@
 import {
-  createGrant, dispatchContext, GRANT_MISMATCH_TEXT, matchGrant, refreshGrant, revokeGrant, stageImages,
-  type ChatRequest, type ConverseResult, type DelegateGrant, type Dispatch, type SproutOrigin, type TriggerResult,
+  createGrant, dispatchContext, followUpNote, followUpRefusedNote, followUpRefusedText, GRANT_MISMATCH_TEXT, matchFollowUp,
+  matchGrant, refreshGrant, reserveFollowUp, revokeGrant, stageImages,
+  type ChatRequest, type ConverseResult, type DelegateGrant, type Dispatch, type GrantMismatch, type SproutOrigin, type TriggerResult,
 } from "@bean/core";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -56,8 +57,15 @@ const NOT_LIVE = "Agent sessions run from the chat window.";
 const DELEGATE_HOLDS = "A background run is still working in that session — wait for it to finish.";
 /** The desktop is its owner's machine: one actor confirms and continues every chat's tasks. */
 const DESKTOP_ACTOR = "owner";
-/** Turns that may continue a task: what the user typed or ran — never a loopback (epic #1111). */
+/** Turns that may continue a task: what the user typed or ran — never a loopback (epic #1111). Each
+ * one also ends a chain of automatic follow-ups (#1132). */
 const CAN_CONTINUE = new Set(["typed", "skill"]);
+/** A follow-up naming another task than the session's is a new task: a normal card, not a refusal. */
+const OTHER_TASK = new Set<GrantMismatch>(["project", "cli", "model", "skill", "browser"]);
+
+type Settled = Parameters<NonNullable<DelegateStartOpts["onEnd"]>>[0];
+/** A run on the grant's session that settled in a chat (#1132): what Bean's turn on it may follow up. */
+interface SettledRun { k: string; generation: number; failure?: string; epoch: number }
 // ponytail: the newest turns kept per chat for a host-run close catch-up; a longer chat's oldest
 // turns are only covered by their per-turn captures.
 const TRANSCRIPT_TURNS = 100;
@@ -97,15 +105,34 @@ export function createChatSessions(deps: ChatSessionsDeps) {
   // dropped with the chat, revoked by its Dismiss/End.
   const now = deps.now ?? Date.now;
   const grants = new Map<string, { grant: DelegateGrant; instruction: string }>();
-  // A run on the grant's session settled: its idle clock restarts; a refused resume ends the grant.
-  const touch = (k: string, sessionId: string, e: { type: string; resumeRefused?: true }): boolean => {
+  // Automatic follow-ups (#1132): each chat's count of the user's own turns (a chain's epoch — any
+  // turn since a run started ends its chain), and the runs Bean's outcome turn may follow up, by
+  // task id, each taken once by the loopback naming it. Memory only, dropped with the chat.
+  const epochs = new Map<string, number>();
+  const epoch = (k: string): number => epochs.get(k) ?? 0;
+  const settled = new Map<string, SettledRun>();
+  const dropSettled = (k: string): void => { for (const [id, r] of settled) if (r.k === k) settled.delete(id); };
+  const takeSettled = (k: string, taskId: unknown): SettledRun | undefined => {
+    const r = typeof taskId === "string" ? settled.get(taskId) : undefined;
+    if (!r || r.k !== k) return undefined;
+    settled.delete(taskId as string);
+    return r.epoch === epoch(k) ? r : undefined;
+  };
+  // A run on the grant's session settled: its idle clock restarts (not after an automatic follow-up —
+  // `renew` false); a refused resume ends the grant. A done or failed run in an unbroken chain is
+  // one Bean's outcome turn may follow up.
+  const touch = (k: string, sessionId: string, e: Settled, startEpoch: number, renew = true): boolean => {
     const g = grants.get(k);
     if (!g || g.grant.revoked || g.grant.sessionId !== sessionId) return false;
     if (e.type === "failed" && e.resumeRefused) {
       grants.set(k, { ...g, grant: revokeGrant(g.grant) });
       return false;
     }
-    grants.set(k, { ...g, grant: refreshGrant(g.grant, now()) });
+    const grant = renew ? refreshGrant(g.grant, now()) : g.grant;
+    grants.set(k, { ...g, grant });
+    if (e.type !== "cancelled" && startEpoch === epoch(k)) {
+      settled.set(e.taskId, { k, generation: grant.generation, epoch: startEpoch, ...(e.type === "failed" ? { failure: e.message } : {}) });
+    }
     return true;
   };
   const revoke = (k: string): void => {
@@ -113,30 +140,45 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     if (g) grants.set(k, { ...g, grant: revokeGrant(g.grant) });
   };
   /** A `continue` proposal: started at once when it matches the grant offered with the turn (and no
-   * run or live session holds that session), else back to a normal card with the reason. */
-  const continueDelegate = async (k: string, result: ConverseResult, offered: DelegateGrant): Promise<void> => {
+   * run or live session holds that session), else back to a normal card with the reason. An automatic
+   * follow-up (`follow`, #1132) also re-checks the chain and spends its budget in the same step; a
+   * refusal there is a needs-you line, never a card — unless it names another task (a normal card). */
+  const continueDelegate = async (k: string, result: ConverseResult, offered: DelegateGrant, follow?: SettledRun): Promise<void> => {
     const { continue: _c, ...plain } = result.proposedDelegate!;
     const fallback = (why: string): void => { result.proposedDelegate = plain; result.delegateNotice = why; };
-    const m = matchGrant(grants.get(k)?.grant, {
-      surface: "desktop", scopeKey: k, actorId: DESKTOP_ACTOR, projectPath: plain.projectPath,
+    const needsYou = (reason: GrantMismatch): void => { delete result.proposedDelegate; result.delegateNotice = followUpRefusedText(reason); };
+    const req = {
+      surface: "desktop" as const, scopeKey: k, actorId: DESKTOP_ACTOR, projectPath: plain.projectPath,
       ...(plain.cli ? { cli: plain.cli } : {}), ...(plain.model ? { model: plain.model } : {}),
       ...(plain.skillName ? { skillName: plain.skillName } : {}), generation: offered.generation,
-    }, now());
-    if (!m.ok) return fallback(GRANT_MISMATCH_TEXT[m.reason]);
+    };
+    const m = follow ? matchFollowUp(grants.get(k)?.grant, req, follow.failure, now()) : matchGrant(grants.get(k)?.grant, req, now());
+    if (!m.ok) return follow && !OTHER_TASK.has(m.reason) ? needsYou(m.reason) : fallback(GRANT_MISMATCH_TEXT[m.reason]);
+    // A user turn landed while Bean answered the outcome: the chain is over.
+    if (follow && follow.epoch !== epoch(k)) return needsYou("stale");
     const g = m.grant;
-    if (deps.delegateTasks.busy(g.sessionId) || deps.liveTasks.holds(g.sessionId)) return fallback(GRANT_MISMATCH_TEXT.busy);
+    if (deps.delegateTasks.busy(g.sessionId) || deps.liveTasks.holds(g.sessionId)) return follow ? needsYou("busy") : fallback(GRANT_MISMATCH_TEXT.busy);
     const refused = deps.refuseStart?.();
-    if (refused) return fallback(refused);
-    grants.set(k, { grant: refreshGrant(g, now()), instruction: plain.instruction });
+    if (refused) {
+      if (!follow) return fallback(refused);
+      delete result.proposedDelegate;
+      result.delegateNotice = refused;
+      return;
+    }
+    // A follow-up spends its budget and leaves the idle clock alone; the user's own turn renews it.
+    const next = follow ? reserveFollowUp(g, follow.failure) : refreshGrant(g, now());
+    grants.set(k, { grant: next, instruction: plain.instruction });
     const proposal = {
       ...plain, projectPath: g.projectPath, cli: g.cli,
       ...(g.model ? { model: g.model } : {}), ...(g.skillName ? { skillName: g.skillName } : {}),
+      ...(follow ? { followUp: next.followUps ?? 1 } : {}),
     };
+    const startEpoch = epoch(k);
     const started = deps.delegateTasks.start({
       projectPath: g.projectPath, prompt: plain.composedPrompt, instruction: plain.instruction, cli: g.cli,
       ...(g.model ? { model: g.model } : {}), ...(g.skillName ? { skillName: g.skillName } : {}),
       offRecord: deps.memory.isIncognito(k), mountId: k,
-    }, { resume: g.sessionId, continued: proposal, browserAllowed: g.browser, onEnd: (e) => touch(k, g.sessionId, e) });
+    }, { resume: g.sessionId, continued: proposal, browserAllowed: g.browser, onEnd: (e) => touch(k, g.sessionId, e, startEpoch, !follow) });
     const taskId = await (deps.track ? deps.track(started) : started);
     // Released while it started (the release's cancelMount ran before the task existed).
     if (mounts.holder(k) === undefined) deps.delegateTasks.cancelMount(k);
@@ -147,6 +189,8 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     if (!mounts.release(client, mountId)) return;
     const id = mountId as string;
     grants.delete(id);
+    epochs.delete(id);
+    dropSettled(id);
     for (const [thread, k] of sproutThreads) if (k === id) sproutThreads.delete(thread);
     beanTurns.get(id)?.ctl.abort();
     transcripts.delete(id);
@@ -213,15 +257,27 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       const turn = { turnId: req?.turnId, ctl: new AbortController() };
       beanTurns.set(k, turn);
       const end = deps.onChatTurn?.(k);
-      // The chat's live grant, offered to the model as a session it may continue (typed turns only).
+      // The chat's live grant, offered to the model as a session it may continue: on the user's own
+      // turns (which also end any chain of automatic follow-ups), or on the outcome turn of a run this
+      // chat saw settle, once, while the follow-up budget holds (#1132). The renderer's `source` alone
+      // authorizes nothing.
       const g = grants.get(k);
-      const offered = g && CAN_CONTINUE.has(req?.source ?? "typed") && matchGrant(g.grant, { surface: "desktop", scopeKey: k, actorId: DESKTOP_ACTOR }, now()).ok
-        ? g : undefined;
+      const userTurn = CAN_CONTINUE.has(req?.source ?? "typed");
+      if (userTurn) { epochs.set(k, epoch(k) + 1); dropSettled(k); }
+      const follow = req?.source === "loopback" ? takeSettled(k, req.settledTask) : undefined;
+      let offered: typeof g;
+      let turnNote: string | undefined;
+      if (userTurn) {
+        offered = g && matchGrant(g.grant, { surface: "desktop", scopeKey: k, actorId: DESKTOP_ACTOR }, now()).ok ? g : undefined;
+      } else if (follow) {
+        const m = matchFollowUp(g?.grant, { surface: "desktop", scopeKey: k, actorId: DESKTOP_ACTOR, generation: follow.generation }, follow.failure, now());
+        if (m.ok) { offered = g; turnNote = followUpNote((m.grant.followUps ?? 0) + 1); } else turnNote = followUpRefusedNote(m.reason);
+      }
       try {
         const result = await deps.chat(req, client, k, turn.ctl.signal, offered
-          ? { cli: offered.grant.cli, projectPath: offered.grant.projectPath, lastInstruction: offered.instruction } : undefined);
+          ? { cli: offered.grant.cli, projectPath: offered.grant.projectPath, lastInstruction: offered.instruction } : undefined, turnNote);
         if (result.proposedDelegate?.continue) {
-          if (offered && !result.stopped && mounts.holder(k) !== undefined) await continueDelegate(k, result, offered.grant);
+          if (offered && !result.stopped && mounts.holder(k) !== undefined) await continueDelegate(k, result, offered.grant, follow);
           else { const { continue: _c, ...plain } = result.proposedDelegate; result.proposedDelegate = plain; }
         }
         end?.(result.error);
@@ -363,6 +419,7 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       const refused = deps.refuseStart?.();
       if (refused) return Promise.reject(new Error(refused));
       const instruction = typeof req?.instruction === "string" ? req.instruction : "";
+      const startEpoch = epoch(k);
       // A confirmed card grants its task once the run reports its CLI session (replacing any older grant).
       let session: string | undefined;
       const started = deps.delegateTasks.start({ ...req, offRecord: deps.memory.isIncognito(k), mountId: k }, {
@@ -376,7 +433,7 @@ export function createChatSessions(deps: ChatSessionsDeps) {
           }, now(), grants.get(k)?.grant);
           grants.set(k, { grant, instruction });
         },
-        onEnd: (e) => session !== undefined && touch(k, session, e),
+        onEnd: (e) => session !== undefined && touch(k, session, e, startEpoch),
       });
       return deps.track ? deps.track(started) : started;
     },

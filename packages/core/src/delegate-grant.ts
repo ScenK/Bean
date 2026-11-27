@@ -22,6 +22,10 @@ export interface DelegateGrant {
    * against an older grant (revoked, replaced) can't ride a newer one. */
   generation: number;
   revoked?: true;
+  /** Automatic follow-ups Bean already ran on this task (#1132), at most FOLLOW_UP_MAX. */
+  followUps?: number;
+  /** The failure the last automatic follow-up answered (`failureFingerprint`): the same one again stops the chain. */
+  lastFailure?: string;
 }
 
 export const GRANT_IDLE_MS = 30 * 60_000;
@@ -42,7 +46,7 @@ export interface GrantRequest {
 }
 
 export type GrantMismatch =
-  | "none" | "revoked" | "expired" | "stale" | "busy"
+  | "none" | "revoked" | "expired" | "stale" | "busy" | "budget" | "repeat"
   | "surface" | "scope" | "actor" | "project" | "cli" | "model" | "skill" | "browser";
 
 export type GrantMatch = { ok: true; grant: DelegateGrant } | { ok: false; reason: GrantMismatch };
@@ -55,6 +59,9 @@ export const GRANT_MISMATCH_TEXT: Record<GrantMismatch, string> = {
   stale: "That agent session was replaced, so this needs a new card.",
   // The host's check (matchGrant can't see runs): a running delegate or a live session holds it.
   busy: "That agent session is still busy, so this needs a new card.",
+  // Automatic follow-ups only (matchFollowUp, #1132).
+  budget: "Bean already followed up twice on that task.",
+  repeat: "The agent hit the same failure again.",
   surface: "That agent session belongs to another chat, so this needs a new card.",
   scope: "That agent session belongs to another chat, so this needs a new card.",
   actor: "Only the person who started that agent session can continue it without a card.",
@@ -98,3 +105,48 @@ export const refreshGrant = (grant: DelegateGrant, now: number): DelegateGrant =
 /** `/new`, End, Dismiss, window close / mount release. Kept (not dropped) so the next createGrant
  * in the scope still bumps the generation. */
 export const revokeGrant = (grant: DelegateGrant): DelegateGrant => ({ ...grant, revoked: true });
+
+/** Automatic follow-ups per task (#1132): Bean's own turn on a delegate's end may continue its session
+ * at most this often; then it asks the user. */
+export const FOLLOW_UP_MAX = 2;
+
+/** A failure reason, normalized so the same failure with other numbers/spacing compares equal. */
+export const failureFingerprint = (message: string): string =>
+  message.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
+
+/** May Bean's own turn on a settled run follow up on it without the user (#1132)? The grant must match
+ * (`req.generation` = the one the run settled on), the budget hold, and a failure not repeat the one the
+ * last follow-up answered. `failure` = the settled run's failure reason (absent: it finished). */
+export function matchFollowUp(grant: DelegateGrant | undefined, req: GrantRequest, failure: string | undefined, now: number): GrantMatch {
+  const m = matchGrant(grant, req, now);
+  if (!m.ok) return m;
+  if ((m.grant.followUps ?? 0) >= FOLLOW_UP_MAX) return { ok: false, reason: "budget" };
+  if (failure !== undefined && m.grant.lastFailure === failureFingerprint(failure)) return { ok: false, reason: "repeat" };
+  return m;
+}
+
+/** An automatic follow-up starts: it spends one of the budget and remembers the failure it answers.
+ * Never renews the idle clock — only the user's own turns do. */
+export function reserveFollowUp(grant: DelegateGrant, failure: string | undefined): DelegateGrant {
+  const { lastFailure: _l, ...rest } = grant;
+  return { ...rest, followUps: (grant.followUps ?? 0) + 1, ...(failure !== undefined ? { lastFailure: failureFingerprint(failure) } : {}) };
+}
+
+/** Rides Bean's turn on a settled run it may follow up on (code-built, appended by the host). */
+export const followUpNote = (n: number): string =>
+  `(Bean may continue this task's agent session on its own — follow-up ${n} of ${FOLLOW_UP_MAX}. If the task is ` +
+  "only partly done and the agent can finish what's left within the same task and skill, call propose_delegate " +
+  "with continue: true and a short instruction for just what's left. Don't follow up — ask the user instead — " +
+  "when it needs the user's decision or input, would message other people, spend money, or delete or publish " +
+  "anything beyond the task, or needs a different skill.)";
+
+/** Why an automatic follow-up was refused, as one sentence (no card is offered in its place). */
+const refusedWhy = (reason: GrantMismatch): string => GRANT_MISMATCH_TEXT[reason].replace(/, so this needs a new card\.$/, ".");
+
+/** Rides Bean's turn on a settled run it may not follow up on (budget spent, same failure, lapsed). */
+export const followUpRefusedNote = (reason: GrantMismatch): string =>
+  `(No automatic follow-up: ${refusedWhy(reason)} Tell the user what's still open and ask how they want to go on.)`;
+
+/** What the chat shows when Bean wanted to follow up but the host refused it. */
+export const followUpRefusedText = (reason: GrantMismatch): string =>
+  `Bean stopped following up on its own: ${refusedWhy(reason)} Reply to tell it how to go on.`;
