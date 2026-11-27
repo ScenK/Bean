@@ -3,6 +3,7 @@ import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_LIVE_SLACK, TRIM_NOTICE, bo
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive, chatTurns, modelHistory, placeSummary } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
+import { sproutFailureAsk } from "@bean/core/prompt";
 
 const run = { skillName: "s", projectPath: "/p", confidence: 1, composedPrompt: "go" };
 const proposal = { projectPath: "/p", instruction: "check it", composedPrompt: "go" };
@@ -77,7 +78,7 @@ describe("normalizeForSave", () => {
     const first = applySproutEnd(items, end);
     expect(first.items[0]).toMatchObject({ state: "done", result: "Needs attention" });
     expect(first.loopback).toEqual({
-      text: '[sprout result for "digest"]: digest needs attention ⚠\n\nBriefly summarize this outcome for the user in your own words.',
+      text: `[sprout result for "digest"]: digest needs attention ⚠\n\n${sproutFailureAsk("digest")}`,
       display: '🌱 Sprout "digest" — needs attention', source: "loopback",
     });
     expect(applySproutEnd(first.items, end).loopback).toBeUndefined(); // a repeat is a no-op
@@ -93,6 +94,8 @@ describe("normalizeForSave", () => {
     const out = applySproutEnd(items, { jobId: "j1", status: "ok", text: "nightly finished ✓" });
     expect(out.items[0]).toMatchObject({ state: "done", result: "Finished" });
     expect(out.loopback?.display).toBe('🌱 Sprout "nightly" — finished');
+    // An ok run is only summarized: no diagnosis, no fix card (#1136).
+    expect(out.loopback?.text).toMatch(/Briefly summarize this outcome/);
     expect(normalizeForSave([items[1]!])[0]).toMatchObject({ state: "queued" });
     expect(normalizeForSave([{ kind: "todo", id: "t3", todo, state: "sending" }])[0]).toMatchObject({ state: "done" });
     expect(settleRestoredSprouts([items[0]!], [{ jobId: "j1" }]).changed).toBe(false); // still waiting in line

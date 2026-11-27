@@ -9,6 +9,7 @@ import { CLI_NAMES, type CliName } from "./launcher.js";
 import { cliOffersEffort, cliOffersModel, type CliModels } from "./cli-models.js";
 import type { Destination } from "./destinations.js";
 import { describeContinueErrors, describeEdgeError, describeGroupErrors, isDoneEnd } from "./routine-graph.js";
+import { takesAnswers } from "./sprout-answers.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
@@ -550,11 +551,17 @@ export const MEMBER_TODO_REFUSAL = "runs delegate or command steps — only the 
 
 /** Resolves `name` to a todo-driven routine in `routines`, or throws with the same
  * error messages every todo-queueing caller (app IPC, Teams, Discord) needs. `member` = a
- * non-owner is queueing, so the routine must also be `memberTodoEligible`. */
-export function resolveTodoRoutine(routines: Routine[], name: string, member = false, now = new Date()): Routine {
+ * non-owner is queueing, so the routine must also be `memberTodoEligible`. `answer` = the owner's
+ * answer to a sprout's post (#1135): a plain sprout with an answer step takes it too — owner only. */
+export function resolveTodoRoutine(routines: Routine[], name: string, member = false, now = new Date(), answer = false): Routine {
   const target = routines.find((r) => r.name === name);
   // Archived reads as gone: its queue is closed for good until it's restored.
   if (!target || isArchived(target, now)) throw new Error(`no sprout named "${name}"`);
+  if (answer && !target.todoDriven) {
+    if (member) throw new Error(`only the owner can answer ${name}`);
+    if (!takesAnswers(target)) throw new Error(`sprout "${name}" has no chat or delegate step to take an answer`);
+    return target;
+  }
   if (!target.todoDriven) throw new Error(`sprout "${name}" is not todo-driven`);
   if (member && !memberTodoEligible(target)) throw new Error(`sprout "${name}" ${MEMBER_TODO_REFUSAL}`);
   return target;

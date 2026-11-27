@@ -2,9 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
-import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ConverseResult, type ImageAttachment, type ProposedDelegate, type ProposedLiveSession, type ProposedSend } from "../converse.js";
+import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ConverseResult, type RoutineAuthoring, type ImageAttachment, type ProposedDelegate, type ProposedLiveSession, type ProposedSend } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
-import { composePrompt, delegateOutcomeRecord, delegateOutcomeTurn, trimDelegateFinal, type DelegateOutcome } from "../prompt.js";
+import { composePrompt, DELEGATE_OUTCOME_ASK, delegateOutcomeRecord, delegateOutcomeTurn, sproutFailureAsk, trimDelegateFinal, type DelegateOutcome } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { extractMemories, memoryCategories } from "../memory/extract.js";
@@ -19,6 +19,7 @@ import {
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
+import { answerCard, answerTodoText } from "../sprout-answers.js";
 import type { SproutTriggerClient } from "./sprout-bridge.js";
 import { homeDestination, planSproutRun, sproutCheckText, type HomeDms, type SproutRunBlock } from "../sprout-trigger.js";
 import { CARD_LEAD, cardRecord, type CardRecordKind, type CardRecordState } from "../card-record.js";
@@ -206,7 +207,7 @@ export interface TeamsBotDeps {
   /** Queues a confirmed todo with its dispatch row (#923), so its result is posted back to `report`
    * (`channel` absent = the owner's DM) when it runs. `front` = Run now (ahead of every queued todo).
    * Absent = queued todos don't report back. */
-  queueTodoDispatch?: (t: { routine: string; text: string; createdBy?: string; front?: boolean }, report: { channel?: string; actor?: string })
+  queueTodoDispatch?: (t: { routine: string; text: string; createdBy?: string; front?: boolean; answer?: boolean }, report: { channel?: string; actor?: string })
     => Promise<{ routine?: Routine; jobId: string; ahead: number }>;
   /** A routine's pending todos, for the card's "N ahead in queue". */
   pendingTodos?: (routine: string) => Promise<number>;
@@ -407,6 +408,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   onAwayTag: (conversationId: string, line: AmbientLine, post: (text: string) => Promise<void>) => Promise<void>;
   /** Synchronous, for shutdown: stops a running away prepare and marks it interrupted (#909). */
   interruptAwayPrepares: () => void;
+  /** A failed / needs-attention sprout delivery (`OutboxMessage.diagnose`, #1136), already posted and
+   * saved to `conversationId`'s history: Bean's one diagnosis turn there, as the owner — a reply and at
+   * most one fix card (Run now, skill, sprout draft) through `fx`, which the surface aims at the
+   * notice's thread. Never reruns anything. Once per delivery id; never rejects. */
+  onSproutFailure: (n: { conversationId: string; deliveryId: string; sprout: string; direct: boolean; scopeId?: string }, fx: BotEffects) => Promise<void>;
   /** A turn the owner typed at the desktop (desk ingress, chatops/desk.ts). Checks the catalog,
    * posts the `🖥 (desk):` echo, then runs it as the owner's turn — or steers the running live
    * session. `ack` is called exactly once, as soon as the turn is accepted or refused (before the
@@ -1005,6 +1011,152 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     );
   }
 
+  /** Bean's diagnosis of a failed sprout delivered here (#1136): story 3's internal-turn shape (no
+   * synthesized onMessage, the answered-runs dedupe), with the owner as the actor — never capped. */
+  async function sproutDiagnosis(
+    n: { conversationId: string; deliveryId: string; sprout: string; direct: boolean; scopeId?: string }, fx: BotEffects,
+  ): Promise<void> {
+    const ownerId = deps.roles.ownerId;
+    const work = deps.backgroundWork;
+    // read_sprout is the diagnosis: no owner or no state file here, no turn.
+    if (!ownerId || !work || !deps.routines) return;
+    const key = `sprout:${n.deliveryId}`;
+    if (answeredRuns.has(key)) return;
+    if (answeredRuns.size >= 1000) answeredRuns.clear();
+    answeredRuns.add(key);
+    const role = deps.roles.roleOf({ fromId: ownerId, scopeId: n.scopeId });
+    if (role !== "owner") return;
+    const conv = n.conversationId;
+    const hid = n.direct ? historyId(conv) : conv;
+    try {
+      const [skills, projects, persona, all] = await Promise.all([loadActiveSkills(), deps.loadProjects(), deps.loadPersona(), deps.routines.load()]);
+      const now = new Date();
+      // Only the sprout that failed: its Run now card, nothing else in the catalog.
+      const target = all.filter((r) => r.name === n.sprout && !isArchived(r, now));
+      if (target.length === 0) return; // deleted or archived since
+      const sprouts = deps.routines.sprouts;
+      const routineAuthoring = await routineAuthoringFor(role, n);
+      const detected = deps.detectClis();
+      const result = await converse({
+        skills, projects, persona, memories: [],
+        deps: { chat: deps.chat, model: deps.model, rankByMeaning: deps.rankByMeaning },
+        actions: makeSproutReadTools({ routines: deps.routines.load, skills: deps.loadSkills, stateFile: work.stateFile, dbFile: work.file }),
+        history: hid === MAIN_CONVERSATION_ID ? await boundMainLog(deps.conversations, { chat: deps.chat, model: deps.model }) : deps.conversations.history(hid),
+        latestUserText: sproutFailureAsk(n.sprout),
+        delegateAvailable: false, runAvailable: false, noteAvailable: false, liveSessionAvailable: false,
+        skillAuthoringAvailable: can(role, "skillWrites"), availableClis: detected, models: availableModels(deps.cliModels, detected),
+        sproutCatalog: sprouts ? target.map((r) => ({ name: r.name, description: r.description, takesTask: r.todoDriven })) : [],
+        ...(routineAuthoring ? { routineAuthoring } : {}),
+        roleNote: roleLine(role, deps.roles, n.scopeId),
+      });
+      if (result.error !== undefined) return;
+      const reply = result.reply.trim();
+      if (reply) {
+        appendHistory(conv, { role: "assistant", content: reply }, hid);
+        await fx.post(reply);
+      }
+      await postSproutFixCard(result, {
+        conversationId: conv, fromId: ownerId, fromName: deps.roles.ownerName, direct: n.direct, isOwner: true,
+        permitted: permittedFor(role, n.scopeId, fx), persona, sprouts, sproutRoutines: target, routineAuthoring,
+      }, fx);
+    } catch (err) {
+      console.error(`[chatops] sprout diagnosis failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** What a sprout draft may target, for `role` speaking in `at` (undefined = no drafting). Owner
+   * only: who a routine may DM, and the existing names a draft would replace. A channel sink targets
+   * the channel, never the session thread (threads archive). */
+  async function routineAuthoringFor(role: Role, at: { direct?: boolean; scopeId?: string }): Promise<RoutineAuthoring | undefined> {
+    if (!deps.routines || !can(role, "routineDrafts")) return undefined;
+    const isOwner = role === "owner";
+    const draftable = isOwner ? draftNames(await deps.routines.load(), new Date()) : undefined;
+    return {
+      transport: deps.routines.transport,
+      // Admins draft new routines only, so they never see (or target) the catalog.
+      existing: draftable?.existing ?? [],
+      ...(draftable ? { listed: { live: draftable.live, archived: draftable.archived } } : {}),
+      recipients: await deps.routines.recipients(),
+      ...(at.direct || !at.scopeId ? {} : { channelId: at.scopeId }),
+      ...(isOwner && at.direct === true ? { home: true } : {}),
+      cliModels: deps.cliModels,
+      ...(deps.routines.destinations ? { destinations: deps.routines.destinations() } : {}),
+    };
+  }
+
+  /** A skill, sprout-run or sprout-draft card from `result` (false = none of those) — a typed turn's
+   * and a sprout diagnosis's (#1136) fix card alike. The role was offered the tool; it's re-checked. */
+  async function postSproutFixCard(result: ConverseResult, at: {
+    conversationId: string; fromId: string; fromName: string; direct?: boolean; channelName?: string; isOwner: boolean;
+    permitted: (cap: Capability, what: string) => Promise<boolean>; persona: Persona;
+    sprouts: NonNullable<TeamsBotDeps["routines"]>["sprouts"]; sproutRoutines: Routine[]; routineAuthoring: RoutineAuthoring | undefined;
+  }, fx: BotEffects): Promise<boolean> {
+    const { permitted, isOwner, sprouts, routineAuthoring } = at;
+    if (result.proposedSkill) {
+      if (!(await permitted("skillWrites", "save skills"))) return true;
+      const skill = result.proposedSkill;
+      const pending = deps.skillProposals.add({ skill, conversationId: at.conversationId, proposedBy: at.fromName });
+      // Every skill (built-ins and disabled ones too): a replacement overrides whichever exists.
+      const existing = (await deps.loadSkills()).find((s) => s.name === skill.name);
+      const browser = skillBrowserChange(skill.body, existing?.browser === true);
+      const activityId = await fx.postCard(deps.cards.skillProposalCard({
+        proposalId: pending.id, name: skill.name, body: skill.body, updating: skill.updating,
+        ...(browser ? { browser } : {}),
+      }));
+      deps.skillProposals.setCardActivityId(pending.id, activityId);
+      recordCard(at.conversationId, "skill", "pending", skill.name);
+      return true;
+    }
+    if (result.proposedSproutRun) {
+      if (!(await permitted("runRoutines", "run sprouts")) || !sprouts) return true;
+      const name = result.proposedSproutRun.routine;
+      const routine = at.sproutRoutines.find((r) => r.name === name);
+      if (!routine) return true; // converse already refused names outside the catalog
+      const { pending, seeded } = await sprouts.facts(routine);
+      const out = planSproutRun(routine, pending, seeded, homeDestination(at.persona.name, await deps.routines?.homeDms?.()));
+      if ("blocked" in out) {
+        await fx.post(SPROUT_BLOCKED[out.blocked](name));
+        return true;
+      }
+      const p = sprouts.proposals.add({
+        plan: out.plan, conversationId: at.conversationId, proposedById: at.fromId,
+        ...(at.direct ? {} : { channel: at.conversationId }),
+      });
+      const activityId = await fx.postCard(deps.cards.sproutRunCard({ proposalId: p.id, plan: out.plan }));
+      sprouts.proposals.setCardActivityId(p.id, activityId);
+      recordCard(at.conversationId, "sprout", "pending", out.plan.routine);
+      return true;
+    }
+    if (result.proposedRoutine) {
+      if (!(await permitted("routineDrafts", "set up sprouts"))) return true;
+      if (!deps.routines || !deps.cards.routineProposalCard) return true;
+      let proposal = result.proposedRoutine;
+      // An invalid draft can be any shape; its card offers no Save.
+      if (!proposal.problem) proposal = { ...proposal, routine: draftHome(proposal.routine, isOwner && at.direct === true) };
+      if (!isOwner && !proposal.problem) {
+        // An admin's draft starts off, and a name clash is shown up front ("Can't save").
+        const name = String(proposal.routine.name);
+        const taken = (await deps.routines.load()).some((x) => x.name.toLowerCase() === name.toLowerCase());
+        proposal = { ...proposal, routine: { ...proposal.routine, enabled: false }, ...(taken ? { problem: nameTaken(name) } : {}) };
+      }
+      const target = isOwner ? (await deps.routines.load()).find((x) => x.name === String(proposal.routine.name)) : undefined;
+      const pending = deps.routines.proposals.add({
+        ...(target ? { prior: JSON.stringify(target) } : {}),
+        proposal, conversationId: at.conversationId, proposedBy: at.fromName,
+        proposedById: at.fromId, byOwner: isOwner, ...(at.channelName ? { where: at.channelName } : {}),
+        home: homeDestination(at.persona.name, await deps.routines.homeDms?.()),
+        ...(routineAuthoring?.channelId ? { channelId: routineAuthoring.channelId } : {}),
+      });
+      const activityId = await fx.postCard(deps.cards.routineProposalCard(
+        routineCardInput(pending, routineAuthoring?.recipients ?? [], deps.roles.ownerName),
+      ));
+      deps.routines.proposals.setCardActivityId(pending.id, activityId);
+      recordCard(at.conversationId, "sprout draft", "pending", String(proposal.routine.name));
+      return true;
+    }
+    return false;
+  }
+
   // A picked skill must still exist and be enabled (never a silent bare-instruction start), and a
   // browser skill can't run on opencode.
   async function liveSkill(cli: LiveCli, skillName: string | undefined): Promise<{ skill?: Skill; refusal?: string }> {
@@ -1398,6 +1550,43 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
   }
 
+  /** The owner's reply to a sprout's post (#1135) → that sprout's todo card, text = the answer plus the
+   * quoted post (a plain sprout takes it as an answer, a todo-driven one as a todo). Anyone else gets
+   * one line on a plain sprout and today's turn on a todo-driven one. False = a normal turn. */
+  async function offerSproutAnswer(msg: IncomingMessage, role: Role, hid: string, fx: BotEffects): Promise<boolean> {
+    const replied = msg.repliedTo;
+    const answer = (msg.typedText ?? msg.text).trim();
+    // Teams' name is a header candidate: only a sprout that exists (and takes answers) counts.
+    if (!replied?.sprout || !replied.byBean || replied.unavailable || !answer || !deps.routines || !deps.queueTodoDispatch) return false;
+    const now = new Date();
+    const target = (await deps.routines.load()).find((r) => r.name === replied.sprout && !isArchived(r, now));
+    if (!target || !answerCard(target)) return false;
+    const name = target.name;
+    // A todo-driven sprout keeps today's turn for anyone but the owner (members may queue on it).
+    if (role !== "owner" && target.todoDriven) return false;
+    if (role !== "owner") {
+      await fx.reply(`Only ${deps.roles.ownerName} can answer ${name}.`);
+      return true;
+    }
+    const text = answerTodoText(answer, replied.text);
+    const pending = deps.todoProposals.add({
+      todo: { routine: name, text }, conversationId: msg.conversationId, proposedBy: msg.fromName, requesterId: msg.fromId,
+      member: false, report: msg.direct ? {} : { channel: msg.conversationId }, answer: true,
+    });
+    const runNow = can(role, "runRoutines") && deps.routines.sprouts !== undefined;
+    const when = todoRunHint(target, now);
+    const lead = `I'll pass that to ${name} so it doesn't ask again — it reads your answer on its next run.`;
+    appendHistory(msg.conversationId, { role: "user", content: speakerLine(msg.fromName, msg.text) }, hid);
+    appendHistory(msg.conversationId, { role: "assistant", content: lead }, hid);
+    await fx.reply(lead);
+    const activityId = await fx.postCard(deps.cards.todoProposalCard({
+      proposalId: pending.id, routine: name, text, answer: true, ...(when ? { when } : {}), ...(runNow ? { runNow: true } : {}),
+    }));
+    deps.todoProposals.setCardActivityId(pending.id, activityId);
+    recordCard(msg.conversationId, "todo", "pending", name);
+    return true;
+  }
+
   async function handleTodoAction(
     kind: "run-todo" | "queue-todo" | "cancel-todo",
     proposalId: string | undefined,
@@ -1410,6 +1599,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // Before the claim, so a refused tap leaves the card usable for its requester. Proposal ids
     // are sequential, so the conversation binding stops a forged id from another chat.
     const peeked = deps.todoProposals.peek(proposalId);
+    // An answer to a sprout (#1135) is the owner's alone — refused before the claim.
+    if (peeked?.answer && !isOwner && peeked.conversationId === action.conversationId) {
+      await fx.post(`Only ${deps.roles.ownerName} can answer ${peeked.todo.routine}.`);
+      return;
+    }
     if (peeked && (peeked.conversationId !== action.conversationId || (!isOwner && peeked.requesterId !== action.fromId))) {
       await fx.post("Only whoever asked for that todo (or the owner) can queue or cancel it.");
       return;
@@ -1444,7 +1638,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (pending.report && queueDispatch) {
         // Queued with its dispatch: the todo's own result is posted back here when it runs.
         const q = await queueDispatch(
-          { routine: name, text: pending.todo.text, ...(createdBy ? { createdBy } : {}), ...(kind === "run-todo" ? { front: true } : {}) },
+          {
+            routine: name, text: pending.todo.text, ...(createdBy ? { createdBy } : {}), ...(kind === "run-todo" ? { front: true } : {}),
+            ...(pending.answer ? { answer: true } : {}),
+          },
           { ...pending.report, ...(action.fromId ? { actor: action.fromId } : {}) },
         );
         queued = true;
@@ -1454,8 +1651,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           try {
             const t = await sprouts.trigger(name, "todo", {}, q.jobId);
             if (t.status === "started") state = "running";
-            note = t.status === "started" ? "Running only this task — I'll post the result here."
-              : t.status === "next" ? `${name} is working on another task. Yours runs next, right after it.`
+            note = t.status === "started" ? (pending.answer ? `Running ${name} now with your answer — I'll post here when it's done.` : "Running only this task — I'll post the result here.")
+              : t.status === "next" ? (pending.answer ? `${name} is busy right now — your answer is next in line.` : `${name} is working on another task. Yours runs next, right after it.`)
               : `Didn't start: ${t.status === "refused" ? t.reason : "unknown"}. It's first in the queue — I'll report here when it runs.`;
           } catch (err) {
             note = `Couldn't start: ${err instanceof Error ? err.message : String(err)}. It's first in the queue — I'll report here when it runs.`;
@@ -1465,11 +1662,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.post(note);
           return;
         }
-        const note = "Queued — I'll report here when it runs.";
+        const note = pending.answer ? `Saved for ${name}'s next run — I'll report here when it's read.` : "Queued — I'll report here when it runs.";
         recordCard(pending.conversationId, "todo", "queued", name);
         await updateTo(resultCard("queued", note));
         const when = q.routine ? todoRunHint(q.routine, new Date()) : "";
-        await fx.post(`Queued on "${name}"${q.ahead ? ` (${q.ahead} ahead)` : ""}.${when ? ` ${when}` : ""} I'll report here when it runs.`);
+        await fx.post(pending.answer ? `${name} gets your answer on its next run.${when ? ` ${when}` : ""}`
+          : `Queued on "${name}"${q.ahead ? ` (${q.ahead} ahead)` : ""}.${when ? ` ${when}` : ""} I'll report here when it runs.`);
         return;
       }
       const routine = await deps.queueTodo(name, pending.todo.text, createdBy);
@@ -2213,6 +2411,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   const bot: ReturnType<typeof buildTeamsBot> = {
     onCommand,
 
+    onSproutFailure: sproutDiagnosis,
     async onDeskTurn(req, effects, ack): Promise<void> {
       const conv = req.conversationId;
       const text = req.text.trim();
@@ -2443,20 +2642,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ]);
         // Owner only: who a routine may DM, and the existing names a draft would replace. A channel
         // sink targets the channel, never the session thread (threads archive).
-        const draftable = deps.routines && can(role, "routineDrafts") && isOwner ? draftNames(await deps.routines.load(), new Date()) : undefined;
-        const routineAuthoring = deps.routines && can(role, "routineDrafts")
-          ? {
-              transport: deps.routines.transport,
-              // Admins draft new routines only, so they never see (or target) the catalog.
-              existing: draftable?.existing ?? [],
-              ...(draftable ? { listed: { live: draftable.live, archived: draftable.archived } } : {}),
-              recipients: await deps.routines.recipients(),
-              ...(msg.direct || !msg.scopeId ? {} : { channelId: msg.scopeId }),
-              ...(isOwner && msg.direct === true ? { home: true } : {}),
-              cliModels: deps.cliModels,
-              ...(deps.routines.destinations ? { destinations: deps.routines.destinations() } : {}),
-            }
-          : undefined;
+        const routineAuthoring = await routineAuthoringFor(role, msg);
         // Owner only, and only where this process runs the scheduler (headless).
         const sprouts = can(role, "runRoutines") ? deps.routines?.sprouts : undefined;
         const sproutRoutines = sprouts && deps.routines ? (await deps.routines.load()).filter((r) => !isArchived(r, new Date())) : [];
@@ -2495,6 +2681,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             history = [...history, { role: "user", content: block }];
           }
         }
+        // The owner's reply to a sprout's post (#1135) is an answer for that sprout: its todo card, no
+        // model turn (so no parallel delegate for the same thing).
+        if (await offerSproutAnswer(msg, role, hid, fx)) return;
         // Per-turn (not shared) so `paths` collects only this request's generated files.
         const imageTool = deps.imageGen && can(role, "images")
           ? makeGenerateImageTool({
@@ -2722,41 +2911,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           recordCard(msg.conversationId, "note archive", "pending");
           return;
         }
-        if (result.proposedSkill) {
-          if (!(await permitted("skillWrites", "save skills"))) return;
-          const skill = result.proposedSkill;
-          const pending = deps.skillProposals.add({ skill, conversationId: msg.conversationId, proposedBy: msg.fromName });
-          // Every skill (built-ins and disabled ones too): a replacement overrides whichever exists.
-          const existing = (await deps.loadSkills()).find((s) => s.name === skill.name);
-          const browser = skillBrowserChange(skill.body, existing?.browser === true);
-          const activityId = await fx.postCard(deps.cards.skillProposalCard({
-            proposalId: pending.id, name: skill.name, body: skill.body, updating: skill.updating,
-            ...(browser ? { browser } : {}),
-          }));
-          deps.skillProposals.setCardActivityId(pending.id, activityId);
-          recordCard(msg.conversationId, "skill", "pending", skill.name);
-          return;
-        }
-        if (result.proposedSproutRun) {
-          if (!(await permitted("runRoutines", "run sprouts")) || !sprouts) return;
-          const name = result.proposedSproutRun.routine;
-          const routine = sproutRoutines.find((r) => r.name === name);
-          if (!routine) return; // converse already refused names outside the catalog
-          const { pending, seeded } = await sprouts.facts(routine);
-          const out = planSproutRun(routine, pending, seeded, homeDestination(persona.name, await deps.routines?.homeDms?.()));
-          if ("blocked" in out) {
-            await fx.post(SPROUT_BLOCKED[out.blocked](name));
-            return;
-          }
-          const p = sprouts.proposals.add({
-            plan: out.plan, conversationId: msg.conversationId, proposedById: msg.fromId,
-            ...(msg.direct ? {} : { channel: msg.conversationId }),
-          });
-          const activityId = await fx.postCard(deps.cards.sproutRunCard({ proposalId: p.id, plan: out.plan }));
-          sprouts.proposals.setCardActivityId(p.id, activityId);
-          recordCard(msg.conversationId, "sprout", "pending", out.plan.routine);
-          return;
-        }
+        if (await postSproutFixCard(result, {
+          conversationId: msg.conversationId, fromId: msg.fromId, fromName: msg.fromName, direct: msg.direct,
+          ...(msg.channelName ? { channelName: msg.channelName } : {}), isOwner, permitted, persona, sprouts, sproutRoutines, routineAuthoring,
+        }, fx)) return;
         if (result.proposedTodo) {
           if (!(await permitted("todos", "queue tasks"))) return;
           const todo = result.proposedTodo;
@@ -2775,33 +2933,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           }));
           deps.todoProposals.setCardActivityId(pending.id, activityId);
           recordCard(msg.conversationId, "todo", "pending", todo.routine);
-          return;
-        }
-        if (result.proposedRoutine) {
-          if (!(await permitted("routineDrafts", "set up sprouts"))) return;
-          if (!deps.routines || !deps.cards.routineProposalCard) return;
-          let proposal = result.proposedRoutine;
-          // An invalid draft can be any shape; its card offers no Save.
-          if (!proposal.problem) proposal = { ...proposal, routine: draftHome(proposal.routine, isOwner && msg.direct === true) };
-          if (!isOwner && !proposal.problem) {
-            // An admin's draft starts off, and a name clash is shown up front ("Can't save").
-            const name = String(proposal.routine.name);
-            const taken = (await deps.routines.load()).some((x) => x.name.toLowerCase() === name.toLowerCase());
-            proposal = { ...proposal, routine: { ...proposal.routine, enabled: false }, ...(taken ? { problem: nameTaken(name) } : {}) };
-          }
-          const target = isOwner ? (await deps.routines.load()).find((x) => x.name === String(proposal.routine.name)) : undefined;
-          const pending = deps.routines.proposals.add({
-            ...(target ? { prior: JSON.stringify(target) } : {}),
-            proposal, conversationId: msg.conversationId, proposedBy: msg.fromName,
-            proposedById: msg.fromId, byOwner: isOwner, ...(msg.channelName ? { where: msg.channelName } : {}),
-            home: homeDestination(persona.name, await deps.routines.homeDms?.()),
-            ...(routineAuthoring?.channelId ? { channelId: routineAuthoring.channelId } : {}),
-          });
-          const activityId = await fx.postCard(deps.cards.routineProposalCard(
-            routineCardInput(pending, routineAuthoring?.recipients ?? [], deps.roles.ownerName),
-          ));
-          deps.routines.proposals.setCardActivityId(pending.id, activityId);
-          recordCard(msg.conversationId, "sprout draft", "pending", String(proposal.routine.name));
           return;
         }
         let proposal = result.proposedDelegate;

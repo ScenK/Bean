@@ -154,6 +154,22 @@ export async function claimTodo(file: string, routine: string): Promise<TodoItem
   return row ? toItem(row) : undefined;
 }
 
+/** A plain run's answers (#1135): atomically moves up to `limit` of the routine's pending todos (queue
+ * order) to `running` — one statement, so a scheduled run and a Run now never take the same one. */
+export async function claimAnswers(file: string, routine: string, limit: number): Promise<TodoItem[]> {
+  const rows = openDb(file).prepare(
+    "UPDATE todos SET status = 'running' WHERE id IN (SELECT id FROM todos WHERE routine = ? AND status = 'pending' ORDER BY ord ASC, created_at ASC LIMIT ?) " +
+    "AND status = 'pending' RETURNING id, routine, text, status, created_at, finished_at, result_summary, ord, created_by",
+  ).all(routine, limit) as unknown as TodoRow[];
+  return rows.map(toItem).sort((a, b) => a.order - b.order);
+}
+
+/** Hands a claimed answer back to the queue (running → pending), keeping its place; `note` marks
+ * that it already went back once (#1135). Its dispatch row stays open with it. */
+export async function releaseTodo(file: string, id: string, note: string): Promise<void> {
+  openDb(file).prepare("UPDATE todos SET status = 'pending', result_summary = ? WHERE id = ? AND status = 'running'").run(note, id);
+}
+
 /** Exact-todo claim (Run now, #923): this one todo pending → running, or undefined when a drain
  * already took it (or it was cancelled). */
 export async function claimTodoById(file: string, id: string): Promise<TodoItem | undefined> {

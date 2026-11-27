@@ -22,7 +22,7 @@ import { teamsCards } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
 import { teamsDestinationRecorder, type TeamsChannelData } from "./destinations.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { bareChannelId, capturePlace, messageLink, cardActionOf, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
+import { bareChannelId, capturePlace, messageLink, cardActionOf, isDirect, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 import { plainMentions, teamsText } from "./teams-text.js";
@@ -471,7 +471,19 @@ setInterval(() => {
         const save = ref.conversation?.id ? deliveredAppend(msg, ref.conversation, text, posted.id) : null;
         if (save === "missing-id") console.error(`outbox: teams post to ${ref.conversation?.id} returned no id; digest not saved`);
         // The owner's own 1:1 (by the ref's user, `29:` or AAD id) — never a member's or a shared chat.
-        else if (save) appendDelivered(save.key, save.body, ownerDmRefs({ ref }, teamsConfig.ownerId).length > 0 ? msg.id : undefined, msg.mainTurnKey);
+        else if (save) {
+          const ownerDm = ownerDmRefs({ ref }, teamsConfig.ownerId).length > 0;
+          appendDelivered(save.key, save.body, ownerDm ? msg.id : undefined, msg.mainTurnKey);
+          // A failed sprout (#1136): Bean's diagnosis in the notice's thread (`save.key` is the post's
+          // reply chain in a channel), in the background; a member's DM never gets one.
+          const at = refFor({ [save.key]: ref }, save.key);
+          const scopeId = refScope(ref);
+          if (msg.diagnose && msg.sprout && at && (ownerDm || !isDirect(ref))) {
+            bot.onSproutFailure({
+              conversationId: save.key, deliveryId: msg.id, sprout: msg.sprout, direct: isDirect(ref), ...(scopeId ? { scopeId } : {}),
+            }, proactiveEffects(at, proactive)).catch((err: unknown) => console.error("outbox: sprout diagnosis failed:", outboxErrorLine(err)));
+          }
+        }
       } catch (err) {
         console.error("outbox: teams send failed:", outboxErrorLine(err));
         lastErr = err;

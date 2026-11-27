@@ -224,6 +224,20 @@ describe("createRoutineHost", () => {
     expect((await claimOutbox(outboxDir(dir), "discord")).map((m) => m.context)).toEqual([true, true, true]);
   });
 
+  it("a failed or needs-attention digest asks for a diagnosis turn (#1136) — never an ok, stopped or member-DM one", async () => {
+    const r = routine([], { sinks: { chatops: [{ transport: "discord" }, { transport: "discord", channel: "c1" }, { transport: "discord", user: "u1" }] } });
+    const flags = async (status: "ok" | "failed" | "needs-attention", stopped = false) => {
+      let n = 0;
+      const h = host({ newId: () => `id-${status}-${stopped}-${n++}` });
+      await h.deliverDigest(r, { digest: "d", results: [], record: { startedAt: "2026-10-23T06:00:00.000Z", status } as never, ...(stopped ? { stopped: true as const } : {}) });
+      return (await claimOutbox(outboxDir(dir), "discord")).map((m) => m.diagnose);
+    };
+    expect(await flags("ok")).toEqual([undefined, undefined, undefined]);
+    expect(await flags("failed")).toEqual([true, true, undefined]);
+    expect(await flags("needs-attention")).toEqual([true, true, undefined]);
+    expect(await flags("failed", true)).toEqual([undefined, undefined, undefined]);
+  });
+
   it("chatopsOnlyOnProblems: ok posts no chat message; failed / needs-attention post one per sink; note + notify fire for all", async () => {
     const sinks = { note: true, notify: true, chatops: [{ transport: "discord" as const }, { transport: "teams" as const, channel: "conv" }] };
     const run = async (status: "ok" | "failed" | "needs-attention", flag?: boolean) => {

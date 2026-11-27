@@ -2,6 +2,7 @@
 import { nextRun } from "./cron.js";
 import { appendRunRecord, hasEnded, isArchived, isExpired, parallelSlots, untilLabel, untilTime, watchEveryMinutes } from "./routine-store.js";
 import type { Routine, RoutineState, RoutineWatch, RunRecord, RunStatus } from "./routine-store.js";
+import { takesAnswers } from "./sprout-answers.js";
 import { DONE_FOOTER, type RoutineRunResult } from "./routine-runner.js";
 import type { TodoItem } from "./todo-store.js";
 import { watchDigest, watchSourceKey, watchTodoText } from "./watch.js";
@@ -767,6 +768,14 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       return withSprout(name, async (): Promise<TriggerResult> => {
         const routine = await find(name);
         if (!routine) return { status: "refused", reason: noSuch(name) };
+        // An answer on a plain sprout (#1135): a normal run, which claims every pending answer.
+        // Already running = `next`: the answer waits for the run after this one.
+        if (!routine.todoDriven && takesAnswers(routine)) {
+          const reason = refuseRun(routine);
+          if (reason) return isArchived(routine, now()) ? { status: "refused", reason } : { status: "next" };
+          checking.delete(name);
+          return { status: "started", done: fill(routine).then((r) => triggerOutcome(r.runs)) };
+        }
         if (!routine.todoDriven || routine.steps.length === 0 || !deps.claimTodoById) return { status: "refused", reason: `"${name}" doesn't take tasks` };
         // Not "next in line": an archived sprout has no slot coming for it.
         if (isArchived(routine, now())) return { status: "refused", reason: refuseRun(routine)! };

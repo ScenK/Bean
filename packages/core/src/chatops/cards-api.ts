@@ -131,6 +131,25 @@ export interface TodoProposalCardInput {
   ahead?: number;
   /** Offer Run now (#923): only the owner's card, on a host that runs sprouts. */
   runNow?: boolean;
+  /** The owner's answer to a plain sprout's post (#1135): the card passes it to the sprout's next run. */
+  answer?: boolean;
+  /** When the sprout runs next (todoRunHint), shown by Queue on an answer card. */
+  when?: string;
+}
+
+/** A todo card's title. */
+export const todoCardTitle = (input: TodoProposalCardInput): string =>
+  input.answer ? `Pass your answer to "${input.routine}"` : `Queue a todo on "${input.routine}"`;
+
+/** The lines under a todo card's text: what Run now and Queue each do. */
+export function todoCardLines(input: TodoProposalCardInput): string[] {
+  if (input.answer) {
+    return [
+      ...(input.runNow ? [`Run now: runs ${input.routine} now with your answer`] : []),
+      `Queue: ${input.when ? `its next run reads it — ${input.when}` : "its next run reads it"}`,
+    ];
+  }
+  return [...(input.runNow ? [TODO_RUN_NOW_LINE] : []), todoQueueLine(input.ahead)].filter((l) => l !== undefined);
 }
 
 /** The Queue button's line on a todo card. */

@@ -6,7 +6,7 @@ export interface DmUser {
 }
 
 /** Delivers a channel-less outbox message as a DM to `msg.userId ?? ownerId`. Returns the DM
- * channel id (the conversation id). Throws on failure — the outbox drain retries, then sends the
+ * channel id (the conversation id) and the last message sent. Throws on failure — the outbox drain retries, then sends the
  * owner one notice. */
 export async function deliverOutboxDm(
   msg: OutboxMessage,
@@ -16,9 +16,10 @@ export async function deliverOutboxDm(
     fetchUser: (id: string) => Promise<DmUser>;
     groups: Pick<ChunkGroups, "record">;
   },
-): Promise<string> {
+): Promise<{ channelId: string; messageId?: string }> {
   const user = await deps.fetchUser(msg.userId ?? deps.ownerId);
   // The DM channel id is only learned from a sent message — capture it rather than resolving it up front.
   const sent = await sendChunks(text, (chunk) => user.send(chunk), deps.groups, msg.sprout);
-  return sent.at(-1)?.channelId ?? "";
+  const last = sent.at(-1);
+  return { channelId: last?.channelId ?? "", ...(last ? { messageId: last.id } : {}) };
 }

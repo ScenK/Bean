@@ -14,7 +14,7 @@ import { saveNote } from "./note-store.js";
 import { listSkillProposals, RETRO_SKILL, saveSkillProposals, withProposalFooter } from "./retro.js";
 import { recordStepAttempt } from "./step-attempts.js";
 import { sproutHistory } from "./sprout-read-tools.js";
-import { claimTodo, listTodos, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
+import { claimAnswers, claimTodo, listTodos, releaseTodo, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
 import { DEFAULT_GATE_ROUNDS, loadRoutines, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine, type RoutineChatopsSink } from "./routine-store.js";
 import { listDestinations } from "./destinations.js";
 import { todoDispatchOrigins } from "./dispatch-store.js";
@@ -194,7 +194,11 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
           save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
         },
         // The scheduler's lane-admitted claim when it gives one (#980: stops at the deadline).
-        todos: { claim: claim ?? ((r) => claimTodo(dbFile(dir), r)), setStatus },
+        todos: {
+          claim: claim ?? ((r) => claimTodo(dbFile(dir), r)), setStatus,
+          claimAnswers: (r, limit) => claimAnswers(dbFile(dir), r, limit),
+          release: (id, note) => releaseTodo(dbFile(dir), id, note),
+        },
         ...(signal ? { signal } : {}),
       }, todo);
       // Before the scheduler saves the record and delivers it to sinks.
@@ -326,6 +330,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         // Always chat context (#1066): a reply to a digest — or to an ending's "keep watching?" —
         // must have it in history.
         context: true,
+        // Not a member's DM (#1136): the diagnosis is the owner's turn.
+        ...(result.record.status !== "ok" && !result.stopped && !sink.user ? { diagnose: true as const } : {}),
       }, newId);
     }
     if (routine.sinks.notify && deps.notify) {
