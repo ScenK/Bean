@@ -218,6 +218,10 @@ describe("remote attach over the unix socket", () => {
     expect(await shell.call("chat", { history: [], message: "hi", delta }, "m1")).toMatchObject({ ok: true });
     expect(await shell.call("chat", { history: [], message: "hi", delta: [{ key: 1, role: "user", content: "x" }] }, "m1"))
       .toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
+    // #1132: an outcome turn names its settled task (the host decides what it's worth).
+    expect(await shell.call("chat", { history: [], message: "hi", source: "loopback", settledTask: "t1" }, "m1")).toMatchObject({ ok: true });
+    expect(await shell.call("chat", { history: [], message: "hi", settledTask: 1 }, "m1"))
+      .toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
     const event = await shell.next((m) => m.type === "push");
     expect(event).toMatchObject({ mountId: "m1", seq: 1, kind: "delegate", payload: { taskId: "t1", type: "started" } });
     expect(await shell.call("getModel")).toMatchObject({ ok: true, value: "gpt-test" });

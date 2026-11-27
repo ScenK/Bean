@@ -88,6 +88,8 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
   // signal = the turn's Stop (registerIpc's per-mount controller); converse() then resolves `stopped`.
   return async (
     req: ChatRequest, clientId?: ClientId, mountId?: string, signal?: AbortSignal, active?: OfferedSession,
+    /** Code-built guidance for this turn only (an automatic follow-up's, #1132): system text, never history. */
+    turnNote?: string,
   ): Promise<ConverseResult> => {
     const arrived = new Date(); // the gap marker's time (#977): when the message came, not after compaction
     // The renderer's imageFileGuard is UX only; main re-checks before anything reaches OpenAI (#733).
@@ -194,6 +196,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       ...(active ? { activeSession: {
         ...active, projectName: projects.find((p) => p.path === active.projectPath)?.name ?? (basename(active.projectPath) || "scratch"),
       } } : {}),
+      ...(turnNote ? { roleNote: turnNote } : {}),
       signal,
     });
     if (newSummary) result.summary = newSummary;

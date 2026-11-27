@@ -7,6 +7,7 @@ import { AgentAvatar } from "../../shared/AgentAvatar.js";
 import type { CliName, Project } from "@bean/core";
 import { effortLabel, normalizeModelSelection, pickEffort, pickModel, resolveCliModelSelection } from "@bean/core/models";
 import { useCoreStatus } from "../../shared/core-status.js";
+import { FOLLOW_UP_MAX } from "@bean/core/delegate-grant";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
 
@@ -138,12 +139,15 @@ export function DelegateCard({
     </>
   ) : null;
 
-  // A follow-up resumed with no card: what it was asked, how long, Stop — nothing to confirm.
+  // A follow-up resumed with no card (the user's, or Bean's own): what it was asked, how long, Stop — nothing to confirm.
   if (item.continued) {
     return (
       <div class="bean-card bean-card--continued">
         <div class="bean-card-chips">
-          <span class="bean-chip">↻ continuing {item.proposal.cli ?? "agent"} · {projectName}</span>
+          {/* Bean's own follow-up (#1132): which one of its budget, beside the instruction it sent. */}
+          <span class="bean-chip">
+            {item.proposal.followUp ? `↻ following up (${item.proposal.followUp}/${FOLLOW_UP_MAX})` : "↻ continuing"} {item.proposal.cli ?? "agent"} · {projectName}
+          </span>
         </div>
         <div class="bean-offer-ask">{item.proposal.instruction}</div>
         {output}

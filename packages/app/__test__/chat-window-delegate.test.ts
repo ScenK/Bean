@@ -37,6 +37,7 @@ describe("ChatWindow delegate state", () => {
       text: delegateOutcomeTurn("check it", { type: "done", result: "fixed" }),
       display: "📦 Delegate finished",
       source: "loopback",
+      settledTask: "t1",
     });
   });
 
@@ -71,6 +72,7 @@ describe("ChatWindow delegate state", () => {
       text: delegateOutcomeTurn("edited prompt", { type: "done", result: "fixed" }),
       display: "📦 Delegate finished",
       source: "loopback",
+      settledTask: "t1",
     }]);
   });
 
@@ -134,6 +136,14 @@ describe("desktop cardless continuation (#1113)", () => {
     const reply = { kind: "reply", id: "r", text: "On it." } satisfies ChatItem;
     expect(placeContinued([card, reply], "t2", []).map((i) => i.id)).toEqual(["r", "d2"]);
     expect(placeContinued([reply], "t2", [card]).map((i) => i.id)).toEqual(["r", "d2"]);
+  });
+
+  it("Bean's own follow-up that can't resume asks the user — no new card, no loopback (#1132)", () => {
+    const cont = { ...delegate, continued: true, proposal: { ...delegate.proposal, continue: true, followUp: 1 } } satisfies ChatItem;
+    const r = applyDelegateEventToItems([cont], { taskId: "t1", type: "failed", message: "Couldn't resume", resumeRefused: true });
+    expect(r.loopback).toBeUndefined();
+    expect(r.items).toHaveLength(2);
+    expect(r.items[1]).toMatchObject({ kind: "status", text: expect.stringMatching(/^Bean stopped following up on its own/) });
   });
 
   it("a refused resume ends the compact card and offers the same instruction as a normal card, no loopback", () => {

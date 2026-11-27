@@ -23,6 +23,16 @@ card plus `GRANT_MISMATCH_TEXT[reason]`. Restart drops grants (fail closed).
   directions. A match starts the run before the chat reply returns (`continuedDelegate`); its
   `started` push also carries the card (`continued`), so a remote shell whose reply was lost still
   gets it from the reconnect replay (`adoptContinued`, idempotent by task id). The card's grant line follows the host's `granted` flag on settled events — never saved.
+- Desktop automatic follow-up (#1132): Bean's outcome turn may continue the session itself, at
+  most `FOLLOW_UP_MAX` (2) per grant (`matchFollowUp` / `reserveFollowUp` in core: budget + the
+  failure fingerprint of the last follow-up — the same failure again stops; memory-only on the
+  grant, a new card resets). `chat-sessions` records a run as followable when it settles done or
+  failed on the grant's session (not cancelled, not resume-refused) and no user turn (typed/skill)
+  came since it started (a per-mount epoch); the loopback's `settledTask` takes that record once,
+  bound to the generation it settled on. Admission re-checks the chain and spends the budget in one
+  synchronous step, with `strictResume`, and never renews the idle clock (nor does the follow-up's
+  settle). The budget note rides `roleNote` (system text, not history). Refusals: another
+  project/CLI/model/skill/browser → the normal card; anything else → `followUpRefusedText`, no card.
 - ChatOps (#1114): grants live in `chatops/bot.ts`, keyed by the real conversation id (never
   `historyId()`'s `main`), actor = the confirming tap's platform `fromId` (never the display name).
   Created when a confirmed run settles with a session unless `/new` ran since the card tap (counted
