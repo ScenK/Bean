@@ -77,14 +77,15 @@ persisted, not a closure: [project-sprout-dispatches](project-sprout-dispatches.
 
 Answers on plain sprouts (#1135): a todo on a sprout that **isn't** todo-driven is the owner's answer to
 one of its posts (`sprout-answers.ts`). Chatops only: an owner's reply to a Bean post whose
-`repliedTo.sprout` (#1134) names a live plain sprout with an answer step (`answerStepIndex`: first
-delegate or non-retro chat step, never a command) gets a lead line + the todo card (`answer: true`,
-text = answer + quoted post capped at 1.5k) with **no model turn**; anyone else gets "Only <owner> can
-answer <sprout>." Todo-driven, all-command and unknown sprouts keep the normal turn. Owner-only is
+`repliedTo.sprout` (#1134) names a live sprout that `answerCard` accepts (plain with an answer step —
+a delegate or non-retro chat step, never a command — or todo-driven with steps, where it's queued as a
+normal todo) gets a lead line + the todo card (`answer: true`, text = answer + quoted post capped at
+1.5k) with **no model turn**. Anyone else gets "Only <owner> can answer <sprout>." on a plain sprout and
+today's model turn on a todo-driven one. All-command and unknown sprouts keep the normal turn. Owner-only is
 checked at the tap before `claim()` and again at enqueue (`resolveTodoRoutine(..., answer)`). A plain run
-claims up to `MAX_ANSWERS` with one `UPDATE … RETURNING` (`claimAnswers`) and appends them, fenced, to
-the answer step only; mid-run arrivals wait. Settle: stopped → failed; step reached → done/failed with the
-run's status; not reached → back to pending once (`releaseTodo`, marked via `result_summary`), then failed.
+claims up to `MAX_ANSWERS` with one `UPDATE … RETURNING` (`claimAnswers`), fails any member-authored row
+(left from when the sprout was todo-driven), and appends the rest, fenced, to the first answer step the
+pass actually **starts** (a route may skip earlier ones) and that step's later rounds; mid-run arrivals wait. Settle: stopped → failed; answers given → done/failed with the run's status; not reached → back to pending once (`releaseTodo`, marked via `result_summary`), then failed.
 The dispatch brief is `answerReceipt` (its own answer + status), never the run's report — the run's
 digest still goes to its sinks (answers aren't `todoIds`). Run now = `scheduler.runTodo` starting a
 normal run (busy → `next`: the following run reads it). The Sprouts panel doesn't list answers.

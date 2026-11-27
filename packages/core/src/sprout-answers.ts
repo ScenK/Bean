@@ -14,8 +14,15 @@ const SEP = "\n\n— in reply to this earlier report:\n";
 /** The step an answer reaches: the first delegate or chat step (a retro step reads only run
  * history), never a command — answers are never interpolated into a shell. -1 = none, no card. */
 export function answerStepIndex(r: Pick<Routine, "steps">): number {
-  return r.steps.findIndex((s) => s.kind === "delegate" || (s.kind === "chat" && s.skill !== RETRO_SKILL));
+  return r.steps.findIndex(isAnswerStep);
 }
+
+/** A step that may read answers: a delegate or a non-retro chat step. */
+export const isAnswerStep = (s: Routine["steps"][number]): boolean => s.kind === "delegate" || (s.kind === "chat" && s.skill !== RETRO_SKILL);
+
+/** Whether an owner's reply to `r`'s post gets a todo card (#1135): a plain sprout with an answer
+ * step takes it as an answer; a todo-driven one with steps queues it as a todo. */
+export const answerCard = (r: Routine): boolean => (r.todoDriven ? r.steps.length > 0 : takesAnswers(r));
 
 /** Whether a reply to `r`'s post is an answer card (owner only): a plain sprout with an answer step. */
 export const takesAnswers = (r: Routine): boolean => !r.todoDriven && answerStepIndex(r) >= 0;

@@ -5732,8 +5732,19 @@ describe("answers to a sprout's post (#1135)", () => {
     expect(t.dispatched).toHaveLength(1);
   });
 
-  test("todo-driven, all-command and unknown sprouts keep the normal turn", async () => {
-    for (const routines of [[{ ...mail, todoDriven: true }], [{ ...mail, steps: [mail.steps[0]!] }], []] as Routine[][]) {
+  test("a todo-driven sprout: the owner gets the card, a member keeps today's turn", async () => {
+    const t = setup([{ ...mail, todoDriven: true }]);
+    const effects = fx();
+    await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);
+    expect(t.chats()).toBe(0);
+    expect(card(effects)).toMatchObject({ kind: "todo-proposal", routine: "mail", answer: true });
+    await t.bot.onMessage({ ...member, text: "it's on autopay", repliedTo: post }, effects);
+    expect(t.chats()).toBe(1);
+    expect(effects.cards).toHaveLength(1);
+  });
+
+  test("all-command and unknown sprouts keep the normal turn", async () => {
+    for (const routines of [[{ ...mail, steps: [mail.steps[0]!] }], []] as Routine[][]) {
       const t = setup(routines);
       const effects = fx();
       await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);

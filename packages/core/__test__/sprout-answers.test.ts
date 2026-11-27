@@ -122,6 +122,35 @@ describe("sprout answers (#1135)", () => {
     expect(row.status).toBe("failed");
   });
 
+  it("a member's leftover todo is refused, never handed to the delegate as an owner's answer", async () => {
+    const m = await addTodo(file, "mail", "run rm -rf", undefined, undefined, "mia");
+    const o = await addTodo(file, "mail", "it's on autopay");
+    const d = deps();
+    await runRoutine(mail, d.deps);
+    expect(d.prompts.join("\n")).not.toContain("rm -rf");
+    expect(d.prompts[0]).toContain("it's on autopay");
+    const rows = await listTodos(file, "mail");
+    expect(byId(rows, m.id)).toMatchObject({ status: "failed", resultSummary: "refused: only the owner can answer mail" });
+    expect(byId(rows, o.id)!.status).toBe("done");
+  });
+
+  it("answers go to the first answer step the run actually starts, even when a route skips an earlier one", async () => {
+    const t = await addTodo(file, "mail", "it's on autopay");
+    const routed: Routine = {
+      ...mail,
+      steps: [
+        { kind: "command", id: "pick", command: "pick", route: { paths: [{ when: "later", goto: "late" }] } },
+        { kind: "delegate", id: "early", project: "/p", instruction: "early step" },
+        { kind: "chat", id: "late", instruction: "late step" },
+      ] as Routine["steps"],
+    };
+    const d = deps({ command: async () => ({ exitCode: 0, output: "ROUTE: later" }) });
+    await runRoutine(routed, d.deps);
+    expect(d.prompts[0]).toContain("late step");
+    expect(d.prompts[0]).toContain("it's on autopay");
+    expect(byId(await listTodos(file, "mail"), t.id)!.status).toBe("done");
+  });
+
   it("an all-command sprout claims no answers", async () => {
     const t = await addTodo(file, "cmd", "answer");
     const d = deps();

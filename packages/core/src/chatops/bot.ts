@@ -19,7 +19,7 @@ import {
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
-import { answerTodoText, takesAnswers } from "../sprout-answers.js";
+import { answerCard, answerTodoText } from "../sprout-answers.js";
 import type { SproutTriggerClient } from "./sprout-bridge.js";
 import { homeDestination, planSproutRun, sproutCheckText, type HomeDms, type SproutRunBlock } from "../sprout-trigger.js";
 import { CARD_LEAD, cardRecord, type CardRecordKind, type CardRecordState } from "../card-record.js";
@@ -1394,8 +1394,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
   }
 
-  /** The owner's reply to a plain sprout's post (#1135) → that sprout's todo card, text = the answer
-   * plus the quoted post. Anyone else gets one line. False = not an answer here: a normal turn. */
+  /** The owner's reply to a sprout's post (#1135) → that sprout's todo card, text = the answer plus the
+   * quoted post (a plain sprout takes it as an answer, a todo-driven one as a todo). Anyone else gets
+   * one line on a plain sprout and today's turn on a todo-driven one. False = a normal turn. */
   async function offerSproutAnswer(msg: IncomingMessage, role: Role, hid: string, fx: BotEffects): Promise<boolean> {
     const replied = msg.repliedTo;
     const answer = (msg.typedText ?? msg.text).trim();
@@ -1403,8 +1404,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (!replied?.sprout || !replied.byBean || replied.unavailable || !answer || !deps.routines || !deps.queueTodoDispatch) return false;
     const now = new Date();
     const target = (await deps.routines.load()).find((r) => r.name === replied.sprout && !isArchived(r, now));
-    if (!target || !takesAnswers(target)) return false;
+    if (!target || !answerCard(target)) return false;
     const name = target.name;
+    // A todo-driven sprout keeps today's turn for anyone but the owner (members may queue on it).
+    if (role !== "owner" && target.todoDriven) return false;
     if (role !== "owner") {
       await fx.reply(`Only ${deps.roles.ownerName} can answer ${name}.`);
       return true;
@@ -1493,7 +1496,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             const t = await sprouts.trigger(name, "todo", {}, q.jobId);
             if (t.status === "started") state = "running";
             note = t.status === "started" ? (pending.answer ? `Running ${name} now with your answer — I'll post here when it's done.` : "Running only this task — I'll post the result here.")
-              : t.status === "next" ? (pending.answer ? `${name} is mid-run — your answer goes to its next run.` : `${name} is working on another task. Yours runs next, right after it.`)
+              : t.status === "next" ? (pending.answer ? `${name} is busy right now — your answer is next in line.` : `${name} is working on another task. Yours runs next, right after it.`)
               : `Didn't start: ${t.status === "refused" ? t.reason : "unknown"}. It's first in the queue — I'll report here when it runs.`;
           } catch (err) {
             note = `Couldn't start: ${err instanceof Error ? err.message : String(err)}. It's first in the queue — I'll report here when it runs.`;
@@ -2534,8 +2537,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             history = [...history, { role: "user", content: block }];
           }
         }
-        // A reply to a plain sprout's post (#1135) is an answer for that sprout: its todo card, no
-        // model turn (so no parallel delegate for the same thing). Todo-driven sprouts keep today's turn.
+        // The owner's reply to a sprout's post (#1135) is an answer for that sprout: its todo card, no
+        // model turn (so no parallel delegate for the same thing).
         if (await offerSproutAnswer(msg, role, hid, fx)) return;
         // Per-turn (not shared) so `paths` collects only this request's generated files.
         const imageTool = deps.imageGen && can(role, "images")

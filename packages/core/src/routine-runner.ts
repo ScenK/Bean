@@ -13,7 +13,7 @@ import { quoteFence } from "./prompt.js";
 import { dropRouteLine, gateVerdict, lastLine, parseVerdict, routeLabel, type StepAttempt } from "./step-attempts.js";
 import { RETRO_SKILL, retroSession, type RetroDeps } from "./retro.js";
 import { isDoneEnd, isQuietEnd, stepGroups, stepLanes } from "./routine-graph.js";
-import { MAX_ANSWERS, answerReceipt, answerStepIndex, answersBlock } from "./sprout-answers.js";
+import { MAX_ANSWERS, answerReceipt, answerStepIndex, answersBlock, isAnswerStep } from "./sprout-answers.js";
 
 /** The mark on an answer a run handed back once without reaching its step (#1135). */
 const ANSWER_RETURNED = "returned: the run ended before it reached the answer step";
@@ -374,7 +374,9 @@ async function runSteps(
   labelPrefix: string,
   runId: string,
   todo?: { id: string; text: string; scratch: boolean },
-  answers?: { index: number; block: string },
+  /** A plain run's answers (#1135): given to the first answer step this pass actually starts (a
+   * route may skip earlier ones), and again on that step's later rounds; `at` records which. */
+  answers?: { block: string; at?: number },
 ): Promise<PassOutcome> {
   const now = deps.now ?? (() => new Date());
   const steps = routine.steps;
@@ -406,9 +408,10 @@ async function runSteps(
     const step = steps[index]!;
     // A command step takes no prompt: the todo reaches it as env vars, gate feedback is dropped.
     const labels = step.route?.paths.map((p) => p.when) ?? [];
+    if (answers && answers.at === undefined && isAnswerStep(step)) answers.at = index;
     const effective = step.kind === "command" ? step : {
       ...step,
-      instruction: step.instruction + instructionSuffix + (index === answers?.index ? answers.block : "") + fb +
+      instruction: step.instruction + instructionSuffix + (index === answers?.at ? answers.block : "") + fb +
         (step.gate ? VERDICT_CONTRACT : "") +
         (step.route ? routeContract(labels) : ""),
     } as RoutineStep;
@@ -714,7 +717,6 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   async function settleAnswers(answers: TodoItem[], outcome: Pick<PassOutcome, "status" | "stoppedAt">, reached: boolean): Promise<void> {
     const todos = deps.todos;
     if (!todos || answers.length === 0) return;
-    const step = stepLabel(routine.steps, answerStepIndex(routine));
     for (const a of answers) {
       try {
         if (outcome.stoppedAt !== undefined) await todos.setStatus(a.id, "failed", STOPPED_BY_YOU);
@@ -724,11 +726,20 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
             : outcome.status === "needs-attention" ? `needs attention: ${answerReceipt(a.text, `${routine.name} took it, but the run needs attention — see its report.`)}`
             : answerReceipt(a.text, `${routine.name} took it, but the run failed.`));
         } else if (a.resultSummary !== ANSWER_RETURNED && todos.release) await todos.release(a.id, ANSWER_RETURNED);
-        else await todos.setStatus(a.id, "failed", answerReceipt(a.text, `two runs ended before reaching ${step} — reply again if it still matters.`));
+        else await todos.setStatus(a.id, "failed", answerReceipt(a.text, "two runs ended before reaching a step that reads answers — reply again if it still matters."));
       } catch (err) {
         console.error(`bean: sprout "${routine.name}" couldn't settle answer ${a.id}`, err);
       }
     }
+  }
+
+  /** Fails member-authored claims (only the owner answers a plain sprout) and returns the rest. */
+  async function refuseMemberAnswers(claimed: TodoItem[]): Promise<TodoItem[]> {
+    for (const a of claimed.filter((t) => t.createdBy)) {
+      await deps.todos?.setStatus(a.id, "failed", `refused: only the owner can answer ${routine.name}`)
+        .catch((err: unknown) => console.error(`bean: sprout "${routine.name}" couldn't refuse ${a.id}`, err));
+    }
+    return claimed.filter((t) => !t.createdBy);
   }
 
   if (routine.todoDriven && deps.todos) {
@@ -754,18 +765,19 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   } else {
     // The owner's answers to earlier posts (#1135): a bounded snapshot claimed at start, for the
     // first chat/delegate step only. One arriving mid-run stays pending for the next run.
-    const at = answerStepIndex(routine);
     const take = deps.todos?.claimAnswers;
-    const answers = at >= 0 && take && !deps.signal?.aborted ? await take(routine.name, MAX_ANSWERS) : [];
+    const claimed = answerStepIndex(routine) >= 0 && take && !deps.signal?.aborted ? await take(routine.name, MAX_ANSWERS) : [];
+    // A member's todo left from when this sprout was todo-driven never passes as an owner's answer.
+    const answers = await refuseMemberAnswers(claimed);
+    const given = answers.length ? { block: answersBlock(answers.map((a) => a.text)) } as { block: string; at?: number } : undefined;
     let outcome: PassOutcome;
     try {
-      outcome = await runSteps(routine, deps, timeoutMs, results, "", "", id, undefined,
-        answers.length ? { index: at, block: answersBlock(answers.map((a) => a.text)) } : undefined);
+      outcome = await runSteps(routine, deps, timeoutMs, results, "", "", id, undefined, given);
     } catch (err) {
       await settleAnswers(answers, { status: "failed" }, false);
       throw err;
     }
-    await settleAnswers(answers, outcome, results.some((r) => r.index === at));
+    await settleAnswers(answers, outcome, given?.at !== undefined);
     if (outcome.quiet !== undefined) markQuiet(results, outcome.quiet, "");
     if (outcome.done) done = true;
     worst(outcome.status);
