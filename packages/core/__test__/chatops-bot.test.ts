@@ -5686,3 +5686,159 @@ describe("Bean takes a turn on a delegate's end and may follow up (#1133)", () =
     expect(delegateCalls).toHaveLength(1);
   });
 });
+
+describe("answers to a sprout's post (#1135)", () => {
+  const mail: Routine = {
+    name: "mail", enabled: true, cron: "0 7 * * *", sinks: {},
+    steps: [{ kind: "command", command: "fetch" }, { kind: "delegate", project: "/p", instruction: "file it" }],
+  };
+  const post = { fromName: "Bean", byBean: true, text: "card bill due Dec 22 → on autopay?", at: 1, sprout: "mail" };
+  function setup(routines: Routine[] = [mail]) {
+    const dispatched: unknown[][] = [];
+    const triggered: unknown[][] = [];
+    let chats = 0;
+    const made = withRoles({
+      chat: async () => { chats++; return { content: "model turn", toolCalls: [] }; },
+      queueTodoDispatch: async (t, report) => { dispatched.push([t, report]); return { jobId: `job-${dispatched.length}`, ahead: 0 }; },
+      routines: {
+        transport: "discord", load: async () => routines, save: async () => {}, create: async () => {},
+        notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+        sprouts: {
+          trigger: async (...a) => { triggered.push(a); return { status: "started" }; },
+          facts: async () => ({ pending: 0, seeded: true }), proposals: new SproutRunProposalStore(),
+        },
+      },
+    });
+    return { ...made, dispatched, triggered, chats: () => chats, bot: buildTeamsBot(made.deps) };
+  }
+  const card = (effects: ReturnType<typeof fx>) => effects.cards.at(-1) as { kind: string; proposalId: string; text: string; answer?: true; runNow?: true; when?: string };
+  const tap = (beanAction: string, proposalId: string, who = owner) =>
+    ({ conversationId: who.conversationId, scopeId: "s1", fromId: who.fromId, fromName: who.fromName, value: { beanAction, proposalId } });
+
+  test("the owner's reply gets a lead line and the sprout's answer card — no model turn, no delegate", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);
+    expect(t.chats()).toBe(0);
+    expect(effects.posted[0]).toContain("I'll pass that to mail");
+    const c = card(effects);
+    expect(c).toMatchObject({ kind: "todo-proposal", routine: "mail", answer: true, runNow: true });
+    expect(c.when).toMatch(/^It runs next at /);
+    expect(c.text).toMatch(/^it's on autopay\n\n— in reply to this earlier report:\ncard bill due Dec 22/);
+    await t.bot.onCardAction(tap("run-todo", c.proposalId), effects);
+    expect(t.dispatched).toEqual([[{ routine: "mail", text: c.text, front: true, answer: true }, { channel: owner.conversationId, actor: owner.fromId }]]);
+    expect(t.triggered).toEqual([["mail", "todo", {}, "job-1"]]);
+    expect(effects.posted.at(-1)).toBe("Running mail now with your answer — I'll post here when it's done.");
+  });
+
+  test("a member's reply gets one line; a member's tap on the owner's card is refused before the claim", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage({ ...member, text: "it's on autopay", repliedTo: post }, effects);
+    expect(effects.posted).toEqual(["Only Scen can answer mail."]);
+    expect(effects.cards).toHaveLength(0);
+    await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);
+    await t.bot.onCardAction(tap("queue-todo", card(effects).proposalId, member), effects);
+    expect(effects.posted.at(-1)).toBe("Only Scen can answer mail.");
+    expect(t.dispatched).toHaveLength(0);
+    await t.bot.onCardAction(tap("queue-todo", card(effects).proposalId), effects); // still usable for the owner
+    expect(t.dispatched).toHaveLength(1);
+  });
+
+  test("a todo-driven sprout: the owner gets the card, a member keeps today's turn", async () => {
+    const t = setup([{ ...mail, todoDriven: true }]);
+    const effects = fx();
+    await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);
+    expect(t.chats()).toBe(0);
+    expect(card(effects)).toMatchObject({ kind: "todo-proposal", routine: "mail", answer: true });
+    await t.bot.onMessage({ ...member, text: "it's on autopay", repliedTo: post }, effects);
+    expect(t.chats()).toBe(1);
+    expect(effects.cards).toHaveLength(1);
+  });
+
+  test("all-command and unknown sprouts keep the normal turn", async () => {
+    for (const routines of [[{ ...mail, steps: [mail.steps[0]!] }], []] as Routine[][]) {
+      const t = setup(routines);
+      const effects = fx();
+      await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);
+      expect(t.chats()).toBe(1);
+      expect(effects.cards).toHaveLength(0);
+    }
+  });
+});
+
+describe("a failed sprout delivered to a chat gets one diagnosis turn (#1136)", () => {
+  const digest: Routine = { name: "pr-digest", enabled: true, cron: "0 7 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
+  const other: Routine = { ...digest, name: "other" };
+  const notice = { conversationId: "c1", deliveryId: "job-1", sprout: "pr-digest", direct: false, scopeId: "s1" };
+  function setup(opts: { owner?: boolean; routines?: Routine[] } = {}) {
+    const offered: string[][] = [];
+    const asks: string[] = [];
+    const triggered: unknown[][] = [];
+    const made = withRoles({
+      chat: async ({ tools, messages }) => {
+        const names = (tools ?? []).map((t) => t.name);
+        offered.push(names);
+        const last = messages.at(-1);
+        // Round 1: read the sprout; round 2: say why and offer Run now.
+        if (last?.role !== "tool") {
+          asks.push(String(last?.content ?? ""));
+          return { content: "", toolCalls: [{ name: "read_sprout", args: { name: "pr-digest" } }] };
+        }
+        return { content: "The feed timed out — a transient failure.", toolCalls: [{ name: "propose_sprout_run", args: { routine: "pr-digest" } }] };
+      },
+      cards: { ...fakeCards, sproutRunCard: (i: object) => ({ kind: "sprout-run", ...i }) } as CardBuilders,
+      routines: {
+        transport: "discord", load: async () => opts.routines ?? [digest, other], save: async () => {}, create: async () => {},
+        notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+        sprouts: {
+          trigger: async (...a) => { triggered.push(a); return { status: "started", done: new Promise(() => {}) } as TriggerResult; },
+          facts: async () => ({ pending: 0, seeded: true }), proposals: new SproutRunProposalStore(),
+        },
+      },
+    });
+    const dir = mkdtempSync(join(tmpdir(), "bean-diag-"));
+    made.deps.backgroundWork = { file: join(dir, "bean.db"), stateFile: join(dir, ".state.json"), dispatches: () => [] };
+    if (opts.owner === false) {
+      made.deps.roles = makeRoles({ dbPath: join(dir, "roles.db"), surface: "discord", ownerName: "Scen" });
+    }
+    made.deps.conversations.append("c1", { role: "assistant", content: "Sprout pr-digest failed ✗" });
+    return { ...made, offered, asks, triggered, bot: buildTeamsBot(made.deps) };
+  }
+
+  test("one reply and a Run now card for that sprout only; nothing reruns until the owner taps", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onSproutFailure(notice, effects);
+    expect(t.asks[0]).toContain('The sprout "pr-digest" just failed or needs attention');
+    const tools = t.offered[0]!;
+    for (const n of ["read_sprout", "propose_sprout_run", "propose_skill", "propose_routine"]) expect(tools).toContain(n);
+    expect(tools).not.toContain("propose_delegate");
+    expect(effects.posted).toEqual(["The feed timed out — a transient failure."]);
+    expect(effects.cards).toHaveLength(1);
+    const card = effects.cards[0] as { kind: string; proposalId: string; plan: { routine: string } };
+    expect(card).toMatchObject({ kind: "sprout-run", plan: { routine: "pr-digest" } });
+    expect(t.triggered).toEqual([]);
+    expect(t.deps.conversations.history("c1").map((x) => x.content)).toContain("The feed timed out — a transient failure.");
+    await t.bot.onCardAction({ conversationId: "c1", scopeId: "s1", fromId: "u1", fromName: "Scen", value: { beanAction: "run-sprout", proposalId: card.proposalId } }, effects);
+    expect(t.triggered).toEqual([["pr-digest", "run", { channel: "c1", actor: "u1" }]]);
+  });
+
+  test("a delivery seen twice runs one turn", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onSproutFailure(notice, effects);
+    await t.bot.onSproutFailure(notice, effects);
+    expect(t.asks).toHaveLength(1);
+    expect(effects.cards).toHaveLength(1);
+  });
+
+  test("no owner configured, or the sprout is gone: no turn", async () => {
+    for (const t of [setup({ owner: false }), setup({ routines: [other] })]) {
+      const effects = fx();
+      await t.bot.onSproutFailure(notice, effects);
+      expect(t.offered).toEqual([]);
+      expect(effects.posted).toEqual([]);
+    }
+  });
+});

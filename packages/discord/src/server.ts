@@ -217,10 +217,12 @@ const voiceCards = new Set<string>();
 
 // `voiceReply`: the user spoke this turn, so each reply also carries a spoken mp3 — text stays
 // for reading where audio can't be played.
-function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voiceReply = false): BotEffects {
+// `replyTo`: every message is a reply to that one (a sprout diagnosis under its notice, #1136).
+function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voiceReply = false, replyTo?: string): BotEffects {
   const send = async (options: string | MessageCreateOptions): Promise<Message> => {
     if (!("send" in channel)) throw new Error("channel is not sendable");
-    return channel.send(options as MessageCreateOptions);
+    const o: MessageCreateOptions = typeof options === "string" ? { content: options } : options;
+    return channel.send(replyTo ? { ...o, reply: { messageReference: replyTo, failIfNotExists: false } } : o);
   };
   const reply = async (text: string): Promise<void> => {
     await sendChunks(text, send, chunkGroups);
@@ -812,6 +814,21 @@ const appendDelivered = (conversationId: string, body: string, ownerDm?: string,
   appendDelivery(conversations, conversationId, body, { chat: converseChat, model: beanConfig.model },
     ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined, mainTurnKey);
 
+// A failed sprout delivered (#1136): Bean's diagnosis turn, replying under the notice. In the
+// background — the drain never waits on a model turn — and after the notice is in history.
+const diagnose = (msg: OutboxMessage, channelId: string, noticeId: string | undefined): void => {
+  if (!msg.diagnose || !msg.sprout || !msg.context) return;
+  const sprout = msg.sprout;
+  void (async () => {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel?.isTextBased()) return;
+    await bot.onSproutFailure({
+      conversationId: channelId, deliveryId: msg.id, sprout, direct: channel.type === ChannelType.DM,
+      ...(channel.type === ChannelType.DM ? {} : { scopeId: scopeOf(channel) }),
+    }, effectsFor(channel, undefined, false, noticeId));
+  })().catch((err: unknown) => console.error("outbox: sprout diagnosis failed:", outboxErrorLine(err)));
+};
+
 const OUTBOX_POLL_MS = 5_000;
 // One owner notice for a given-up message. A failed owner DM gets none — that's the channel the
 // notice would use, and the notice is itself an owner DM, so its own failure can't loop.
@@ -835,7 +852,7 @@ setInterval(() => {
     const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n${msg.body}` : msg.body);
     if (!msg.channel) {
       // No channel = DM `msg.userId` (a routine sink's `user`), else the owner (the default).
-      const dmChannelId = await deliverOutboxDm(msg, text, {
+      const { channelId: dmChannelId, messageId } = await deliverOutboxDm(msg, text, {
         ownerId: discordConfig.ownerId,
         fetchUser: (id) => client.users.fetch(id),
         groups: chunkGroups,
@@ -846,15 +863,17 @@ setInterval(() => {
       // No userId, or the owner's own = the owner's DM; any other user's DM never maps.
       const toOwner = !!discordConfig.ownerId && (!msg.userId || msg.userId === discordConfig.ownerId);
       if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body, toOwner ? msg.id : undefined, msg.mainTurnKey);
+      if (toOwner && dmChannelId) diagnose(msg, dmChannelId, messageId);
       return;
     }
     const channel = await client.channels.fetch(msg.channel);
     if (!channel?.isTextBased() || !("send" in channel)) throw new Error(`channel ${msg.channel} not sendable`);
-    await sendChunks(text, async (chunk): Promise<{ id: string }> => channel.send(chunk), chunkGroups);
+    const sent = await sendChunks(text, async (chunk): Promise<{ id: string }> => channel.send(chunk), chunkGroups, msg.sprout);
     destinations.seen(channel);
     // A named destination can be the owner's own DM channel: that one maps too (#998).
     const ownerDm = channel.type === ChannelType.DM && !!discordConfig.ownerId && channel.recipientId === discordConfig.ownerId;
     if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body, ownerDm ? msg.id : undefined, msg.mainTurnKey);
+    diagnose(msg, msg.channel, sent.at(-1)?.id);
   }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed:", outboxErrorLine(err)));
 }, OUTBOX_POLL_MS);
 

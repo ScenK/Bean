@@ -70,3 +70,11 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   unknown). Same gate as `list_todos`; a non-owner sees only `myTodos` + jobs they tapped or queued
   (never counts across people, last results or anyone else's text), and a member DM reads no rows.
   Desktop: owner view, rows of the chat's pinned thread + threads it dispatched from.
+- **A failure gets one diagnosis turn (#1136).** `OutboxMessage.diagnose` is set at enqueue (dispatch
+  notice with status failed/needs-attention; a chat sink's digest unless ok, stopped or a member-DM
+  `user` sink — Home phone copies never). After delivering it (and saving it as context) the bot calls
+  `bot.onSproutFailure` in the background: the owner as actor (no owner set = no turn), deduped by
+  delivery id, `read_sprout` plus only that sprout's Run now / `propose_skill` / `propose_routine`
+  (no delegate), one reply + at most one card. Discord sends both as replies to the notice; Teams posts
+  into the notice's reply chain (`deliveredAppend`'s key). Never a rerun without a tap. Desktop: the
+  sprout loopback asks `sproutFailureAsk` (core `prompt.ts`) instead of "briefly summarize".

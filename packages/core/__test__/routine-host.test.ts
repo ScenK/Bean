@@ -155,7 +155,7 @@ describe("createRoutineHost", () => {
     const notes = await loadNotes(dbFile(dir));
     expect(notes.map((n) => [n.slug, n.title, n.body])).toEqual([["routine-r", "sprout: r", "hello"]]);
     const out = await claimOutbox(outboxDir(dir), "discord");
-    expect(out).toEqual([expect.objectContaining({ id: "id-1", transport: "discord", channel: "c1", title: "Sprout: r", body: "hello", context: true })]);
+    expect(out).toEqual([expect.objectContaining({ id: "id-1", transport: "discord", channel: "c1", title: "Sprout: r", sprout: "r", body: "hello", context: true })]);
     expect(notify).toHaveBeenCalledWith({
       title: "Sprout: r", body: "hello", target: { routine: "r", startedAt: "2026-10-23T06:00:00.000Z" },
     });
@@ -222,6 +222,20 @@ describe("createRoutineHost", () => {
     const r = routine([], { sinks: { chatops: [{ transport: "discord" }, { transport: "discord", channel: "c1" }, { transport: "discord", user: "u1" }] } });
     await h.deliverDigest(r, { digest: "hello", results: [], record: { startedAt: "2026-10-23T06:00:00.000Z", status: "ok" } as never });
     expect((await claimOutbox(outboxDir(dir), "discord")).map((m) => m.context)).toEqual([true, true, true]);
+  });
+
+  it("a failed or needs-attention digest asks for a diagnosis turn (#1136) — never an ok, stopped or member-DM one", async () => {
+    const r = routine([], { sinks: { chatops: [{ transport: "discord" }, { transport: "discord", channel: "c1" }, { transport: "discord", user: "u1" }] } });
+    const flags = async (status: "ok" | "failed" | "needs-attention", stopped = false) => {
+      let n = 0;
+      const h = host({ newId: () => `id-${status}-${stopped}-${n++}` });
+      await h.deliverDigest(r, { digest: "d", results: [], record: { startedAt: "2026-10-23T06:00:00.000Z", status } as never, ...(stopped ? { stopped: true as const } : {}) });
+      return (await claimOutbox(outboxDir(dir), "discord")).map((m) => m.diagnose);
+    };
+    expect(await flags("ok")).toEqual([undefined, undefined, undefined]);
+    expect(await flags("failed")).toEqual([true, true, undefined]);
+    expect(await flags("needs-attention")).toEqual([true, true, undefined]);
+    expect(await flags("failed", true)).toEqual([undefined, undefined, undefined]);
   });
 
   it("chatopsOnlyOnProblems: ok posts no chat message; failed / needs-attention post one per sink; note + notify fire for all", async () => {
@@ -470,7 +484,7 @@ describe("createRoutineHost", () => {
         const sent = await posted();
         expect(sent.map((m) => m.transport)).toEqual(["discord"]); // the owner's Teams chat isn't known: none enqueued
         expect(sent[0]).toMatchObject({
-          body: postTurn({ sprout: "r", text: BRIEF }), displayBody: `**Sprout: r**\n\n${BRIEF}`, context: true, mainTurnKey: `post:${latestPost().id}`,
+          body: postTurn({ sprout: "r", text: BRIEF }), displayBody: `**Sprout: r**\n\n${BRIEF}`, context: true, mainTurnKey: `post:${latestPost().id}`, sprout: "r",
         });
         expect(sent[0]).not.toHaveProperty("channel");
         expect(sent[0]).not.toHaveProperty("userId");

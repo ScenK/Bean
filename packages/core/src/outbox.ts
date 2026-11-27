@@ -47,6 +47,12 @@ export interface OutboxMessage {
   // after the cutover, joins the main log under this key instead of `delivery:<id>` — so it and
   // the Home drain's copy, whichever lands first, leave one row.
   mainTurnKey?: string;
+  // The sprout that produced this post (#1134): set by every sprout enqueue (chat sinks, Home phone
+  // copies, dispatch notices), absent for everything else. Discord records it per delivered chunk.
+  sprout?: string;
+  // A failed / needs-attention sprout run reaching the chat it was asked from or a chat sink (#1136):
+  // after delivery the bot takes one diagnosis turn for the owner there. Set at enqueue, like `context`.
+  diagnose?: true;
   createdAt: string; // ISO
   // Retry bookkeeping, written by nackOutbox: failed send attempts so far, and the ISO time
   // before which claimOutbox skips the file.

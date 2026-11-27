@@ -89,7 +89,8 @@ export function sharedBotDeps(opts: {
       return target;
     },
     queueTodoDispatch: async (t, report) => {
-      const routine = resolveTodoRoutine(await loadRoutines(routinesDir(dir)), t.routine, t.createdBy !== undefined);
+      // An answer (#1135) is re-checked here too: owner only (no createdBy), a sprout that takes answers.
+      const routine = resolveTodoRoutine(await loadRoutines(routinesDir(dir)), t.routine, t.createdBy !== undefined, new Date(), t.answer === true);
       const q = queueTodoDispatch(db, t, { surface: transport, ...(report.channel ? { conversation: report.channel } : {}), ...(report.actor ? { actor: report.actor } : {}) });
       return { ...(routine ? { routine } : {}), jobId: q.jobId, ahead: q.ahead };
     },

@@ -44,6 +44,16 @@ function isBean(senderId: string | undefined, botId: string): boolean {
   return !!senderId && (senderId === botId || senderId === botId.replace(/^28:/, ""));
 }
 
+// A sprout post's header line, `**Sprout: <name>**` (routine-host.ts), as a preview renders it.
+const SPROUT_HEADER = /^\**Sprout: ([^*\n]+?)\**$/;
+
+/** A Bean quote's sprout from its first line (#1134). Teams keeps no delivery record, so this is a
+ * candidate only — a header-less or flattened preview gives none. */
+function sproutOf(byBean: boolean, text: string): { sprout?: string } {
+  const name = byBean ? text.split("\n", 1)[0]!.trim().match(SPROUT_HEADER)?.[1]?.trim() : undefined;
+  return name ? { sprout: name } : {};
+}
+
 /** Splits a Teams quote-reply into the sender's own words (`text`, mention-free input) and the
  * quoted message (`repliedTo`). Two shapes: the `quotedReply` entity Teams now sends (text carries
  * a `<quoted messageId="…"/>` placeholder; the quote is only a preview), and the legacy `text/html`
@@ -59,10 +69,11 @@ export function parseQuote(a: QuoteActivity, text: string): { text: string; repl
     const preview = htmlToText(entity.preview ?? "");
     if (entity.isReplyDeleted || !preview) return { text: own, repliedTo: UNAVAILABLE };
     const c = capped(preview);
+    const byBean = isBean(entity.senderId, a.recipient.id);
     return {
       text: own,
       repliedTo: {
-        fromName: entity.senderName ?? "", byBean: isBean(entity.senderId, a.recipient.id),
+        fromName: entity.senderName ?? "", byBean, ...sproutOf(byBean, preview),
         text: c.text, at: Number(entity.time) || 0, ...(c.truncated ? { truncated: true } : {}),
       },
     };
@@ -87,10 +98,11 @@ export function parseQuote(a: QuoteActivity, text: string): { text: string; repl
   const body = htmlToText(preview ?? "");
   if (!body) return { text: own, repliedTo: UNAVAILABLE };
   const c = capped(body);
+  const byBean = isBean(authorId, a.recipient.id);
   return {
     text: own,
     repliedTo: {
-      fromName: htmlToText(author?.[1] ?? ""), byBean: isBean(authorId, a.recipient.id),
+      fromName: htmlToText(author?.[1] ?? ""), byBean, ...sproutOf(byBean, body),
       text: c.text, at: Number(time) || 0, ...(c.truncated ? { truncated: true } : {}),
     },
   };

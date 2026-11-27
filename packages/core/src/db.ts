@@ -255,11 +255,14 @@ CREATE INDEX IF NOT EXISTS chatops_turn_counts_day ON chatops_turn_counts(surfac
 -- Messages sent as chunks of one over-long text (chatops/chunk-groups.ts): every chunk's platform
 -- message id maps to the group's first id and its position, so a reply to any chunk can rebuild
 -- the whole text. Metadata only, no message text; at is epoch ms, rows past 30 days pruned on insert.
+-- sprout = the sprout that produced the post (#1134), NULL otherwise; a sprout post is recorded even
+-- as a single chunk, so a reply to it can name its sprout.
 CREATE TABLE IF NOT EXISTS chatops_chunks (
   message_id TEXT PRIMARY KEY,
   first_id   TEXT NOT NULL,
   seq        INTEGER NOT NULL,
-  at         INTEGER NOT NULL
+  at         INTEGER NOT NULL,
+  sprout     TEXT
 );
 CREATE INDEX IF NOT EXISTS chatops_chunks_group ON chatops_chunks(first_id, seq);
 
@@ -489,6 +492,8 @@ export function openDb(file: string): DatabaseSync {
     // and its idempotency key (NULL = none; unique per conversation via chatops_turns_key below).
     ["chatops_turns", "surface", "TEXT"],
     ["chatops_turns", "turn_key", "TEXT"],
+    // Which sprout produced a delivered chunk (#1134): NULL = not a sprout post.
+    ["chatops_chunks", "sprout", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");

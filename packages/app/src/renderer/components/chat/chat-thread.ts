@@ -1,4 +1,5 @@
 import type { LiveCli } from "@bean/core";
+import { sproutFailureAsk } from "@bean/core/prompt";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
 
 // A desktop chat thread's saved form — pure and node-free, so it tests without a DOM. Every save and
@@ -226,10 +227,13 @@ export function sproutResultLine(status: string): string {
     : status === "interrupted" ? "Interrupted — Bean restarted before it finished, nothing was re-run" : "Failed";
 }
 
-/** The result turn a run's end loops back into its chat (#921), collapsed to a labelled row. */
+/** The result turn a run's end loops back into its chat (#921), collapsed to a labelled row. A failed
+ * or needs-attention run asks for a diagnosis and at most one confirm-first fix card instead (#1136). */
 export function sproutLoopback(routine: string, end: SproutEnd): { text: string; display: string; source: "loopback" } {
+  const ask = end.status === "failed" || end.status === "needs-attention"
+    ? sproutFailureAsk(routine) : "Briefly summarize this outcome for the user in your own words.";
   return {
-    text: `[sprout result for "${routine}"]: ${end.text}\n\nBriefly summarize this outcome for the user in your own words.`,
+    text: `[sprout result for "${routine}"]: ${end.text}\n\n${ask}`,
     display: `🌱 Sprout "${routine}" — ${sproutResultLine(end.status).split(" — ")[0]!.toLowerCase()}`,
     source: "loopback",
   };

@@ -9,7 +9,7 @@ const okUser = (sent: string[]) => ({ send: async (t: string) => { sent.push(t);
 
 test("DMs msg.userId when set, else the owner", async () => {
   const fetchUser = vi.fn(async () => okUser([]));
-  expect(await deliverOutboxDm(msg({ userId: "u1" }), "hi", { ownerId: "own", fetchUser, groups })).toBe("dm1");
+  expect(await deliverOutboxDm(msg({ userId: "u1" }), "hi", { ownerId: "own", fetchUser, groups })).toMatchObject({ channelId: "dm1" });
   await deliverOutboxDm(msg(), "hi", { ownerId: "own", fetchUser, groups });
   expect(fetchUser.mock.calls.map((c) => (c as unknown[])[0])).toEqual(["u1", "own"]);
 });
