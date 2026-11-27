@@ -1370,8 +1370,8 @@ test("a failed or cancelled run leaves its outcome and the agent's final message
   const bot = buildTeamsBot(deps);
   const effects = fx();
   await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: await proposeThenGetId(deps, effects) } }, effects);
-  delegateCalls[0]?.cb.onOutput("FAILED: no token — fixed the bug, didn't push");
-  delegateCalls[0]?.cb.onError(new Error("no token"));
+  delegateCalls[0]?.cb.onOutput("checking");
+  delegateCalls[0]?.cb.onError(new Error("no token"), "FAILED: no token — fixed the bug, didn't push");
   await vi.waitFor(() => expect(deps.conversations.history("c1").some((t) => t.content.startsWith("[delegate failed for "))).toBe(true));
   const failed = deps.conversations.history("c1").find((t) => t.content.startsWith("[delegate failed for "))!;
   expect(failed).toMatchObject({ role: "assistant" });

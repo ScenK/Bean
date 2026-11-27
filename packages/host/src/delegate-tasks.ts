@@ -115,7 +115,7 @@ interface Task {
   instruction: string;
   mountId?: string;
   /** What a cancelled event carries: the receipt and the agent's final message so far. */
-  ending: () => { receipt?: DelegateReceipt; final?: string };
+  ending: (given?: string) => { receipt?: DelegateReceipt; final?: string };
   /** The CLI session it drives (a continuation's from the start) — busy for a continuation. */
   sessionId?: string;
   onEnd?: DelegateStartOpts["onEnd"];
@@ -153,7 +153,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     for (const [taskId, t] of [...tasks]) {
       if (t.cancelling || !pick(t)) continue;
       t.cancelling = true;
-      t.cancel(() => emit({ taskId, type: "cancelled", ...t.ending() }));
+      t.cancel((given) => emit({ taskId, type: "cancelled", ...t.ending(given) }));
     }
   };
 
@@ -181,8 +181,8 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     let settled = false;
     // Set up before run(): its callbacks can fire synchronously.
     let receipt: { receipt?: DelegateReceipt } = {};
-    let last: string | undefined; // the agent's latest completed message — where it stopped
-    const final = (): { final?: string } => { const f = trimDelegateFinal(last); return f ? { final: f } : {}; };
+    let last: string | undefined; // the agent's latest prose: the fallback when core gives no final message
+    const final = (given?: string): { final?: string } => { const f = trimDelegateFinal(given ?? last); return f ? { final: f } : {}; };
     const handle = run(
       {
         cli: choice.cli,
@@ -197,10 +197,10 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         onOutput: (line) => emit({ taskId, type: "output", line }),
         onText: (text) => { last = text; },
         onDone: (result) => { settled = true; emit({ taskId, type: "done", result, ...receipt }); },
-        onError: (err) => {
+        onError: (err, given) => {
           settled = true;
           const refused = opts.resume !== undefined && err.message === resumeRefusal(choice.cli);
-          emit({ taskId, type: "failed", message: err.message, ...final(), ...receipt, ...(refused ? { resumeRefused: true as const } : {}) });
+          emit({ taskId, type: "failed", message: err.message, ...final(given), ...receipt, ...(refused ? { resumeRefused: true as const } : {}) });
         },
         onSessionStart: (_pid, sessionId) => {
           recordDelegateSession(dbFile(deps.dir), {
@@ -233,7 +233,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     tasks.set(taskId, {
       cancel: handle.cancel,
       cancelling: false, projectPath: req.projectPath, instruction: req.instruction, mountId: req.mountId,
-      ending: () => ({ ...receipt, ...final() }),
+      ending: (given) => ({ ...receipt, ...final(given) }),
       ...(opts.resume ? { sessionId: opts.resume } : {}),
       ...(opts.onEnd ? { onEnd: opts.onEnd } : {}),
     });
@@ -254,7 +254,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       if (!t) return;
       if (t.cancelling) return;
       t.cancelling = true;
-      t.cancel(() => emit({ taskId, type: "cancelled", ...t.ending() }));
+      t.cancel((given) => emit({ taskId, type: "cancelled", ...t.ending(given) }));
     },
 
     cancelAll: (): void => cancelWhere(() => true),

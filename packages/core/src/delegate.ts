@@ -293,7 +293,9 @@ export interface DelegateCallbacks {
   onText?: (text: string) => void;
   /** sessionId: the CLI's own session id when it reported one — pass it back as `resume`. */
   onDone: (result: string, sessionId?: string) => void;
-  onError: (err: Error) => void;
+  /** `final`: the agent's final message as runDelegate read it (the text a `FAILED:` is judged
+   * from, else its latest prose) — the outcome's own report (#1131). Absent when it said nothing. */
+  onError: (err: Error, final?: string) => void;
   /** The CLI reported its session started, from the child with this pid. After this point a
    * rejected-resume retry can no longer happen, so the child's pid is safe to track. Fires at
    * most once per run, so callers can keep `sessionId` for every terminal outcome (done, error,
@@ -302,7 +304,8 @@ export interface DelegateCallbacks {
 }
 
 export interface DelegateHandle {
-  cancel: (onCancelled?: () => void) => void;
+  /** `onCancelled` gets the agent's final message so far, like onError's `final`. */
+  cancel: (onCancelled?: (final?: string) => void) => void;
   // The first spawned child's pid, once known (undefined only if spawnFn's process object never got
   // one — practically always defined). Lets a caller track *this specific process*, not just
   // "whoever was calling runDelegate", for cross-restart liveness checks (see run-queue.ts's
@@ -380,7 +383,7 @@ export function runDelegate(
   let settled = false;
   let cancelling = false;
   let timedOut = false;
-  let onCancelled: (() => void) | undefined;
+  let onCancelled: ((final?: string) => void) | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   let result: string | undefined;
   let lastText: string | undefined; // claude's latest assistant prose, used only when no `result` arrives
@@ -390,6 +393,9 @@ export function runDelegate(
   let stderrBuf = "";
   let agyFailure: string | undefined; // agy's `status: "ERROR"` result reason
   let agyStep = agyStream();
+
+  // The agent's final message so far: its final answer, else its latest prose, else raw stdout.
+  const finalMessage = (): string | undefined => result ?? lastText ?? (rawLines.length > 0 ? rawLines.join("\n") : undefined);
 
   const settle = (fn: () => void): void => {
     if (settled) return;
@@ -546,11 +552,11 @@ export function runDelegate(
     c.on("close", (code: number | null) => {
       if (settled || child !== c) return;
       if (timedOut) {
-        settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`)));
+        settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`), finalMessage()));
         return;
       }
       if (cancelling) {
-        settle(() => onCancelled?.());
+        settle(() => onCancelled?.(finalMessage()));
         return;
       }
       if (stdoutBuf.trim()) handleLine(stdoutBuf);
@@ -565,10 +571,10 @@ export function runDelegate(
         return;
       }
       if (code === 0 && agyFailure === undefined) {
-        const out = result ?? lastText ?? (rawLines.length > 0 ? rawLines.join("\n") : NO_RESULT_NOTICE);
+        const out = finalMessage() ?? NO_RESULT_NOTICE;
         // Checked before the resume notice is prepended; never retried (a post may have gone out).
         const failed = failedReason(out);
-        if (failed !== undefined) settle(() => callbacks.onError(new Error(failed)));
+        if (failed !== undefined) settle(() => callbacks.onError(new Error(failed), out));
         else settle(() => callbacks.onDone(notice + out, sessionId));
         return;
       }
@@ -582,7 +588,7 @@ export function runDelegate(
         return;
       }
       const tail = req.cli === "agy" ? agyFailure ?? "" : stderrBuf.trim().split("\n").slice(-5).join("\n");
-      settle(() => callbacks.onError(new Error(`${command} exited with code ${code}${tail ? ` - ${tail}` : ""}`)));
+      settle(() => callbacks.onError(new Error(`${command} exited with code ${code}${tail ? ` - ${tail}` : ""}`), finalMessage()));
     });
   };
 

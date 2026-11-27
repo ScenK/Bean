@@ -15,7 +15,8 @@ export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks)
 export interface RunEvents {
   onTail: (line: string) => void;
   onDone: (result: string, sessionId?: string) => void;
-  /** `last`: the agent's latest output (prose when proseOnly), unthrottled — where it stopped. */
+  /** `last`: the agent's final message (runDelegate's), else its latest output (prose when
+   * proseOnly), unthrottled — where it stopped. */
   onError: (message: string, sessionId?: string, last?: string) => void;
   onCancelled: (sessionId?: string, last?: string) => void;
 }
@@ -156,10 +157,10 @@ export class RunRegistry {
         free();
         events.onDone(notice + result, run.sessionId);
       },
-      onError: (err) => {
+      onError: (err, final) => {
         if (run.released) return;
         free();
-        events.onError(err.message, run.sessionId, run.last);
+        events.onError(err.message, run.sessionId, final ?? run.last);
       },
       // A resumed run may re-spawn fresh if the CLI rejects the id; the first child is dead by
       // then, so a record on its pid would miss the live retry. Keep this (live) process's pid
@@ -202,10 +203,10 @@ export class RunRegistry {
     // Release only once the handle confirms the child has actually stopped (onCancelled fires
     // from the delegate's own close event) — the record must outlive a child that's still
     // shutting down (or ignoring SIGTERM) so crash cleanup can still find it.
-    run.handle?.cancel(() => {
+    run.handle?.cancel((final) => {
       this.stopping.delete(run);
       releaseRun(this.opts.dir, runId);
-      run.events.onCancelled(run.sessionId, run.last);
+      run.events.onCancelled(run.sessionId, final ?? run.last);
     });
     return true;
   }

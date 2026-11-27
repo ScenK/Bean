@@ -22,10 +22,11 @@ Key contracts:
   by core's `delegateOutcomeTurn()` (`prompt.ts`, #1131): `[delegate result|failed|cancelled for
   "…"]: <reason>` + the agent's final message `quoteFence`d as data + a "judge it: done / partly
   done / blocked / waiting on the user; say what was done and what was skipped" ask — never a
-  one-line status. `failed`/`cancelled` events carry `final` (the host's latest `onText`, trimmed,
-  capped by `trimDelegateFinal`); the `FAILED:` sentinel asks the agent to list done/not-done
+  one-line status. `failed`/`cancelled` events carry `final` — core `runDelegate` hands it to
+  `onError(err, final)` / `cancel((final) => …)` (the final answer a `FAILED:` is judged from, else
+  the latest prose; `onText` alone misses claude/agy result events), trimmed and capped by `trimDelegateFinal`; the `FAILED:` sentinel asks the agent to list done/not-done
   under its first line. ChatOps appends the same `delegateOutcomeRecord()` (no ask) to history on
-  failed/cancelled (its `last`), so the next turn can answer "what happened?"; `done` keeps
+  failed/cancelled (`last` = core's final, else the latest prose), so the next turn can answer "what happened?"; `done` keeps
   `[delegate result] …`. No partial state — `FAILED:` stays the only failure signal. A loopback turn (`source: "loopback"`) is never offered the session — it can't
   start a run or refresh the grant. A refused cardless resume doesn't loop back: it re-offers its
   instruction as a normal card.
