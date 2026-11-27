@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, continueLiveLine, noContinueLine, rememberedScopeLine, todoCardLines, todoCardTitle } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -198,10 +198,10 @@ function noteResultCard(input: NoteResultCardInput): object {
 }
 
 function todoProposalCard(input: TodoProposalCardInput): object {
-  const lines = [...(input.runNow ? [TODO_RUN_NOW_LINE] : []), todoQueueLine(input.ahead)].filter((l) => l !== undefined);
+  const lines = todoCardLines(input);
   return {
     embeds: [{
-      title: `Queue a todo on "${input.routine}"`,
+      title: todoCardTitle(input),
       description: input.text,
       ...(lines.length ? { footer: { text: lines.join(" · ") } } : {}),
     }],

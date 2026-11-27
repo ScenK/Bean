@@ -5673,3 +5673,72 @@ describe("Bean takes a turn on a delegate's end and may follow up (#1133)", () =
     expect(delegateCalls).toHaveLength(1);
   });
 });
+
+describe("answers to a sprout's post (#1135)", () => {
+  const mail: Routine = {
+    name: "mail", enabled: true, cron: "0 7 * * *", sinks: {},
+    steps: [{ kind: "command", command: "fetch" }, { kind: "delegate", project: "/p", instruction: "file it" }],
+  };
+  const post = { fromName: "Bean", byBean: true, text: "card bill due Dec 22 → on autopay?", at: 1, sprout: "mail" };
+  function setup(routines: Routine[] = [mail]) {
+    const dispatched: unknown[][] = [];
+    const triggered: unknown[][] = [];
+    let chats = 0;
+    const made = withRoles({
+      chat: async () => { chats++; return { content: "model turn", toolCalls: [] }; },
+      queueTodoDispatch: async (t, report) => { dispatched.push([t, report]); return { jobId: `job-${dispatched.length}`, ahead: 0 }; },
+      routines: {
+        transport: "discord", load: async () => routines, save: async () => {}, create: async () => {},
+        notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+        sprouts: {
+          trigger: async (...a) => { triggered.push(a); return { status: "started" }; },
+          facts: async () => ({ pending: 0, seeded: true }), proposals: new SproutRunProposalStore(),
+        },
+      },
+    });
+    return { ...made, dispatched, triggered, chats: () => chats, bot: buildTeamsBot(made.deps) };
+  }
+  const card = (effects: ReturnType<typeof fx>) => effects.cards.at(-1) as { kind: string; proposalId: string; text: string; answer?: true; runNow?: true; when?: string };
+  const tap = (beanAction: string, proposalId: string, who = owner) =>
+    ({ conversationId: who.conversationId, scopeId: "s1", fromId: who.fromId, fromName: who.fromName, value: { beanAction, proposalId } });
+
+  test("the owner's reply gets a lead line and the sprout's answer card — no model turn, no delegate", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);
+    expect(t.chats()).toBe(0);
+    expect(effects.posted[0]).toContain("I'll pass that to mail");
+    const c = card(effects);
+    expect(c).toMatchObject({ kind: "todo-proposal", routine: "mail", answer: true, runNow: true });
+    expect(c.when).toMatch(/^It runs next at /);
+    expect(c.text).toMatch(/^it's on autopay\n\n— in reply to this earlier report:\ncard bill due Dec 22/);
+    await t.bot.onCardAction(tap("run-todo", c.proposalId), effects);
+    expect(t.dispatched).toEqual([[{ routine: "mail", text: c.text, front: true, answer: true }, { channel: owner.conversationId, actor: owner.fromId }]]);
+    expect(t.triggered).toEqual([["mail", "todo", {}, "job-1"]]);
+    expect(effects.posted.at(-1)).toBe("Running mail now with your answer — I'll post here when it's done.");
+  });
+
+  test("a member's reply gets one line; a member's tap on the owner's card is refused before the claim", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage({ ...member, text: "it's on autopay", repliedTo: post }, effects);
+    expect(effects.posted).toEqual(["Only Scen can answer mail."]);
+    expect(effects.cards).toHaveLength(0);
+    await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);
+    await t.bot.onCardAction(tap("queue-todo", card(effects).proposalId, member), effects);
+    expect(effects.posted.at(-1)).toBe("Only Scen can answer mail.");
+    expect(t.dispatched).toHaveLength(0);
+    await t.bot.onCardAction(tap("queue-todo", card(effects).proposalId), effects); // still usable for the owner
+    expect(t.dispatched).toHaveLength(1);
+  });
+
+  test("todo-driven, all-command and unknown sprouts keep the normal turn", async () => {
+    for (const routines of [[{ ...mail, todoDriven: true }], [{ ...mail, steps: [mail.steps[0]!] }], []] as Routine[][]) {
+      const t = setup(routines);
+      const effects = fx();
+      await t.bot.onMessage({ ...owner, text: "it's on autopay", repliedTo: post }, effects);
+      expect(t.chats()).toBe(1);
+      expect(effects.cards).toHaveLength(0);
+    }
+  });
+});

@@ -6,7 +6,7 @@ import type {
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CardBuilders,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, TODO_RUN_NOW_LINE, continueLiveLine, noContinueLine, rememberedScopeLine, todoQueueLine } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, continueLiveLine, noContinueLine, rememberedScopeLine, todoCardLines, todoCardTitle } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -233,10 +233,9 @@ export function todoProposalCard(input: TodoProposalCardInput): object {
     type: "AdaptiveCard",
     version: "1.4",
     body: [
-      { type: "TextBlock", size: "medium", weight: "bolder", text: `Queue a todo on "${input.routine}"` },
+      { type: "TextBlock", size: "medium", weight: "bolder", text: todoCardTitle(input) },
       { type: "TextBlock", text: input.text, wrap: true },
-      ...[...(input.runNow ? [TODO_RUN_NOW_LINE] : []), todoQueueLine(input.ahead)]
-        .filter((l) => l !== undefined).map((text) => ({ type: "TextBlock", text, wrap: true, isSubtle: true })),
+      ...todoCardLines(input).map((text) => ({ type: "TextBlock", text, wrap: true, isSubtle: true })),
     ],
     actions: [
       ...(input.runNow ? [{ type: "Action.Submit", title: "Run now", data: { beanAction: "run-todo", proposalId: input.proposalId } }] : []),

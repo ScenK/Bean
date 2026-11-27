@@ -19,6 +19,7 @@ import {
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
+import { answerTodoText, takesAnswers } from "../sprout-answers.js";
 import type { SproutTriggerClient } from "./sprout-bridge.js";
 import { homeDestination, planSproutRun, sproutCheckText, type HomeDms, type SproutRunBlock } from "../sprout-trigger.js";
 import { CARD_LEAD, cardRecord, type CardRecordKind, type CardRecordState } from "../card-record.js";
@@ -206,7 +207,7 @@ export interface TeamsBotDeps {
   /** Queues a confirmed todo with its dispatch row (#923), so its result is posted back to `report`
    * (`channel` absent = the owner's DM) when it runs. `front` = Run now (ahead of every queued todo).
    * Absent = queued todos don't report back. */
-  queueTodoDispatch?: (t: { routine: string; text: string; createdBy?: string; front?: boolean }, report: { channel?: string; actor?: string })
+  queueTodoDispatch?: (t: { routine: string; text: string; createdBy?: string; front?: boolean; answer?: boolean }, report: { channel?: string; actor?: string })
     => Promise<{ routine?: Routine; jobId: string; ahead: number }>;
   /** A routine's pending todos, for the card's "N ahead in queue". */
   pendingTodos?: (routine: string) => Promise<number>;
@@ -1393,6 +1394,40 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
   }
 
+  /** The owner's reply to a plain sprout's post (#1135) → that sprout's todo card, text = the answer
+   * plus the quoted post. Anyone else gets one line. False = not an answer here: a normal turn. */
+  async function offerSproutAnswer(msg: IncomingMessage, role: Role, hid: string, fx: BotEffects): Promise<boolean> {
+    const replied = msg.repliedTo;
+    const answer = (msg.typedText ?? msg.text).trim();
+    // Teams' name is a header candidate: only a sprout that exists (and takes answers) counts.
+    if (!replied?.sprout || !replied.byBean || replied.unavailable || !answer || !deps.routines || !deps.queueTodoDispatch) return false;
+    const now = new Date();
+    const target = (await deps.routines.load()).find((r) => r.name === replied.sprout && !isArchived(r, now));
+    if (!target || !takesAnswers(target)) return false;
+    const name = target.name;
+    if (role !== "owner") {
+      await fx.reply(`Only ${deps.roles.ownerName} can answer ${name}.`);
+      return true;
+    }
+    const text = answerTodoText(answer, replied.text);
+    const pending = deps.todoProposals.add({
+      todo: { routine: name, text }, conversationId: msg.conversationId, proposedBy: msg.fromName, requesterId: msg.fromId,
+      member: false, report: msg.direct ? {} : { channel: msg.conversationId }, answer: true,
+    });
+    const runNow = can(role, "runRoutines") && deps.routines.sprouts !== undefined;
+    const when = todoRunHint(target, now);
+    const lead = `I'll pass that to ${name} so it doesn't ask again — it reads your answer on its next run.`;
+    appendHistory(msg.conversationId, { role: "user", content: speakerLine(msg.fromName, msg.text) }, hid);
+    appendHistory(msg.conversationId, { role: "assistant", content: lead }, hid);
+    await fx.reply(lead);
+    const activityId = await fx.postCard(deps.cards.todoProposalCard({
+      proposalId: pending.id, routine: name, text, answer: true, ...(when ? { when } : {}), ...(runNow ? { runNow: true } : {}),
+    }));
+    deps.todoProposals.setCardActivityId(pending.id, activityId);
+    recordCard(msg.conversationId, "todo", "pending", name);
+    return true;
+  }
+
   async function handleTodoAction(
     kind: "run-todo" | "queue-todo" | "cancel-todo",
     proposalId: string | undefined,
@@ -1405,6 +1440,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // Before the claim, so a refused tap leaves the card usable for its requester. Proposal ids
     // are sequential, so the conversation binding stops a forged id from another chat.
     const peeked = deps.todoProposals.peek(proposalId);
+    // An answer to a sprout (#1135) is the owner's alone — refused before the claim.
+    if (peeked?.answer && !isOwner && peeked.conversationId === action.conversationId) {
+      await fx.post(`Only ${deps.roles.ownerName} can answer ${peeked.todo.routine}.`);
+      return;
+    }
     if (peeked && (peeked.conversationId !== action.conversationId || (!isOwner && peeked.requesterId !== action.fromId))) {
       await fx.post("Only whoever asked for that todo (or the owner) can queue or cancel it.");
       return;
@@ -1439,7 +1479,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (pending.report && queueDispatch) {
         // Queued with its dispatch: the todo's own result is posted back here when it runs.
         const q = await queueDispatch(
-          { routine: name, text: pending.todo.text, ...(createdBy ? { createdBy } : {}), ...(kind === "run-todo" ? { front: true } : {}) },
+          {
+            routine: name, text: pending.todo.text, ...(createdBy ? { createdBy } : {}), ...(kind === "run-todo" ? { front: true } : {}),
+            ...(pending.answer ? { answer: true } : {}),
+          },
           { ...pending.report, ...(action.fromId ? { actor: action.fromId } : {}) },
         );
         queued = true;
@@ -1449,8 +1492,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           try {
             const t = await sprouts.trigger(name, "todo", {}, q.jobId);
             if (t.status === "started") state = "running";
-            note = t.status === "started" ? "Running only this task — I'll post the result here."
-              : t.status === "next" ? `${name} is working on another task. Yours runs next, right after it.`
+            note = t.status === "started" ? (pending.answer ? `Running ${name} now with your answer — I'll post here when it's done.` : "Running only this task — I'll post the result here.")
+              : t.status === "next" ? (pending.answer ? `${name} is mid-run — your answer goes to its next run.` : `${name} is working on another task. Yours runs next, right after it.`)
               : `Didn't start: ${t.status === "refused" ? t.reason : "unknown"}. It's first in the queue — I'll report here when it runs.`;
           } catch (err) {
             note = `Couldn't start: ${err instanceof Error ? err.message : String(err)}. It's first in the queue — I'll report here when it runs.`;
@@ -1460,11 +1503,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.post(note);
           return;
         }
-        const note = "Queued — I'll report here when it runs.";
+        const note = pending.answer ? `Saved for ${name}'s next run — I'll report here when it's read.` : "Queued — I'll report here when it runs.";
         recordCard(pending.conversationId, "todo", "queued", name);
         await updateTo(resultCard("queued", note));
         const when = q.routine ? todoRunHint(q.routine, new Date()) : "";
-        await fx.post(`Queued on "${name}"${q.ahead ? ` (${q.ahead} ahead)` : ""}.${when ? ` ${when}` : ""} I'll report here when it runs.`);
+        await fx.post(pending.answer ? `${name} gets your answer on its next run.${when ? ` ${when}` : ""}`
+          : `Queued on "${name}"${q.ahead ? ` (${q.ahead} ahead)` : ""}.${when ? ` ${when}` : ""} I'll report here when it runs.`);
         return;
       }
       const routine = await deps.queueTodo(name, pending.todo.text, createdBy);
@@ -2490,6 +2534,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             history = [...history, { role: "user", content: block }];
           }
         }
+        // A reply to a plain sprout's post (#1135) is an answer for that sprout: its todo card, no
+        // model turn (so no parallel delegate for the same thing). Todo-driven sprouts keep today's turn.
+        if (await offerSproutAnswer(msg, role, hid, fx)) return;
         // Per-turn (not shared) so `paths` collects only this request's generated files.
         const imageTool = deps.imageGen && can(role, "images")
           ? makeGenerateImageTool({

@@ -74,3 +74,17 @@ sprouts itself ("say `enable X` first"). Bots never schedule (#637): they trigge
 (`chatops/sprout-bridge.ts`) to the host's `answerSproutTrigger` (`host.ts`: `trigger` wrapped by
 `withDispatch`, plus `sproutRunFacts` for `planSproutRun`); both helpers live in core. The finish reply is
 persisted, not a closure: [project-sprout-dispatches](project-sprout-dispatches.md).
+
+Answers on plain sprouts (#1135): a todo on a sprout that **isn't** todo-driven is the owner's answer to
+one of its posts (`sprout-answers.ts`). Chatops only: an owner's reply to a Bean post whose
+`repliedTo.sprout` (#1134) names a live plain sprout with an answer step (`answerStepIndex`: first
+delegate or non-retro chat step, never a command) gets a lead line + the todo card (`answer: true`,
+text = answer + quoted post capped at 1.5k) with **no model turn**; anyone else gets "Only <owner> can
+answer <sprout>." Todo-driven, all-command and unknown sprouts keep the normal turn. Owner-only is
+checked at the tap before `claim()` and again at enqueue (`resolveTodoRoutine(..., answer)`). A plain run
+claims up to `MAX_ANSWERS` with one `UPDATE … RETURNING` (`claimAnswers`) and appends them, fenced, to
+the answer step only; mid-run arrivals wait. Settle: stopped → failed; step reached → done/failed with the
+run's status; not reached → back to pending once (`releaseTodo`, marked via `result_summary`), then failed.
+The dispatch brief is `answerReceipt` (its own answer + status), never the run's report — the run's
+digest still goes to its sinks (answers aren't `todoIds`). Run now = `scheduler.runTodo` starting a
+normal run (busy → `next`: the following run reads it). The Sprouts panel doesn't list answers.
