@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ConverseResult, type RoutineAuthoring, type ImageAttachment, type ProposedDelegate, type ProposedLiveSession, type ProposedSend } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
-import { composePrompt, DELEGATE_OUTCOME_ASK, delegateOutcomeRecord, delegateOutcomeTurn, sproutFailureAsk, trimDelegateFinal, type DelegateOutcome } from "../prompt.js";
+import { composePrompt, delegateOutcomeRecord, delegateOutcomeTurn, sproutFailureAsk, trimDelegateFinal, type DelegateOutcome } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { extractMemories, memoryCategories } from "../memory/extract.js";
