@@ -14,6 +14,8 @@ export interface PendingTodo {
   /** Where the todo's result is reported (#923): `channel` absent = the owner's DM. Absent = no
    * report (a member's DM — the outbox can only DM the owner by default). */
   report?: { channel?: string };
+  /** The owner's answer to a plain sprout's post (#1135): owner-only taps, queued as an answer. */
+  answer?: boolean;
   cardActivityId?: string;
   createdAt: number;
 }

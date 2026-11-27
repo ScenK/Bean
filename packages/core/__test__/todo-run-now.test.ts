@@ -185,3 +185,29 @@ describe("bridge: Run now carries the job id, never the task text", () => {
     expect(runTodo).toHaveBeenCalledOnce();
   });
 });
+
+describe("scheduler runTodo on a plain sprout's answer (#1135)", () => {
+  it("starts a normal run (not the exact-todo path), and says `next` while one is running", async () => {
+    const plain: Routine = { name: "p", enabled: true, cron: "30 6 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
+    let release!: () => void;
+    const runRoutine = vi.fn(async (): Promise<RoutineRunResult> => {
+      await new Promise<void>((r) => { release = r; });
+      const record = { id: "run", startedAt: "a", finishedAt: "b", status: "ok" as const, digest: "d", steps: [] };
+      return { record, digest: "d", results: [] };
+    });
+    const claimTodoById = vi.fn(async () => undefined);
+    const sched = createRoutineScheduler({
+      loadRoutines: async () => [plain, { ...plain, name: "cmd", steps: [{ kind: "command", command: "c" }] }],
+      loadStates: async () => ({}), saveStates: async () => {}, runRoutine, deliverDigest: vi.fn(async () => {}),
+      now: () => d(6, 31), claimTodo: async () => undefined, claimTodoById,
+    });
+    const r = await sched.runTodo("p", "a1");
+    expect(r.status).toBe("started");
+    expect(runRoutine.mock.calls[0]?.[1]).toBeUndefined(); // a plain run, which claims its answers itself
+    expect(claimTodoById).not.toHaveBeenCalled();
+    expect(await sched.runTodo("p", "a2")).toEqual({ status: "next" });
+    expect(await sched.runTodo("cmd", "a3")).toMatchObject({ status: "refused" });
+    release();
+    if (r.status === "started") await r.done;
+  });
+});

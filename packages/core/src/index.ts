@@ -11,6 +11,7 @@ export * from "./note-store.js";
 export * from "./note-images.js";
 export * from "./stage-images.js";
 export * from "./todo-store.js";
+export * from "./sprout-answers.js";
 export * from "./dispatch-store.js";
 export * from "./home-posts.js";
 export * from "./main-conversation.js";
