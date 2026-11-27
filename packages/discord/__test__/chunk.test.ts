@@ -94,12 +94,19 @@ describe("sendChunks", () => {
     expect(record).not.toHaveBeenCalled();
   });
 
+  test("a sprout post records its sprout, even as a single chunk (#1134)", async () => {
+    const record = vi.fn();
+    await sendChunks("hello", sender().send, { record }, "digest");
+    await sendChunks(long, sender().send, { record }, "digest");
+    expect(record.mock.calls).toEqual([[["m1"], { sprout: "digest" }], [["m1", "m2", "m3"], { sprout: "digest" }]]);
+  });
+
   test("a full multi-chunk send records one group in order; chunks are chunkText's", async () => {
     const record = vi.fn();
     const { sent, send } = sender();
     await sendChunks(long, send, { record });
     expect(sent).toEqual(chunkText(long));
-    expect(record.mock.calls).toEqual([[["m1", "m2", "m3"]]]);
+    expect(record.mock.calls).toEqual([[["m1", "m2", "m3"], {}]]);
   });
 
   test("a send that throws on chunk 2 records nothing", async () => {

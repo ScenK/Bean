@@ -195,7 +195,7 @@ export async function enqueueDispatchNotice(outbox: string, d: Dispatch & { surf
   const saved = dispatchContext(d);
   await enqueueOutbox(outbox, {
     transport: d.surface, ...(d.conversation ? { channel: d.conversation } : {}),
-    body: saved, ...(saved !== shown ? { displayBody: shown } : {}), context: true,
+    body: saved, ...(saved !== shown ? { displayBody: shown } : {}), context: true, sprout: d.routine,
   }, () => d.id);
 }
 

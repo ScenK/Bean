@@ -57,20 +57,22 @@ export function chunkText(text: string, limit = 2000): string[] {
 }
 
 /** Sends `text` (tables rendered for a phone, see tables.ts) as Discord-sized chunks in order and returns each send's result. A text that
- * split into several chunks is recorded as one group once the last chunk is delivered, so a reply
- * to any chunk can rebuild the whole text. A failed send throws and records nothing (its retry
+ * split into several chunks — or any sprout post (`sprout`, #1134), even one chunk — is recorded as
+ * one group once the last chunk is delivered, so a reply to any chunk can rebuild the whole text
+ * and name its sprout. A failed send throws and records nothing (its retry
  * records its own set); a failed record is only logged — throwing after delivery would make the
  * outbox resend it. */
 export async function sendChunks<T extends { id: string }>(
   text: string,
   send: (chunk: string) => Promise<T>,
   groups: Pick<ChunkGroups, "record">,
+  sprout?: string,
 ): Promise<T[]> {
   const sent: T[] = [];
   for (const chunk of chunkText(renderTables(text))) sent.push(await send(chunk));
-  if (sent.length > 1) {
+  if (sent.length > 1 || (sprout && sent.length > 0)) {
     try {
-      groups.record(sent.map((m) => m.id));
+      groups.record(sent.map((m) => m.id), sprout ? { sprout } : {});
     } catch (err) {
       console.error("chunk group record failed:", err);
     }

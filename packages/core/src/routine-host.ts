@@ -306,7 +306,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
           // Unreachable (no owner set / owner's chat unknown) = nothing enqueued, never a retry pile.
           if (!reach[transport] || asked.some((o) => sameChatTarget(o, { sink: { transport }, channel: undefined }))) continue;
           await enqueueOutbox(outboxDir(dir), {
-            transport, title: `Sprout: ${routine.name}`,
+            transport, title: `Sprout: ${routine.name}`, sprout: routine.name,
             body: postTurn({ sprout: routine.name, text: homePostBody(homeBody) }),
             displayBody: `**Sprout: ${routine.name}**\n\n${routine.sinks.chatopsVerbatim === true ? result.digest : homeBody}`,
             context: true, mainTurnKey: postTurnKey(posted),
@@ -320,7 +320,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       if (channel === undefined && phoneSent.has(sink.transport) && (sink.transport === "teams" || sink.user === undefined)) continue;
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel, userId: sink.user,
-        title: `Sprout: ${routine.name}`,
+        title: `Sprout: ${routine.name}`, sprout: routine.name,
         // A member DM says whose routine it is — they didn't set it up.
         body: sink.user ? `${chatBody}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : chatBody,
         // Always chat context (#1066): a reply to a digest — or to an ending's "keep watching?" —

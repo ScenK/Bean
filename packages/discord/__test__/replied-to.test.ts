@@ -1,4 +1,9 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { makeChunkGroups } from "@bean/core";
 import { expect, test, vi } from "vitest";
+import { sendChunks } from "../src/chunk.js";
 import { refText, resolveRepliedTo, taggedUserIds, type RefMessage } from "../src/replied-to.js";
 
 const BOT = "bot";
@@ -78,4 +83,19 @@ test("taggedUserIds counts only literal tags in the sender's own words", () => {
   expect(taggedUserIds("hi\n>>> <@111>\n<@222>", "999")).toEqual([]);
   expect(taggedUserIds("`<@111>` and ```\n<@222>\n```", "999")).toEqual([]);
   expect(taggedUserIds("@scen <@&333> @everyone", "999")).toEqual([]);
+});
+
+test("a reply to any chunk of a sprout digest names its sprout; other Bean posts name none (#1134)", async () => {
+  const groups = makeChunkGroups({ dbPath: join(mkdtempSync(join(tmpdir(), "bean-replied-")), "bean.db") });
+  const msgs: Record<string, RefMessage> = {};
+  const send = async (content: string) => { const id = `m${Object.keys(msgs).length + 1}`; msgs[id] = m({ content }); return { id }; };
+  await sendChunks(`${"a".repeat(2000)}\n${"b".repeat(2000)}\nc`, send, groups, "Bean Triage"); // m1..m3
+  await sendChunks("short digest", send, groups, "digest"); // m4
+  await sendChunks("a plain answer", send, groups); // m5, unrecorded
+  const d = { channelId: "c1", botId: BOT, fetch: async (id: string) => msgs[id]!, groups };
+  for (const id of ["m1", "m2", "m3"]) {
+    expect(await resolveRepliedTo({ channelId: "c1", messageId: id }, d)).toMatchObject({ byBean: true, sprout: "Bean Triage" });
+  }
+  expect(await resolveRepliedTo({ channelId: "c1", messageId: "m4" }, d)).toEqual({ fromName: "Bean", byBean: true, at: 1000, text: "short digest", sprout: "digest" });
+  expect(await resolveRepliedTo({ channelId: "c1", messageId: "m5" }, d)).not.toHaveProperty("sprout");
 });

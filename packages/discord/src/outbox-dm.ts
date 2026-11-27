@@ -19,6 +19,6 @@ export async function deliverOutboxDm(
 ): Promise<string> {
   const user = await deps.fetchUser(msg.userId ?? deps.ownerId);
   // The DM channel id is only learned from a sent message — capture it rather than resolving it up front.
-  const sent = await sendChunks(text, (chunk) => user.send(chunk), deps.groups);
+  const sent = await sendChunks(text, (chunk) => user.send(chunk), deps.groups, msg.sprout);
   return sent.at(-1)?.channelId ?? "";
 }

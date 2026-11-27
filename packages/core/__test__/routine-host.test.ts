@@ -155,7 +155,7 @@ describe("createRoutineHost", () => {
     const notes = await loadNotes(dbFile(dir));
     expect(notes.map((n) => [n.slug, n.title, n.body])).toEqual([["routine-r", "sprout: r", "hello"]]);
     const out = await claimOutbox(outboxDir(dir), "discord");
-    expect(out).toEqual([expect.objectContaining({ id: "id-1", transport: "discord", channel: "c1", title: "Sprout: r", body: "hello", context: true })]);
+    expect(out).toEqual([expect.objectContaining({ id: "id-1", transport: "discord", channel: "c1", title: "Sprout: r", sprout: "r", body: "hello", context: true })]);
     expect(notify).toHaveBeenCalledWith({
       title: "Sprout: r", body: "hello", target: { routine: "r", startedAt: "2026-10-23T06:00:00.000Z" },
     });
@@ -470,7 +470,7 @@ describe("createRoutineHost", () => {
         const sent = await posted();
         expect(sent.map((m) => m.transport)).toEqual(["discord"]); // the owner's Teams chat isn't known: none enqueued
         expect(sent[0]).toMatchObject({
-          body: postTurn({ sprout: "r", text: BRIEF }), displayBody: `**Sprout: r**\n\n${BRIEF}`, context: true, mainTurnKey: `post:${latestPost().id}`,
+          body: postTurn({ sprout: "r", text: BRIEF }), displayBody: `**Sprout: r**\n\n${BRIEF}`, context: true, mainTurnKey: `post:${latestPost().id}`, sprout: "r",
         });
         expect(sent[0]).not.toHaveProperty("channel");
         expect(sent[0]).not.toHaveProperty("userId");

@@ -47,6 +47,9 @@ export interface OutboxMessage {
   // after the cutover, joins the main log under this key instead of `delivery:<id>` — so it and
   // the Home drain's copy, whichever lands first, leave one row.
   mainTurnKey?: string;
+  // The sprout that produced this post (#1134): set by every sprout enqueue (chat sinks, Home phone
+  // copies, dispatch notices), absent for everything else. Discord records it per delivered chunk.
+  sprout?: string;
   createdAt: string; // ISO
   // Retry bookkeeping, written by nackOutbox: failed send attempts so far, and the ISO time
   // before which claimOutbox skips the file.
