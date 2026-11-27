@@ -330,6 +330,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         // Always chat context (#1066): a reply to a digest — or to an ending's "keep watching?" —
         // must have it in history.
         context: true,
+        // Not a member's DM (#1136): the diagnosis is the owner's turn.
+        ...(result.record.status !== "ok" && !result.stopped && !sink.user ? { diagnose: true as const } : {}),
       }, newId);
     }
     if (routine.sinks.notify && deps.notify) {

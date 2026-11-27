@@ -5753,3 +5753,79 @@ describe("answers to a sprout's post (#1135)", () => {
     }
   });
 });
+
+describe("a failed sprout delivered to a chat gets one diagnosis turn (#1136)", () => {
+  const digest: Routine = { name: "pr-digest", enabled: true, cron: "0 7 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
+  const other: Routine = { ...digest, name: "other" };
+  const notice = { conversationId: "c1", deliveryId: "job-1", sprout: "pr-digest", direct: false, scopeId: "s1" };
+  function setup(opts: { owner?: boolean; routines?: Routine[] } = {}) {
+    const offered: string[][] = [];
+    const asks: string[] = [];
+    const triggered: unknown[][] = [];
+    const made = withRoles({
+      chat: async ({ tools, messages }) => {
+        const names = (tools ?? []).map((t) => t.name);
+        offered.push(names);
+        const last = messages.at(-1);
+        // Round 1: read the sprout; round 2: say why and offer Run now.
+        if (last?.role !== "tool") {
+          asks.push(String(last?.content ?? ""));
+          return { content: "", toolCalls: [{ name: "read_sprout", args: { name: "pr-digest" } }] };
+        }
+        return { content: "The feed timed out — a transient failure.", toolCalls: [{ name: "propose_sprout_run", args: { routine: "pr-digest" } }] };
+      },
+      cards: { ...fakeCards, sproutRunCard: (i: object) => ({ kind: "sprout-run", ...i }) } as CardBuilders,
+      routines: {
+        transport: "discord", load: async () => opts.routines ?? [digest, other], save: async () => {}, create: async () => {},
+        notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+        sprouts: {
+          trigger: async (...a) => { triggered.push(a); return { status: "started", done: new Promise(() => {}) } as TriggerResult; },
+          facts: async () => ({ pending: 0, seeded: true }), proposals: new SproutRunProposalStore(),
+        },
+      },
+    });
+    const dir = mkdtempSync(join(tmpdir(), "bean-diag-"));
+    made.deps.backgroundWork = { file: join(dir, "bean.db"), stateFile: join(dir, ".state.json"), dispatches: () => [] };
+    if (opts.owner === false) {
+      made.deps.roles = makeRoles({ dbPath: join(dir, "roles.db"), surface: "discord", ownerName: "Scen" });
+    }
+    made.deps.conversations.append("c1", { role: "assistant", content: "Sprout pr-digest failed ✗" });
+    return { ...made, offered, asks, triggered, bot: buildTeamsBot(made.deps) };
+  }
+
+  test("one reply and a Run now card for that sprout only; nothing reruns until the owner taps", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onSproutFailure(notice, effects);
+    expect(t.asks[0]).toContain('The sprout "pr-digest" just failed or needs attention');
+    const tools = t.offered[0]!;
+    for (const n of ["read_sprout", "propose_sprout_run", "propose_skill", "propose_routine"]) expect(tools).toContain(n);
+    expect(tools).not.toContain("propose_delegate");
+    expect(effects.posted).toEqual(["The feed timed out — a transient failure."]);
+    expect(effects.cards).toHaveLength(1);
+    const card = effects.cards[0] as { kind: string; proposalId: string; plan: { routine: string } };
+    expect(card).toMatchObject({ kind: "sprout-run", plan: { routine: "pr-digest" } });
+    expect(t.triggered).toEqual([]);
+    expect(t.deps.conversations.history("c1").map((x) => x.content)).toContain("The feed timed out — a transient failure.");
+    await t.bot.onCardAction({ conversationId: "c1", scopeId: "s1", fromId: "u1", fromName: "Scen", value: { beanAction: "run-sprout", proposalId: card.proposalId } }, effects);
+    expect(t.triggered).toEqual([["pr-digest", "run", { channel: "c1", actor: "u1" }]]);
+  });
+
+  test("a delivery seen twice runs one turn", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onSproutFailure(notice, effects);
+    await t.bot.onSproutFailure(notice, effects);
+    expect(t.asks).toHaveLength(1);
+    expect(effects.cards).toHaveLength(1);
+  });
+
+  test("no owner configured, or the sprout is gone: no turn", async () => {
+    for (const t of [setup({ owner: false }), setup({ routines: [other] })]) {
+      const effects = fx();
+      await t.bot.onSproutFailure(notice, effects);
+      expect(t.offered).toEqual([]);
+      expect(effects.posted).toEqual([]);
+    }
+  });
+});
