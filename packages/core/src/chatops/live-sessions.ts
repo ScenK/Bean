@@ -12,6 +12,7 @@ import { startTurnLiveSession } from "../turn-live-session.js";
 import { recordRun, releaseRun, updateRunPid } from "../run-queue.js";
 import { dbFile } from "../config.js";
 import { isLiveSessionId, recordDelegateSession } from "../delegate-runs.js";
+import { markAuditInterrupted, recordAuditEnd, recordAuditSession, recordAuditStart, type AuditStart } from "../run-audit.js";
 import { killPendingGroups, killTree } from "../kill-tree.js";
 
 /** Surface-agnostic "post or edit a plain text message". Chatops builds this on top of
@@ -57,6 +58,9 @@ export interface LiveSessionStart {
   /** A fresh session's CLI id, once its `delegate_runs` row is written (never on a resume, a
    * failed write, or without the registry's `surface`). */
   onSessionId?: (sessionId: string) => void;
+  /** The session's `run_audit` row (with the registry's `surface`): who proposed and started it,
+   * where, and the skill. The starter is `starterId` + `audit.starterName`. */
+  audit?: Pick<AuditStart, "askedBy" | "channelName" | "skill"> & { starterName?: string };
   /** Each piece of agent output as it streams — prose in proseOnly mode, else raw lines — for a
    * card's "where it stopped" line (a stopped turn never reaches onTurnResult). */
   onAgentText?: (text: string) => void;
@@ -243,7 +247,18 @@ export class LiveSessionRegistry {
   start(input: LiveSessionStart): "started" | "channel" {
     if (this.byChannel.has(input.channelId)) return "channel";
     const runId = this.newId();
+    // Record before audit row: boot's reconcileAuditRuns reads rows first, then live records.
     recordRun(this.opts.dir, runId, input.projectPath, process.pid);
+    if (this.opts.surface) {
+      const { starterName, ...who } = input.audit ?? {};
+      recordAuditStart(dbFile(this.opts.dir), {
+        ...who, runId, surface: this.opts.surface, conversationId: input.channelId, trigger: "live",
+        ...(input.starterId || starterName ? { confirmedBy: { id: input.starterId || undefined, name: starterName } } : {}),
+        projectPath: input.projectPath, cli: input.cli ?? "claude", ...(input.model ? { model: input.model } : {}),
+        instruction: input.ask ?? input.instruction,
+      });
+      if (input.resume) recordAuditSession(dbFile(this.opts.dir), runId, input.resume);
+    }
     const s: ActiveSession = {
       handle: undefined as unknown as LiveSessionHandle,
       runId,
@@ -283,7 +298,7 @@ export class LiveSessionRegistry {
           append(text);
         },
         onTurnStart: () => this.startTyping(s),
-        onSessionId: (id) => this.recordSession(input, id),
+        onSessionId: (id) => this.recordSession(input, runId, id),
         onTurnComplete: (summary) => {
           this.stopTyping(s);
           if (summary.failed === undefined) input.onTurnResult?.(summary.result);
@@ -317,10 +332,11 @@ export class LiveSessionRegistry {
   }
 
   // A resume continues a session that already has its row (same rule as the desktop's live-tasks).
-  private recordSession(input: LiveSessionStart, id: string): void {
+  private recordSession(input: LiveSessionStart, runId: string, id: string): void {
     const cli = input.cli ?? "claude";
     const { surface } = this.opts;
     if (!surface || id === input.resume || !isLiveSessionId(cli, id)) return;
+    recordAuditSession(dbFile(this.opts.dir), runId, id);
     const ok = recordDelegateSession(dbFile(this.opts.dir), {
       surface, cli, sessionId: id, projectPath: input.projectPath, instruction: input.ask ?? input.instruction,
     });
@@ -388,6 +404,7 @@ export class LiveSessionRegistry {
    * way to confirm the SIGKILL above has actually landed by then. Boot cleanup handles it once
    * the killed process is verifiably gone — same path RunRegistry.interruptAll() uses. */
   forceKillAll(): void {
+    if (this.opts.surface) markAuditInterrupted(dbFile(this.opts.dir), [...this.byChannel.values()].map((s) => s.runId));
     for (const [, s] of this.byChannel) {
       if (typeof s.handle.pid === "number") killTree(s.handle.pid, "SIGKILL");
     }
@@ -404,6 +421,7 @@ export class LiveSessionRegistry {
     // runs from onExit, i.e. once the child has actually confirmed dead, same as
     // RunRegistry's free()/cancel() reasoning.
     releaseRun(this.opts.dir, s.runId);
+    if (this.opts.surface) recordAuditEnd(dbFile(this.opts.dir), s.runId, err ? "failed" : "done");
     this.opts.onActivity?.({ type: "live", phase: err ? "failed" : "end", id: channelId, name: basename(s.projectPath) || "live session" });
     // Wait for any flush already in flight before the final flush — otherwise flushSession's
     // own rendering guard makes this a no-op and content buffered during that window is lost.

@@ -7,6 +7,7 @@
 // TZ or config): it is the installer's preflight.
 // `bean-core update [--yes]` (#837) asks the running core to update itself (it does the busy check);
 // with no core listening it updates in-process and restarts the service.
+// `bean-core audit [...]` (#1146) prints the chatops run audit log, read-only (no TZ or config needed).
 import { beanDir, configFile, coreSocketFile, ensurePrivateBeanDir, liveRuns, loadRoutines, projectBeanDir, routinesDir } from "@bean/core";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -16,7 +17,7 @@ import { dirname } from "node:path";
 import { buildHandshake, CONTRACT_VERSION } from "./contract.js";
 import { busyWork, coreUpdateStatus, installRoot, updateCore, type CoreUpdateResult } from "./core-update.js";
 import { createHost } from "./host.js";
-import { botLogger, cliAuthPresent, configuredBots, jobLogger, ownerNotices, tzProblem } from "./headless.js";
+import { auditCommand, botLogger, cliAuthPresent, configuredBots, jobLogger, ownerNotices, tzProblem } from "./headless.js";
 import { attachStdio, listenRemote, requestUpdate } from "./remote.js";
 
 // Set by the esbuild bundle (the app's version, so a shell and a core from one release match).
@@ -37,6 +38,8 @@ if (process.argv[2] === "attach") {
     process.exit(1);
   }
 }
+
+if (process.argv[2] === "audit") process.exit(auditCommand(beanDir(), process.argv.slice(3)));
 
 if (process.argv[2] === "update") process.exit(await updateCommand(process.argv.includes("--yes")));
 

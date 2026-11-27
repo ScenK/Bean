@@ -6,6 +6,11 @@ export interface PendingProposal {
   proposal: ProposedDelegate;
   conversationId: string;
   proposedBy: string;
+  /** The proposer's platform id (authenticated adapter field) for the run's audit row. */
+  proposedById: string;
+  channelName?: string;
+  /** The model's instruction, kept only when the confirmer edited it on the card. */
+  instructionProposed?: string;
   defaultCli: CliName;
   defaultModel?: string;
   cardActivityId?: string;

@@ -11,7 +11,7 @@ import {
   answerRoutineTrigger, answerTodoRun, queueTodoDispatch, pendingTodoCount, resolveTodoRoutine, sproutRunFacts, withDispatch, enqueueDispatchNotice, threadDispatches, markDispatchDelivered, dispatchContext, type Dispatch, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
   loadNoteHistory, saveNoteImage, loadNoteImage, detectClis, loginShellPath, resolveCliPath, deliver, loadRoutines, saveRoutine,
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
-  listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
+  listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns, reconcileAuditRuns,
   isWatchSeeded, clearWatch, watchSourceKey, briefMessages, parseBrief, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat,
   deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, listPendingHomePosts, saveDesktopChatDraining, countPendingHomePosts, nextHomePostExpiry, migrateOwnerDmSinks, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
@@ -263,6 +263,8 @@ export async function createHost(deps: HostDeps) {
   const routinesPath = routinesDir(dir);
   // Run records a crash left behind (run-queue.ts). Never kills: the bots share runs/.
   sweepDeadRuns(dir);
+  // Audit rows those crashed runs left `running` (run-audit.ts).
+  reconcileAuditRuns(dir);
   // User-facing saves (editor, builder) refuse a chat sink naming an unknown destination.
   const saveKnownSinks = async (r: Routine, models?: CliModels[]): Promise<void> => {
     const problem = sinkAliasProblems(r, listDestinations(db))[0];

@@ -6,6 +6,7 @@ import { resumeRefusal } from "../delegate.js";
 import { dbFile, outboxDir } from "../config.js";
 import { delegateRunProject, isValidSessionId, recordDelegateSession } from "../delegate-runs.js";
 import { enqueueOutbox } from "../outbox.js";
+import { recordAuditEnd, recordAuditRefused, recordAuditSession, recordAuditStart, markAuditInterrupted, type AuditPerson, type AuditStart } from "../run-audit.js";
 import { recordRun, releaseRun, updateRunPid, interruptedRunNotice } from "../run-queue.js";
 
 export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks) => DelegateHandle;
@@ -21,11 +22,18 @@ export interface RunEvents {
   onCancelled: (sessionId?: string, last?: string) => void;
 }
 
-/** Reporting context for a run — carried only so interruptAll() can tell the requesting
- * surface what happened; not persisted (see .memory/project-durable-run-queue.md). */
+/** Who and what a run's `run_audit` row records beyond the request itself (run-audit.ts). */
+export type RunAuditMeta = Pick<AuditStart, "askedBy" | "confirmedBy" | "authorityId" | "channelName" | "skill" | "instructionProposed"> & {
+  trigger: Exclude<AuditStart["trigger"], "live">;
+};
+
+/** Reporting context for a run — carried so interruptAll() can tell the requesting surface what
+ * happened (not persisted in the run queue, see .memory/project-durable-run-queue.md) and for its
+ * `run_audit` row. */
 export interface RunMeta {
   instruction: string;
   conversationId: string;
+  audit: RunAuditMeta;
 }
 
 export interface RunRegistryOptions {
@@ -81,10 +89,24 @@ export class RunRegistry {
     return this.opts.newId?.() ?? randomUUID();
   }
 
-  /** Settles a refused run synchronously, like a spawn failure: nothing recorded, nothing spawned. */
-  private refuse(events: RunEvents, message: string): string {
+  private auditRow(runId: string, req: Pick<DelegateRequest, "cli" | "projectPath" | "model">, meta: RunMeta): AuditStart {
+    return {
+      ...meta.audit, runId, surface: this.opts.botKind, conversationId: meta.conversationId,
+      projectPath: req.projectPath, cli: req.cli, ...(req.model ? { model: req.model } : {}), instruction: meta.instruction,
+    };
+  }
+
+  /** Records a run refused before it spawned (`outcome = 'refused'`); nothing else is recorded. */
+  recordRefused(req: Pick<DelegateRequest, "cli" | "projectPath" | "model">, meta: RunMeta): void {
+    recordAuditRefused(dbFile(this.opts.dir), this.auditRow(this.newId(), req, meta));
+  }
+
+  /** Settles a refused run synchronously, like a spawn failure: nothing spawned, only its audit row. */
+  private refuse(events: RunEvents, message: string, req: DelegateRequest, meta: RunMeta): string {
+    const runId = this.newId();
+    recordAuditRefused(dbFile(this.opts.dir), this.auditRow(runId, req, meta));
     events.onError(message);
-    return this.newId();
+    return runId;
   }
 
   // A run that fails to spawn settles synchronously: onError fires (and free() runs)
@@ -97,7 +119,7 @@ export class RunRegistry {
     // strictResume (a cardless continuation) never starts fresh: either case settles as an error.
     let notice = "";
     if (req.resume && delegateRunProject(dbFile(this.opts.dir), req.resume) !== req.projectPath) {
-      if (req.strictResume) return this.refuse(callerEvents, `${resumeRefusal(req.cli)} Its session was on another project.`);
+      if (req.strictResume) return this.refuse(callerEvents, `${resumeRefusal(req.cli)} Its session was on another project.`, req, meta);
       const { resume: _stale, ...fresh } = req;
       req = fresh;
       notice = RunRegistry.projectSwitchNotice(req.cli);
@@ -105,14 +127,17 @@ export class RunRegistry {
     // Two live processes must never drive one CLI session: while this thread already has a run on
     // this CLI, the new one starts fresh (the thread pointer keeps whichever completes last).
     if (req.resume && this.busy(meta.conversationId, req.cli)) {
-      if (req.strictResume) return this.refuse(callerEvents, `${resumeRefusal(req.cli)} This thread's other run is still going.`);
+      if (req.strictResume) return this.refuse(callerEvents, `${resumeRefusal(req.cli)} This thread's other run is still going.`, req, meta);
       const { resume: _busy, ...fresh } = req;
       req = fresh;
       notice = RunRegistry.BUSY_THREAD_NOTICE;
     }
     const act = this.opts.onActivity;
     const runId = this.newId();
+    const audit = dbFile(this.opts.dir);
+    // Record before audit row: boot's reconcileAuditRuns reads rows first, then live records.
     recordRun(this.opts.dir, runId, req.projectPath, process.pid);
+    recordAuditStart(audit, this.auditRow(runId, req, meta));
     const name = basename(req.projectPath) || "delegate";
     // Every settle path goes through `events` except interruptAll(): that one runs as the bot
     // process dies, and the app clears a dead bot's bubbles itself.
@@ -155,11 +180,13 @@ export class RunRegistry {
       onDone: (result) => {
         if (run.released) return;
         free();
+        recordAuditEnd(audit, runId, "done");
         events.onDone(notice + result, run.sessionId);
       },
       onError: (err, final) => {
         if (run.released) return;
         free();
+        recordAuditEnd(audit, runId, "failed");
         events.onError(err.message, run.sessionId, final ?? run.last);
       },
       // A resumed run may re-spawn fresh if the CLI rejects the id; the first child is dead by
@@ -169,7 +196,10 @@ export class RunRegistry {
       onSessionStart: (pid, sessionId) => {
         if (req.resume && !run.released && pid !== undefined) updateRunPid(this.opts.dir, runId, pid);
         // Every started run is recorded (not just resumes), so failed/cancelled ones can be reopened.
-        if (isValidSessionId(sessionId)) run.sessionId = sessionId;
+        if (isValidSessionId(sessionId)) {
+          run.sessionId = sessionId;
+          recordAuditSession(audit, runId, sessionId);
+        }
         recordDelegateSession(dbFile(this.opts.dir), {
           surface: this.opts.botKind, cli: req.cli, sessionId, projectPath: req.projectPath, instruction: run.meta.instruction,
         });
@@ -192,14 +222,17 @@ export class RunRegistry {
     return [...this.byId.values(), ...this.stopping].some((r) => r.cli === cli && r.meta.conversationId === conversationId);
   }
 
-  /** `conversationId` set = cancel only if the run was started from that conversation. */
-  cancel(runId: string, conversationId?: string): boolean {
+  /** `conversationId` set = cancel only if the run was started from that conversation. `by`: who
+   * cancelled, for the run's audit row. */
+  cancel(runId: string, conversationId?: string, by?: AuditPerson): boolean {
     const run = this.byId.get(runId);
     if (!run || (conversationId !== undefined && run.meta.conversationId !== conversationId)) return false;
     run.released = true;
     clearInterval(run.timer);
     this.byId.delete(runId);
     this.stopping.add(run);
+    // Settled at the request, not the child's exit: no other settle can follow a cancel.
+    recordAuditEnd(dbFile(this.opts.dir), runId, "cancelled", by);
     // Release only once the handle confirms the child has actually stopped (onCancelled fires
     // from the delegate's own close event) — the record must outlive a child that's still
     // shutting down (or ignoring SIGTERM) so crash cleanup can still find it.
@@ -212,11 +245,11 @@ export class RunRegistry {
   }
 
   /** `conversationId` set = only that conversation's runs. */
-  cancelAll(conversationId?: string): number {
+  cancelAll(conversationId?: string, by?: AuditPerson): number {
     const ids = [...this.byId.entries()]
       .filter(([, r]) => conversationId === undefined || r.meta.conversationId === conversationId)
       .map(([id]) => id);
-    for (const id of ids) this.cancel(id);
+    for (const id of ids) this.cancel(id, undefined, by);
     return ids.length;
   }
 
@@ -235,6 +268,7 @@ export class RunRegistry {
    * returns, not just "eventually". */
   interruptAll(): number {
     const runs = [...this.byId.values()];
+    markAuditInterrupted(dbFile(this.opts.dir), [...this.byId.keys()]);
     this.byId.clear();
     for (const run of runs) {
       run.released = true;
