@@ -135,8 +135,9 @@ export class RunRegistry {
     const act = this.opts.onActivity;
     const runId = this.newId();
     const audit = dbFile(this.opts.dir);
-    recordAuditStart(audit, this.auditRow(runId, req, meta));
+    // Record before audit row: boot's reconcileAuditRuns reads rows first, then live records.
     recordRun(this.opts.dir, runId, req.projectPath, process.pid);
+    recordAuditStart(audit, this.auditRow(runId, req, meta));
     const name = basename(req.projectPath) || "delegate";
     // Every settle path goes through `events` except interruptAll(): that one runs as the bot
     // process dies, and the app clears a dead bot's bubbles itself.

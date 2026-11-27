@@ -16,3 +16,8 @@ It is separate from `delegate_runs` (the resume index) — don't merge them.
 - **Continuations / follow-ups** carry the grant confirmer as `authority_id`; never fabricate a
   `confirmed_by_*` for them. A follow-up has no asker (Bean asked).
 - Every write is fail-open (try/catch, data-free warning): an audit failure never alters a run.
+- **Crash reconcile (#1146):** host boot runs `reconcileAuditRuns(dir)` right after `sweepDeadRuns` —
+  `running` rows with no live `runs/` record become `interrupted`. It reads rows before records, so
+  writers must `recordRun` **before** `recordAuditStart` (runs.ts, live-sessions.ts); don't swap them back.
+- **Reading it:** `bean-core audit` (`headless.ts` `auditCommand`), read-only and never creates
+  `bean.db`; every printed field goes through `escapeTerminal()` (names and instructions are user text).

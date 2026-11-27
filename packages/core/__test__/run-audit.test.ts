@@ -5,9 +5,10 @@ import { expect, test, vi } from "vitest";
 import { dbFile } from "../src/config.js";
 import { closeDb, openDb } from "../src/db.js";
 import {
-  markAuditInterrupted, queryRunAudit, recordAuditEnd, recordAuditRefused, recordAuditSession, recordAuditStart, type AuditStart,
+  markAuditInterrupted, queryRunAudit, reconcileAuditRuns, recordAuditEnd, recordAuditRefused, recordAuditSession, recordAuditStart, type AuditStart,
 } from "../src/run-audit.js";
 import { RunRegistry } from "../src/chatops/runs.js";
+import { recordRun, sweepDeadRuns } from "../src/run-queue.js";
 import { LiveSessionRegistry } from "../src/chatops/live-sessions.js";
 import { recordDelegateSession } from "../src/delegate-runs.js";
 import type { DelegateCallbacks, DelegateRequest } from "../src/delegate.js";
@@ -158,5 +159,19 @@ test("LiveSessionRegistry: one `live` row per session, its session id and end", 
   reg.stop("c1");
   expect(queryRunAudit(f)[0]).toMatchObject({ outcome: "done", session_id: "0b0e1c4e-1111-4222-8333-944455556666" });
   expect(JSON.stringify(queryRunAudit(f))).not.toContain("SKILL BODY");
+  closeDb(f);
+});
+
+test("boot reconcile flips only running rows whose run record is missing or dead", () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-audit-"));
+  const f = dbFile(dir);
+  for (const id of ["live", "dead", "gone", "done"]) recordAuditStart(f, row({ runId: id }));
+  recordAuditEnd(f, "done", "done");
+  recordRun(dir, "live", "/p", process.pid);
+  recordRun(dir, "dead", "/p", 2 ** 22 + 7); // no such pid
+  sweepDeadRuns(dir); // boot order: records first, then the audit rows
+  reconcileAuditRuns(dir);
+  const by = Object.fromEntries(queryRunAudit(f).map((r) => [r.run_id, r.outcome]));
+  expect(by).toEqual({ live: "running", dead: "interrupted", gone: "interrupted", done: "done" });
   closeDb(f);
 });
