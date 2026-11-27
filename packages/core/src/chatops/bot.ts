@@ -61,7 +61,8 @@ import {
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import { attachNoteImages } from "../note-images.js";
 import { systemControlTool } from "../system-control.js";
-import type { RunDelegateFn, RunRegistry } from "./runs.js";
+import type { RunAuditMeta, RunDelegateFn, RunMeta, RunRegistry } from "./runs.js";
+import type { AuditPerson } from "../run-audit.js";
 import { LiveSessionProposalStore, type PendingLiveSession } from "./live-session-proposals.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "./live-sessions.js";
 import {
@@ -676,12 +677,28 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (held?.conversationId === conversationId) recordCard(conversationId, kind, "expired", name);
   };
 
+  /** A run's audit identity: a card records its proposer and confirmer; a cardless continuation its
+   * speaker; Bean's follow-up nobody — both carry the grant confirmer as `authorityId` instead. */
+  const auditOf = (
+    p: Partial<Pick<PendingProposal, "proposedBy" | "proposedById" | "channelName" | "instructionProposed">> & Pick<PendingProposal, "proposal">,
+    confirmedBy: AuditPerson | undefined, continued?: { grant: DelegateGrant; followUp?: number },
+  ): RunAuditMeta => ({
+    trigger: continued ? (continued.followUp ? "follow_up" : "continuation") : "card",
+    ...(p.proposedById !== undefined || p.proposedBy !== undefined ? { askedBy: { id: p.proposedById, name: p.proposedBy } } : {}),
+    ...(continued ? { authorityId: continued.grant.actorId } : confirmedBy ? { confirmedBy } : {}),
+    ...(p.channelName ? { channelName: p.channelName } : {}),
+    ...(p.proposal.skillName ? { skill: p.proposal.skillName } : {}),
+    ...(p.instructionProposed !== undefined ? { instructionProposed: p.instructionProposed } : {}),
+  });
+
   /** `confirmed`: the tap that confirmed the card — its platform identity (never the display name),
    * whom a run that reports its session grants cardless follow-ups, and the conversation's `/new`
    * count when it arrived (a `/new` after it means no grant and no thread pointer). `continued`: a
    * cardless continuation of that grant — resumes its session strictly and posts the compact card itself. */
   async function startRun(
-    p: Pick<PendingProposal, "proposal" | "conversationId" | "cardActivityId" | "fresh">, cli: CliName, model: string | undefined,
+    p: Pick<PendingProposal, "proposal" | "conversationId" | "cardActivityId" | "fresh">
+      & Partial<Pick<PendingProposal, "proposedBy" | "proposedById" | "channelName" | "instructionProposed">>,
+    cli: CliName, model: string | undefined,
     startedBy: string, fx: BotEffects, confirmed?: { actorId: string; resets: number },
     continued?: {
       grant: DelegateGrant; recheck: () => string | undefined;
@@ -702,10 +719,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const skill = p.proposal.skillName
       ? (await deps.loadSkills()).find((s) => s.name === p.proposal.skillName)
       : undefined;
+    const wire = resolveWireModel(deps.cliModels, cli, model);
+    const meta: RunMeta = {
+      instruction: p.proposal.instruction, conversationId: p.conversationId,
+      audit: auditOf(p, confirmed ? { id: confirmed.actorId, name: startedBy } : undefined, continued),
+    };
+    const refusedRun = (): void =>
+      deps.runs.recordRefused({ cli, projectPath: p.proposal.projectPath, ...(wire.model !== undefined ? { model: wire.model } : {}) }, meta);
     // A named skill that no longer resolves (deleted/renamed while the card sat, or a bogus
     // submitted value) must not silently degrade into a bare-instruction run: the card said
     // one thing, the run would do another. Refuse instead.
     if (p.proposal.skillName && !skill) {
+      refusedRun();
       recordCard(p.conversationId, "delegate", "didn't start"); // never the unresolved picked name
       if (p.cardActivityId !== undefined) {
         await fx.updateCard(p.cardActivityId, deps.cards.finishedCard({
@@ -724,7 +749,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const onMain = historyId(p.conversationId) === MAIN_CONVERSATION_ID;
     const resume = continued ? continued.grant.sessionId
       : onMain || p.fresh ? undefined : deps.conversations.threadSession(p.conversationId, cli);
-    const wire = resolveWireModel(deps.cliModels, cli, model);
     const req: DelegateRequest = {
       cli,
       projectPath: p.proposal.projectPath,
@@ -788,6 +812,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // skill that gained `browser: true` (the request's own `skill`) meanwhile refuses — never runs.
       const why = continued.recheck() ?? (skill?.browser && !continued.grant.browser ? GRANT_MISMATCH_TEXT.browser : undefined);
       if (why) {
+        refusedRun();
         recordCard(p.conversationId, "delegate", "didn't start");
         if (continued.refused) return continued.refused(why);
         await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", agent: cli }));
@@ -858,7 +883,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           })().catch(logRunEffectError);
         },
       },
-      { instruction: p.proposal.instruction, conversationId: p.conversationId },
+      meta,
     );
     runId = started;
     if (!ended) {
@@ -903,7 +928,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const now = matchGrant(grants.get(conv)?.grant, { surface: grantSurface, scopeKey: conv, actorId: msg.fromId, generation: g.generation }, Date.now());
       return now.ok ? undefined : GRANT_MISMATCH_TEXT[now.reason];
     };
-    await startRun({ proposal, conversationId: conv }, g.cli, g.model, msg.fromName, fx, undefined, { grant: g, recheck }, {
+    await startRun({
+      proposal, conversationId: conv, proposedBy: msg.fromName, proposedById: msg.fromId,
+      ...(msg.channelName ? { channelName: msg.channelName } : {}),
+    }, g.cli, g.model, msg.fromName, fx, undefined, { grant: g, recheck }, {
       id: msg.fromId, ...(msg.fromAltId ? { altId: msg.fromAltId } : {}),
       ...(msg.direct || !msg.scopeId ? {} : { scopeId: msg.scopeId }), name: msg.fromName,
     });
@@ -1249,6 +1277,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ...(liveWire.effort ? { effort: liveWire.effort } : {}),
       ...(resume ? { resume: resume.sessionId } : {}),
       starterId,
+      audit: {
+        starterName: startedBy, ...(p.proposedBy ? { askedBy: { name: p.proposedBy } } : {}),
+        ...(picked.skill ? { skill: picked.skill.name } : {}),
+      },
       // Default restricted: only the starter (+ any co-drivers they add) steers, unless they
       // flipped the card to war-room.
       steering: p.proposal.steering ?? "restricted",
@@ -2278,7 +2310,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (cmd === "cancel") {
       if (!(await permitted("cancelRuns", "cancel runs"))) return true;
       // Admins stop only this conversation's runs; the owner stops everything.
-      const n = deps.runs.cancelAll(isOwner ? undefined : conv);
+      const n = deps.runs.cancelAll(isOwner ? undefined : conv, { id: msg.fromId, name: msg.fromName });
       await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
       return true;
     }
@@ -2962,7 +2994,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         const pending = deps.proposals.add({
-          proposal, conversationId: msg.conversationId, proposedBy: msg.fromName,
+          proposal, conversationId: msg.conversationId, proposedBy: msg.fromName, proposedById: msg.fromId,
+          ...(msg.channelName ? { channelName: msg.channelName } : {}),
           defaultCli: choice.cli, defaultModel: choice.model, ...(fresh ? { fresh: true as const } : {}),
         });
         const activityId = await fx.postCard(deps.cards.proposalCard({
@@ -3001,7 +3034,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // An admin cancels only runs started from this conversation; the owner, any run.
         const scope = role === "owner" ? undefined : action.conversationId;
         // A card from before runs were keyed by id has no runId; its run is long gone.
-        if (!runId || !deps.runs.cancel(runId, scope)) {
+        if (!runId || !deps.runs.cancel(runId, scope, { id: action.fromId, name: action.fromName })) {
           await fx.post(runId && scope ? "That run wasn't started from this conversation, or it already finished." : "That run is no longer running.");
         }
         return;
@@ -3178,7 +3211,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       // On-card skill pick (same sentinel as the live-session card). Teams merges its
       // ChoiceSet value into the Run submit; Discord applies it from its per-message selections.
-      if (edited) p.proposal = { ...p.proposal, instruction: edited };
+      if (edited && edited !== p.proposal.instruction) {
+        p.instructionProposed = p.proposal.instruction;
+        p.proposal = { ...p.proposal, instruction: edited };
+      }
       if (projectPick) p.proposal = { ...p.proposal, projectPath: projectPick };
       const picked = action.value.skillName;
       if (picked !== undefined) p.proposal.skillName = picked === "__none__" ? undefined : (picked || undefined);
@@ -3191,6 +3227,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         deps.cliModels,
       );
       if (!choice) {
+        const cli = (action.value.cli as CliName | undefined) || p.defaultCli;
+        deps.runs.recordRefused({ cli, projectPath: p.proposal.projectPath }, {
+          instruction: p.proposal.instruction, conversationId: p.conversationId,
+          audit: auditOf(p, { id: action.fromId, name: action.fromName }),
+        });
         recordCard(p.conversationId, "delegate", "didn't start"); // the picked skill isn't resolved yet
         await fx.post(NO_CLI);
         return;

@@ -14,7 +14,7 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 const req: DelegateRequest = { cli: "claude", projectPath: "/p", prompt: "do" };
-const meta = { instruction: "do the thing", conversationId: "c1" };
+const meta = { instruction: "do the thing", conversationId: "c1", audit: { trigger: "card" as const } };
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "bean-runs-"));

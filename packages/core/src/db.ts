@@ -289,6 +289,36 @@ CREATE TABLE IF NOT EXISTS delegate_runs (
   model        TEXT
 );
 
+-- Chatops run audit (run-audit.ts): one row per Discord/Teams delegate run attempt or live session —
+-- who asked, confirmed or cancelled, what ran, where and how it ended. Never a composed prompt,
+-- skill body, memories, output or error text. Separate from delegate_runs (resume index).
+CREATE TABLE IF NOT EXISTS run_audit (
+  run_id               TEXT PRIMARY KEY,
+  started_at           TEXT NOT NULL,
+  ended_at             TEXT,
+  duration_ms          INTEGER,
+  surface              TEXT NOT NULL,
+  conversation_id      TEXT NOT NULL,
+  channel_name         TEXT,
+  trigger              TEXT NOT NULL,
+  asked_by_id          TEXT,
+  asked_by_name        TEXT,
+  confirmed_by_id      TEXT,
+  confirmed_by_name    TEXT,
+  authority_id         TEXT,
+  cancelled_by_id      TEXT,
+  cancelled_by_name    TEXT,
+  project_path         TEXT NOT NULL,
+  skill                TEXT,
+  cli                  TEXT NOT NULL,
+  model                TEXT,
+  instruction          TEXT NOT NULL,
+  instruction_proposed TEXT,
+  session_id           TEXT,
+  outcome              TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS run_audit_started ON run_audit(started_at);
+
 -- Routine step attempts (step-attempts.ts): the full(er) output, harness and session behind each
 -- RunRecord step. Pruned with the routine's run history; pinned rows outlive eviction.
 CREATE TABLE IF NOT EXISTS routine_step_attempts (

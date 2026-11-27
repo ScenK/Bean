@@ -25,6 +25,7 @@ import { NoteProposalStore } from "../src/chatops/note-proposals.js";
 import { NoteArchiveProposalStore } from "../src/chatops/note-archive-proposals.js";
 import { TodoProposalStore } from "../src/chatops/todo-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
+import { queryRunAudit } from "../src/run-audit.js";
 import { makeRoles } from "../src/chatops/roles.js";
 import { NOT_CHATTY, formatMuteEnd, makeChatter } from "../src/chatops/chatter.js";
 import { AWAY_SUGGESTION_DAILY_CAP, AWAY_SUGGESTION_MAX, awaySuggestion, closeAway, makeAway } from "../src/chatops/away.js";
@@ -5840,5 +5841,113 @@ describe("a failed sprout delivered to a chat gets one diagnosis turn (#1136)", 
       expect(t.offered).toEqual([]);
       expect(effects.posted).toEqual([]);
     }
+  });
+});
+
+describe("run_audit: who asked, confirmed and cancelled each chatops run (#1145)", () => {
+  const audit = (dir: string) => queryRunAudit(dbFile(dir));
+  const secretSkills = async () => [{ name: "fix-bug", description: "d", body: "SECRET-SKILL-BODY", enabled: true }];
+  const confirm = (value: Record<string, unknown>) => ({ conversationId: "c1", fromId: "u2", fromName: "bob", value: { beanAction: "confirm", cli: "claude", ...value } });
+
+  test("a card records its proposer and confirmer, the edited instruction and the model's; never a skill body, memory or error text", async () => {
+    const { deps, delegateCalls, runsBeanDir } = makeDeps({
+      converseResult: delegateResult, loadSkills: secretSkills,
+      loadMemories: async () => [{ id: "m1", text: "SECRET-MEMORY", category: "You" } as never],
+    });
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    await buildTeamsBot(deps).onCardAction(confirm({ proposalId: id, instruction: "fix it properly", skillName: "fix-bug", model: "sonnet" }), effects);
+    expect(delegateCalls[0]!.req.prompt).toContain("SECRET-SKILL-BODY");
+    delegateCalls[0]!.cb.onSessionStart?.(1, "sess-1");
+    delegateCalls[0]!.cb.onError(new Error("SECRET-ERROR"), "SECRET-FINAL");
+    await vi.waitFor(() => expect(audit(runsBeanDir)[0]?.outcome).toBe("failed"));
+    expect(audit(runsBeanDir)).toEqual([expect.objectContaining({
+      trigger: "card", surface: "discord", conversation_id: "c1", asked_by_id: "u1", asked_by_name: "alice",
+      confirmed_by_id: "u2", confirmed_by_name: "bob", authority_id: null, project_path: "/p/bean", skill: "fix-bug",
+      cli: "claude", model: "sonnet", instruction: "fix it properly", instruction_proposed: "fix it", session_id: "sess-1",
+    })]);
+    const all = JSON.stringify(audit(runsBeanDir));
+    for (const secret of ["SECRET-SKILL-BODY", "SECRET-MEMORY", "SECRET-ERROR", "SECRET-FINAL"]) expect(all).not.toContain(secret);
+  });
+
+  test("an unedited card records no proposed instruction", async () => {
+    const { deps, runsBeanDir } = makeDeps({ converseResult: delegateResult });
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    await buildTeamsBot(deps).onCardAction(confirm({ proposalId: id, instruction: "fix it" }), effects);
+    expect(audit(runsBeanDir)[0]).toMatchObject({ instruction: "fix it", instruction_proposed: null, outcome: "running" });
+  });
+
+  test("a missing skill and no CLI are refused before spawn", async () => {
+    const a = makeDeps({ converseResult: delegateResult });
+    let effects = fx();
+    let id = await proposeThenGetId(a.deps, effects);
+    await buildTeamsBot(a.deps).onCardAction(confirm({ proposalId: id, skillName: "gone" }), effects);
+    expect(a.delegateCalls).toHaveLength(0);
+    expect(audit(a.runsBeanDir)).toEqual([expect.objectContaining({ outcome: "refused", skill: "gone", confirmed_by_id: "u2" })]);
+
+    const b = makeDeps({ converseResult: delegateResult });
+    effects = fx();
+    id = await proposeThenGetId(b.deps, effects);
+    b.deps.detectClis = () => [];
+    await buildTeamsBot(b.deps).onCardAction(confirm({ proposalId: id }), effects);
+    expect(b.delegateCalls).toHaveLength(0);
+    expect(audit(b.runsBeanDir)).toEqual([expect.objectContaining({ outcome: "refused", cli: "claude", asked_by_id: "u1", confirmed_by_id: "u2" })]);
+  });
+
+  test("cancel-run and /cancel record who cancelled", async () => {
+    const { deps, runsBeanDir } = makeDeps({ converseResult: delegateResult });
+    const bot = buildTeamsBot(deps);
+    const effects = fx();
+    await bot.onCardAction(confirm({ proposalId: await proposeThenGetId(deps, effects) }), effects);
+    const runId = (effects.updates.at(-1)?.card as { runId?: string }).runId;
+    await bot.onCardAction({ conversationId: "c1", fromId: "u3", fromName: "carol", value: { beanAction: "cancel-run", runId } }, effects);
+    expect(audit(runsBeanDir)[0]).toMatchObject({ run_id: runId, outcome: "cancelled", cancelled_by_id: "u3", cancelled_by_name: "carol" });
+    const again = fx();
+    await bot.onCardAction(confirm({ proposalId: await proposeThenGetId(deps, again) }), again);
+    await bot.onMessage({ ...msg, text: "/cancel" }, fx());
+    expect(audit(runsBeanDir).filter((r) => r.cancelled_by_id === "u1")).toHaveLength(1);
+  });
+
+  test("a cardless continuation records its speaker and the grant's authority, never a confirmer", async () => {
+    const made = makeDeps({ converseResult: delegateResult });
+    const bot = buildTeamsBot(made.deps);
+    const effects = fx();
+    await bot.onMessage(msg, effects);
+    const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))?.[1];
+    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    made.delegateCalls[0]!.cb.onSessionStart?.(1, "sess-1");
+    made.delegateCalls[0]!.cb.onDone("first pass", "sess-1");
+    await vi.waitFor(() => expect(effects.posted).toContain("first pass"));
+    made.deps.chat = grantChat([]);
+    await bot.onMessage({ ...msg, text: "now the tests", channelName: "#dev" }, fx());
+    expect(made.delegateCalls).toHaveLength(2);
+    expect(audit(made.runsBeanDir)[0]).toMatchObject({
+      trigger: "continuation", asked_by_id: "u1", asked_by_name: "alice", authority_id: "u1", confirmed_by_id: null,
+      channel_name: "#dev", instruction: "and the tests too", outcome: "running",
+    });
+  });
+
+  test("Bean's automatic follow-up records `follow_up` with the grant's authority and no asker or confirmer", async () => {
+    const { deps, delegateCalls, runsBeanDir } = makeDeps({ converseResult: delegateResult });
+    const bot = buildTeamsBot(deps);
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    let outcomes = 0;
+    deps.chat = async ({ messages }) => {
+      const all = messages.map((m) => String(m.content));
+      if (!all.some((c) => c.startsWith("Active agent session"))) return { content: "noted", toolCalls: [] };
+      return ++outcomes === 1
+        ? { content: "finishing", toolCalls: [{ name: "propose_delegate", args: { project: "/p/bean", instruction: "finish the rest", continue: true } }] }
+        : { content: "done", toolCalls: [] };
+    };
+    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "alice", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    delegateCalls[0]!.cb.onSessionStart?.(1, "sess-1");
+    delegateCalls[0]!.cb.onError(new Error("half done"), "FAILED: half done");
+    await vi.waitFor(() => expect(delegateCalls).toHaveLength(2));
+    expect(audit(runsBeanDir)[0]).toMatchObject({
+      trigger: "follow_up", asked_by_id: null, confirmed_by_id: null, authority_id: "u1", instruction: "finish the rest", outcome: "running",
+    });
+    expect(audit(runsBeanDir)[1]).toMatchObject({ trigger: "card", confirmed_by_id: "u1", outcome: "failed" });
   });
 });
