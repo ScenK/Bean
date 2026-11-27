@@ -26,8 +26,8 @@ Key contracts:
   `onError(err, final)` / `cancel((final) => …)` (the final answer a `FAILED:` is judged from, else
   the latest prose; `onText` alone misses claude/agy result events), trimmed and capped by `trimDelegateFinal`; the `FAILED:` sentinel asks the agent to list done/not-done
   under its first line. ChatOps appends the same `delegateOutcomeRecord()` (no ask) to history on
-  failed/cancelled (`last` = core's final, else the latest prose), so the next turn can answer "what happened?"; `done` keeps
-  `[delegate result] …`. No partial state — `FAILED:` stays the only failure signal. A loopback turn (`source: "loopback"`) is offered the
+  every terminal outcome (`last` = core's final, else the latest prose), so the next turn can answer "what happened?", and
+  Bean's outcome turn (#1133, `convention-delegate-task-grant.md`) judges it in place of the raw post. No partial state — `FAILED:` stays the only failure signal. A loopback turn (`source: "loopback"`) is offered the
   session only as a bounded **automatic follow-up** (#1132, see `convention-delegate-task-grant.md`):
   it names its `settledTask`, and the host admits it only for a run it saw settle in that chat —
   `source` alone authorizes nothing; it never refreshes the grant. A refused cardless resume doesn't

@@ -82,6 +82,7 @@ const bot = buildTeamsBot({
   detectClis: clis,
   cliModels,
   runs,
+  turnCap,
   proposals,
   conversations,
   liveSessions,
