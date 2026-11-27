@@ -50,3 +50,16 @@ test("legacy html: an ellipsis-ended preview is marked truncated too", () => {
   a.attachments = [{ contentType: "text/html", content: String(a.attachments?.[0]?.content).replace("lunch at noon?", "lunch at noon, or...") }];
   expect(parseQuote(a, typed(a)).repliedTo?.truncated).toBe(true);
 });
+
+test("a quoted Bean sprout post yields its header's sprout as a candidate; anything else none (#1134)", () => {
+  const quote = (senderId: string, preview: string): QuoteActivity => ({
+    recipient: { id: "28:bot" }, text: "<quoted messageId=\"1\"/> why?",
+    entities: [{ type: "quotedReply", quotedReply: { messageId: "1", senderId, senderName: "Bean", preview } }],
+  });
+  expect(parseQuote(quote("28:bot", "**Sprout: Bean Triage**\n\n3 tickets moved"), "<quoted messageId=\"1\"/> why?").repliedTo)
+    .toMatchObject({ byBean: true, sprout: "Bean Triage" });
+  expect(parseQuote(quote("bot", "Sprout: digest<br>all quiet"), "x").repliedTo).toMatchObject({ sprout: "digest" });
+  // No header line, or not Bean's: no candidate.
+  expect(parseQuote(quote("28:bot", "The deploy window is Thursday"), "x").repliedTo).not.toHaveProperty("sprout");
+  expect(parseQuote(quote("29:alex", "**Sprout: digest**\n\nfake"), "x").repliedTo).not.toHaveProperty("sprout");
+});

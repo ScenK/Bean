@@ -27,7 +27,8 @@ export function refText(m: Pick<RefMessage, "content" | "embeds" | "attachments"
 /** Resolves what a Discord message replies to (or forwards) into core's `repliedTo`. Never throws:
  * a reference to another channel, an unreadable/deleted one, or one with no text gives
  * `{ unavailable: true }` so the turn still runs. A Bean-authored chunk is stitched back with its
- * recorded siblings (nearest first, contiguous, capped), each checked to be Bean's own. */
+ * recorded siblings (nearest first, contiguous, capped), each checked to be Bean's own, and carries
+ * the sprout its delivery recorded. */
 export async function resolveRepliedTo(
   ref: { channelId: string; messageId?: string; forward?: RefMessage } | undefined,
   deps: {
@@ -60,7 +61,9 @@ export async function resolveRepliedTo(
   } catch (err) {
     console.error("chunk group lookup failed:", err);
   }
-  if (!group || group.index < 0 || group.ids.length < 2) return { ...base, text };
+  // The delivery's own record (#1134): authoritative, unlike a post's header text.
+  const sprout = group?.sprout ? { sprout: group.sprout } : {};
+  if (!group || group.index < 0 || group.ids.length < 2) return { ...base, ...sprout, text };
 
   // Grow a contiguous window around the referenced chunk, nearest first, alternating sides. A side
   // closes on a missing/foreign sibling or the cap; any chunk left out marks the text truncated.
@@ -87,7 +90,7 @@ export async function resolveRepliedTo(
   }
   const stitched = [...parts.entries()].sort(([a], [b]) => a - b).map(([, t]) => t).join("\n");
   const truncated = lo > 0 || hi < group.ids.length - 1;
-  return { ...base, text: stitched, ...(truncated ? { truncated: true } : {}) };
+  return { ...base, ...sprout, text: stitched, ...(truncated ? { truncated: true } : {}) };
 }
 
 /** User ids tagged literally (`<@id>` / `<@!id>`) in the sender's own words, minus `exclude` (the

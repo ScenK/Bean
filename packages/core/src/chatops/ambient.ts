@@ -78,6 +78,10 @@ export interface RepliedMessage {
   truncated?: boolean;
   /** The surface couldn't read it (deleted, no access); `text` is ignored. */
   unavailable?: boolean;
+  /** The sprout that produced this Bean post (#1134). Discord: the delivery's record. Teams: the
+   * post's `Sprout: <name>` header — a candidate to check against the sprout list, never authority.
+   * Not part of the framed block. */
+  sprout?: string;
 }
 
 /** Per-turn hint for an unreadable replied-to message — never saved to history. */

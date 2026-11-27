@@ -850,7 +850,7 @@ setInterval(() => {
     }
     const channel = await client.channels.fetch(msg.channel);
     if (!channel?.isTextBased() || !("send" in channel)) throw new Error(`channel ${msg.channel} not sendable`);
-    await sendChunks(text, async (chunk): Promise<{ id: string }> => channel.send(chunk), chunkGroups);
+    await sendChunks(text, async (chunk): Promise<{ id: string }> => channel.send(chunk), chunkGroups, msg.sprout);
     destinations.seen(channel);
     // A named destination can be the owner's own DM channel: that one maps too (#998).
     const ownerDm = channel.type === ChannelType.DM && !!discordConfig.ownerId && channel.recipientId === discordConfig.ownerId;
