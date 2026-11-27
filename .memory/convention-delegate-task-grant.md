@@ -48,3 +48,16 @@ card plus `GRANT_MISMATCH_TEXT[reason]`. Restart drops grants (fail closed).
   generation/revocation, a live session bound meanwhile, and the reloaded skill's browser — any
   change refuses visibly, never runs. A lapsed grant (idle, `/new`) also says
   why on the speaker's next card. Role is the per-turn `permitted("delegate")` gate, not a grant field.
+- ChatOps outcome turn (#1133): a done/failed run with an actor (the confirming tap, or the speaker
+  of a cardless continuation) gets `outcomeTurn()` in `bot.ts` — an internal Bean turn (never a
+  synthesized `onMessage`; `DELEGATE_OUTCOME_ASK` over history ending on the run's record) whose
+  reply is the one post replacing the raw result / "Delegate run failed". Cancelled keeps "Run
+  cancelled.". It offers the session only under `matchFollowUp` on the generation the run settled
+  on; a `continue` re-checks (actor's addressed turns since the run ended — a per-conversation
+  per-speaker count bumped at `onMessage` entry, so ambient chatter never counts — role, live
+  session, grant/browser, CLI, busy), reserves the budget, and runs via `startRun` editing the
+  run's card in place (`followUp: n`; no idle renew), the reply kept in history for that run's end.
+  A skipped follow-up ends the post with why (`FOLLOW_UP_REPLIED`/`CAPPED`, `followUpRefusedText`);
+  any other proposal from the turn is dropped. Non-owners count against the Discord turn cap with
+  `delegate-outcome:<per-run key>`; `answeredRuns` dedupes execution (the cap re-admits a known id).
+  Failed model call / empty reply / cap → the raw words.
