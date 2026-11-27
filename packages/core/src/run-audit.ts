@@ -1,4 +1,6 @@
+import { dbFile } from "./config.js";
 import { openDb } from "./db.js";
+import { liveRuns } from "./run-queue.js";
 
 /** How a chatops run started: a confirmed card, a cardless grant continuation, Bean's automatic
  * follow-up, or a live session. */
@@ -95,6 +97,20 @@ export function recordAuditEnd(
 /** Flips these runs' still-running rows to `interrupted` (their process is dying or died). */
 export function markAuditInterrupted(file: string, runIds: string[], now: Date = new Date()): void {
   for (const id of runIds) recordAuditEnd(file, id, "interrupted", undefined, now);
+}
+
+/** Boot (after `sweepDeadRuns`): flips `running` rows whose run record is missing or dead — their
+ * process crashed — to `interrupted`. The rows are read before the live records: a run writes its
+ * record before its row, so a row seen here whose run is alive always finds its record. */
+export function reconcileAuditRuns(dir: string, now: Date = new Date()): void {
+  write("reconcile", () => {
+    const file = dbFile(dir);
+    const running = (openDb(file).prepare("SELECT run_id FROM run_audit WHERE outcome = 'running'").all() as { run_id: string }[])
+      .map((r) => r.run_id);
+    if (running.length === 0) return;
+    const live = new Set(liveRuns(dir).map((r) => r.id));
+    markAuditInterrupted(file, running.filter((id) => !live.has(id)), now);
+  });
 }
 
 export interface AuditQuery {

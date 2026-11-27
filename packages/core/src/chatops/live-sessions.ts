@@ -247,6 +247,8 @@ export class LiveSessionRegistry {
   start(input: LiveSessionStart): "started" | "channel" {
     if (this.byChannel.has(input.channelId)) return "channel";
     const runId = this.newId();
+    // Record before audit row: boot's reconcileAuditRuns reads rows first, then live records.
+    recordRun(this.opts.dir, runId, input.projectPath, process.pid);
     if (this.opts.surface) {
       const { starterName, ...who } = input.audit ?? {};
       recordAuditStart(dbFile(this.opts.dir), {
@@ -257,7 +259,6 @@ export class LiveSessionRegistry {
       });
       if (input.resume) recordAuditSession(dbFile(this.opts.dir), runId, input.resume);
     }
-    recordRun(this.opts.dir, runId, input.projectPath, process.pid);
     const s: ActiveSession = {
       handle: undefined as unknown as LiveSessionHandle,
       runId,

@@ -80,6 +80,7 @@ bean-core update --yes           # same, stops running work without asking
 ./bean-core-<newer>/install.sh   # upgrade from a tarball: installs that version, flips current/previous, restarts
 bean-core rollback               # swap current and previous, restart
 bean-core --version              # prints `bean-core <ver> contract <n>`; reads nothing
+bean-core audit --since 24h      # who ran what from Discord/Teams (see Run audit log)
 ./bean-core-<ver>/install.sh --uninstall   # or ~/.local/share/bean-core/current/install.sh --uninstall
 ```
 
@@ -125,6 +126,34 @@ docker logs -f bean
 ```
 
 Run one container per volume. The image puts `bean-core` on `/usr/local/bin` for remote attach.
+
+## Run audit log
+
+`bean.db`'s `run_audit` table keeps one row per Discord/Teams delegate run attempt and per chatops
+live session: who asked, confirmed (or, for a cardless continuation, whose grant it ran under) and
+cancelled, the trigger, project, skill, CLI, model, the instruction, the session id and the outcome
+(`running`, `done`, `failed`, `cancelled`, `refused`, `interrupted`). It never holds prompts, skill
+bodies, memories, CLI output or error text. A row left `running` by a crash becomes `interrupted`
+at the next boot.
+
+The image has no `sqlite3`, so `bean-core` reads it for you. Read-only, needs no `TZ` or config,
+and prints `No chatops runs recorded.` when there is nothing (or no `bean.db`) yet:
+
+```bash
+bean-core audit                                   # newest 50
+bean-core audit --since 7d --limit 200            # --since takes m, h, d or w
+bean-core audit --project my-repo --actor 1234567890   # project path substring; a platform user id in any role
+docker exec bean bean-core audit --since 24h      # the container
+```
+
+Names, channel names and instructions are user text: control characters, newlines and escape
+sequences print as `\n`, `\x1b` and so on. With `sqlite3` on hand, the same read, opened read-only:
+
+```bash
+sqlite3 -readonly ~/.bean/bean.db \
+  "SELECT started_at, outcome, trigger, surface, asked_by_id, confirmed_by_id, authority_id, cancelled_by_id, project_path, cli, instruction
+   FROM run_audit WHERE started_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day') ORDER BY started_at DESC LIMIT 50;"
+```
 
 ## Teams ingress
 
