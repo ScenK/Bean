@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ConverseResult, type ImageAttachment, type ProposedDelegate, type ProposedLiveSession, type ProposedSend } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
-import { composePrompt, DELEGATE_OUTCOME_ASK, delegateOutcomeRecord } from "../prompt.js";
+import { composePrompt, delegateOutcomeRecord, delegateOutcomeTurn, trimDelegateFinal, type DelegateOutcome } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { extractMemories, memoryCategories } from "../memory/extract.js";
@@ -791,17 +791,22 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     // The run's end, answered once (#1133): Bean's turn for the person it answers to — taken at the
     // end, synchronously: the grant it settled on and how often they had spoken here — else the
-    // run's own words (`raw`), as before.
+    // run's own words (`raw`: a failure keeps the agent's report of what it did finish).
     // Not `runId`: a launch that fails synchronously ends before it has one.
     const endKey = randomUUID();
-    const answerFor = (sessionId: string | undefined, failure?: string): ((raw: string) => Promise<void>) => {
+    const answerFor = (sessionId: string | undefined, outcome: Exclude<DelegateOutcome, { type: "cancelled" }>): (() => Promise<void>) => {
       const conv = p.conversationId;
+      const failure = outcome.type === "failed" ? outcome.message : undefined;
+      const final = outcome.type === "failed" ? trimDelegateFinal(outcome.final) : undefined;
+      const raw = outcome.type === "done" ? outcome.result : `Delegate run failed: ${outcome.message}${final ? `\n\n${final}` : ""}`;
       const g = grants.get(conv)?.grant;
       const generation = actor && sessionId && g && !g.revoked && g.sessionId === sessionId && g.actorId === actor.id ? g.generation : undefined;
       const spokeAtEnd = actor ? spoke(conv, actor.id) : 0;
-      return (raw) => actor
+      // This run's own outcome turn, not just "the latest record": two runs ending together each judge theirs.
+      const turn = delegateOutcomeTurn(p.proposal.instruction, outcome);
+      return () => actor
         ? outcomeTurn({
-            endKey, conv, actor, fx, raw, spokeAtEnd, card: p.cardActivityId,
+            endKey, conv, actor, fx, raw, turn, spokeAtEnd, card: p.cardActivityId,
             ...(generation !== undefined ? { generation } : {}), ...(failure !== undefined ? { failure } : {}),
           })
         : (fx.postResult ?? fx.post)(raw);
@@ -818,22 +823,22 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
           }
           settleGrant(sessionId);
-          const answer = answerFor(sessionId);
+          const answer = answerFor(sessionId, { type: "done", result });
           void (async () => {
             appendHistory(p.conversationId, { role: "assistant", content: delegateOutcomeRecord(p.proposal.instruction, { type: "done", result }) });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done", ...receipt(sessionId, result) })).catch(logRunEffectError);
-            await answer(result);
+            await answer();
           })().catch(logRunEffectError);
         },
         onError: (message, sessionId, last) => {
           ended = true;
           settleGrant(sessionId);
-          const answer = answerFor(sessionId, message);
+          const answer = answerFor(sessionId, { type: "failed", message, ...(last !== undefined ? { final: last } : {}) });
           void (async () => {
             recordCard(p.conversationId, "delegate", "failed", p.proposal.skillName);
             appendHistory(p.conversationId, { role: "assistant", content: delegateOutcomeRecord(p.proposal.instruction, { type: "failed", message, final: last }) });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId, last) })).catch(logRunEffectError);
-            await answer(`Delegate run failed: ${message}`);
+            await answer();
           })().catch(logRunEffectError);
         },
         onCancelled: (sessionId, last) => {
@@ -900,14 +905,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   }
 
   /** Bean's turn on a delegate's end (#1133), for `o.actor` (who confirmed or continued the run).
-   * Bean judges the outcome from the history record and answers with one message in place of the
+   * Bean judges the run's own `delegateOutcomeTurn` (`o.turn`) and answers with one message in place of the
    * run's raw words (`o.raw` stays the fallback: the daily cap, a failed model call, no reply). While
    * the grant the run settled on holds (`o.generation`) and its follow-up budget lasts, Bean may
    * continue the same session once more: the run's card turns running again in place and this reply
    * waits in history for that run's end. A follow-up that doesn't run ends this message with why. */
   async function outcomeTurn(o: {
     /** One per run (its end may be delivered twice): the execution dedupe and the cap's turn id. */
-    endKey: string; conv: string; actor: RunActor; fx: BotEffects; raw: string; spokeAtEnd: number;
+    endKey: string; conv: string; actor: RunActor; fx: BotEffects; raw: string; turn: string; spokeAtEnd: number;
     card?: string; generation?: number; failure?: string;
   }): Promise<void> {
     const { conv, actor, fx } = o;
@@ -937,8 +942,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         skills, projects, persona, memories: [],
         deps: { chat: deps.chat, model: deps.model, rankByMeaning: deps.rankByMeaning },
         history: hid === MAIN_CONVERSATION_ID ? await boundMainLog(deps.conversations, { chat: deps.chat, model: deps.model }) : deps.conversations.history(hid),
-        latestUserText: DELEGATE_OUTCOME_ASK,
-        delegateAvailable: offered !== undefined, availableClis: detected, models: availableModels(deps.cliModels, detected),
+        latestUserText: o.turn,
+        delegateAvailable: offered !== undefined, ...(offered ? { scratchPath: deps.scratchPath } : {}), availableClis: detected, models: availableModels(deps.cliModels, detected),
         runAvailable: false, noteAvailable: false, skillAuthoringAvailable: false, liveSessionAvailable: false,
         roleNote: [roleLine(role, deps.roles, actor.scopeId), note].filter(Boolean).join("\n\n"),
         ...(offered ? { activeSession: {

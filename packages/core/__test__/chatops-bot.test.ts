@@ -10,7 +10,7 @@ import { ConversationStore } from "../src/chatops/conversation.js";
 import { appendDelivery } from "../src/chatops/compact.js";
 import { insertHomePost, listPendingHomePosts, saveDesktopChatDraining } from "../src/home-posts.js";
 import { HOME_THREAD_ID } from "../src/desktop-chats.js";
-import { DELEGATE_OUTCOME_ASK, delegateOutcomeRecord, postTurn } from "../src/prompt.js";
+import { delegateOutcomeRecord, postTurn } from "../src/prompt.js";
 import { MAIN_CONVERSATION_ID, MAIN_CUTOVER_KEY, mainCutover } from "../src/main-conversation.js";
 import type { ChatTurn } from "../src/converse.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
@@ -105,10 +105,11 @@ function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: 
 /** Bean's turn on a delegate's end (#1133) in these fakes: it relays the agent's own message (the
  * history record's fenced block; "" when there is none, so the run's raw words post instead).
  * undefined = not an outcome turn. */
+const OUTCOME_ASK = "Judge from this how the task stands";
 function outcomeEcho(messages: { content: unknown }[]): string | undefined {
-  if (!messages.some((m) => String(m.content).includes(DELEGATE_OUTCOME_ASK))) return undefined;
-  const record = messages.findLast((m) => /^\[delegate (result|failed|cancelled) for/.test(String(m.content)));
-  return /<<<\n([\s\S]*)\n>>>$/.exec(String(record?.content))?.[1] ?? "";
+  const turn = messages.findLast((m) => String(m.content).includes(OUTCOME_ASK));
+  if (!turn) return undefined;
+  return /<<<\n([\s\S]*?)\n>>>/.exec(String(turn.content))?.[1] ?? "";
 }
 
 function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: ConverseResult } = {}) {
@@ -5537,7 +5538,7 @@ describe("Bean takes a turn on a delegate's end and may follow up (#1133)", () =
   function outcomeChat(seen: string[][], follow: (n: number) => boolean, gate?: Promise<void>): TeamsBotDeps["chat"] {
     return async ({ messages }) => {
       const all = messages.map((m) => String(m.content));
-      if (!all.some((c) => c.includes(DELEGATE_OUTCOME_ASK))) {
+      if (!all.some((c) => c.includes(OUTCOME_ASK))) {
         return seen.length === 0
           ? { content: "delegating", toolCalls: [{ name: "propose_delegate", args: { project: "/p/bean", instruction: "fix it" } }] }
           : { content: "noted", toolCalls: [] };
@@ -5654,6 +5655,18 @@ describe("Bean takes a turn on a delegate's end and may follow up (#1133)", () =
     expect(asked.posted[0]).toBe("all fixed\n\nFollow-up skipped — daily limit reached.");
     expect(seen).toEqual([]);
     expect(turnIds).toEqual([expect.stringMatching(/^delegate-outcome:/)]);
+  });
+
+  test("the outcome turn's model call fails: the raw failure keeps the agent's report", async () => {
+    const seen: string[][] = [];
+    const chat = outcomeChat(seen, () => false);
+    const { delegateCalls, asked } = await confirmed(async (req) => {
+      if (req.messages.some((m) => String(m.content).includes(OUTCOME_ASK))) throw new Error("model down");
+      return chat(req);
+    });
+    delegateCalls[0]!.cb.onError(new Error("the ledger is read-only"), PARTIAL);
+    await vi.waitFor(() => expect(asked.posted).toHaveLength(1));
+    expect(asked.posted[0]).toBe(`Delegate run failed: the ledger is read-only\n\n${PARTIAL}`);
   });
 
   test("losing delegate rights before dispatch: the follow-up doesn't run", async () => {
