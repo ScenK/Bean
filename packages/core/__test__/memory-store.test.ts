@@ -198,14 +198,14 @@ test("remember/forget_memory tools save well-formed facts and forget only known 
   expect((await loadMemories(file)).map((x) => x.text)).toEqual(["Prefers tabs over spaces"]);
 });
 
-test("a private remember tells the model about the Share with everyone button; a shared one doesn't", async () => {
+test("a private remember tells the model how to share it; a shared one doesn't", async () => {
   const tools = (subjectId?: string) => makeMemoryTools({
     append: (a) => appendMemories(file, a), forget: async () => [], memories: [], projects: [],
     latestUserText: "remember that I prefer tabs", ...(subjectId ? { subjectId } : {}),
     classifier: fakeClassifier().classifier,
   }).tools[0]!;
   const args = { text: "Prefers tabs", quote: "I prefer tabs" };
-  expect(await tools("mia").run(args)).toContain("Saved privately. If this updates a shared fact shown in what you remember, say so and mention the Share with everyone button on the receipt.");
+  expect(await tools("mia").run(args)).toContain("Saved privately. If this updates a shared fact shown in what you remember, say so and tell them to ask you to remember it \"for everyone\" if the whole household should have it.");
   expect(await tools().run(args)).toBe("Remembered: Prefers tabs");
 });
 
