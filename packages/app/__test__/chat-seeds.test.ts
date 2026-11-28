@@ -174,7 +174,7 @@ describe("Home Seeds (#1159)", () => {
     await openHome();
     await click(chip());
     const empty = shownChat().querySelector(".bean-seeds-empty")!;
-    expect(empty.textContent).toContain("after Flights's next run");
+    expect(empty.textContent).toContain("after the next run of Flights");
     expect([...empty.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Sprouts…"]);
   });
 
