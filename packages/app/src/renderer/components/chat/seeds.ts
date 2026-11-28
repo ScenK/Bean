@@ -5,10 +5,11 @@ import type { MindItem } from "@bean/core";
 // per window, shared by the Home header chip/popover and the sidebar's Home row. No push protocol:
 // it's re-read on Home open, window focus, and after Home drains a post.
 
-/** `enabled` = the dial isn't off and the core answered (a remote core can't list seeds: hidden). */
-export interface SeedsView { enabled: boolean; items: MindItem[] }
+/** `enabled` = the dial isn't off and the core answered (a remote core can't list seeds: hidden).
+ * `planting` = the sprouts opted in to plant seeds (`feedBrain`), so the empty state stops asking. */
+export interface SeedsView { enabled: boolean; items: MindItem[]; planting: string[] }
 
-const HIDDEN: SeedsView = { enabled: false, items: [] };
+const HIDDEN: SeedsView = { enabled: false, items: [], planting: [] };
 let view: SeedsView = HIDDEN;
 const subs = new Set<(v: SeedsView) => void>();
 let seq = 0;
@@ -20,7 +21,12 @@ export function refreshSeeds(): void {
   const mine = ++seq;
   Promise.resolve()
     .then(() => window.bean.getConfig())
-    .then(async (c): Promise<SeedsView> => (!c.proactivity || c.proactivity === "off" ? HIDDEN : { enabled: true, items: await window.bean.listSeeds() }))
+    .then(async (c): Promise<SeedsView> => (!c.proactivity || c.proactivity === "off" ? HIDDEN : {
+      enabled: true,
+      items: await window.bean.listSeeds(),
+      // A failed Sprouts read only costs the empty state's wording, not Seeds.
+      planting: (await window.bean.routinesList().catch(() => [])).filter((r) => r.feedBrain === true).map((r) => r.name),
+    }))
     .then((v) => { if (mine === seq) set(v); }, () => { if (mine === seq) set(HIDDEN); });
 }
 

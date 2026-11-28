@@ -12,10 +12,10 @@ const seed = (id: string, over: Partial<MindItem> = {}): MindItem => ({
 
 describe("seeds helpers (#1159)", () => {
   it("labels the Home row by active seeds only, and only when enabled", () => {
-    expect(homeSubLabel({ enabled: true, items: [seed("a"), seed("b"), seed("c", { status: "done" })] })).toBe("Watching 2 seeds");
-    expect(homeSubLabel({ enabled: true, items: [seed("a")] })).toBe("Watching 1 seed");
-    expect(homeSubLabel({ enabled: true, items: [] })).toBe("Superagent");
-    expect(homeSubLabel({ enabled: false, items: [seed("a")] })).toBe("Superagent");
+    expect(homeSubLabel({ enabled: true, items: [seed("a"), seed("b"), seed("c", { status: "done" })], planting: [] })).toBe("Watching 2 seeds");
+    expect(homeSubLabel({ enabled: true, items: [seed("a")], planting: [] })).toBe("Watching 1 seed");
+    expect(homeSubLabel({ enabled: true, items: [], planting: [] })).toBe("Superagent");
+    expect(homeSubLabel({ enabled: false, items: [seed("a")], planting: [] })).toBe("Superagent");
   });
 
   it("a reply-crossed seed is a done one the pulse wrote last, not yet seen at that version", () => {
@@ -75,6 +75,7 @@ describe("Home Seeds (#1159)", () => {
       chatMainSince: vi.fn(async () => ({ rows: [], cursor: 0, trimmed: false })),
       getConfig: vi.fn(async () => ({ proactivity: dial })),
       listSeeds: vi.fn(async () => list),
+      routinesList: vi.fn(async () => []),
       resolveSeed: vi.fn(async (id: string, status: string, version: number) => ({ ...list.find((s) => s.id === id)!, status, version: version + 1 })),
       undoSeed: vi.fn(async (id: string, version: number) => ({ ...list.find((s) => s.id === id)!, status: "active", version: version + 1 })),
       openComponent: vi.fn(async () => {}),
@@ -165,6 +166,16 @@ describe("Home Seeds (#1159)", () => {
     expect(shownChat().querySelector(".bean-seeds-empty")?.textContent).toContain("No seeds yet.");
     await click([...shownChat().querySelectorAll(".bean-seeds-empty button")].find((b) => b.textContent === "Choose sprouts…"));
     expect(bean.openComponent).toHaveBeenCalledWith("routines");
+  });
+
+  it("empty with a sprout already opted in: says it's waiting, no longer asks to choose", async () => {
+    list = [];
+    bean.routinesList = vi.fn(async () => [{ name: "Flights", feedBrain: true }, { name: "Other" }]);
+    await openHome();
+    await click(chip());
+    const empty = shownChat().querySelector(".bean-seeds-empty")!;
+    expect(empty.textContent).toContain("after Flights's next run");
+    expect([...empty.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Sprouts…"]);
   });
 
   it("dial off: no chip, no popover from the caption, plain sidebar label", async () => {

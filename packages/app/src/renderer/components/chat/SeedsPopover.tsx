@@ -105,8 +105,10 @@ export function SeedsPopover({ view, onDiscuss, onClose }: {
       ))}
       {active.length === 0 && fading.length === 0 && crossedShown.length === 0 ? (
         <div class="bean-seeds-empty">
-          No seeds yet. Let a sprout share what it finds and I'll plant what's worth watching.{" "}
-          <button type="button" class="bean-seed-link" onClick={() => void window.bean.openComponent("routines")}>Choose sprouts…</button>
+          {view.planting.length > 0
+            ? `No seeds yet. I'll plant what's worth watching after ${view.planting.length === 1 ? `${view.planting[0]}'s next run` : `the next runs of ${view.planting.length} sprouts`}.`
+            : "No seeds yet. Let a sprout share what it finds and I'll plant what's worth watching."}{" "}
+          <button type="button" class="bean-seed-link" onClick={() => void window.bean.openComponent("routines")}>{view.planting.length > 0 ? "Sprouts…" : "Choose sprouts…"}</button>
         </div>
       ) : null}
       {active.map((s) => (
