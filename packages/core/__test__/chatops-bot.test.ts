@@ -59,7 +59,6 @@ const fakeCards = {
   noteArchiveResultCard: (i: object) => ({ kind: "note-archive-result", ...i }),
   todoProposalCard: (i: object) => ({ kind: "todo-proposal", ...i }),
   todoResultCard: (i: object) => ({ kind: "todo-result", ...i }),
-  rememberedCard: (i: object) => ({ kind: "remembered", ...i }),
   skillProposalCard: (i: object) => ({ kind: "skill-proposal", ...i }),
   skillResultCard: (i: object) => ({ kind: "skill-result", ...i }),
   // Mirrors the real discord/teams builders: a "start-live"/"cancel-live" beanAction lives
@@ -1326,17 +1325,14 @@ function rememberDeps(args: object = { text: "Prefers tabs over spaces", quote: 
   return { ...makeDeps({ chat }), intentCalls: () => intentCalls };
 }
 
-test("explicit remember saves directly and posts a remembered card with a Forget button id", async () => {
+test("explicit remember saves directly with no receipt card", async () => {
   const { deps, savedMemories, intentCalls } = rememberDeps();
   const effects = fx();
   await buildTeamsBot(deps).onMessage(rememberMsg, effects);
   expect(intentCalls()).toBe(1);
   expect(savedMemories).toHaveLength(1);
   expect(savedMemories[0]![0]!.text).toBe("Prefers tabs over spaces");
-  expect(effects.cards).toHaveLength(1);
-  const card = effects.cards[0] as { kind: string; memoryId: string; text: string };
-  expect(card.kind).toBe("remembered");
-  expect(card.memoryId).toBe(savedMemories[0]![0]!.id);
+  expect(effects.cards).toHaveLength(0);
   expect(effects.posted).toContain("Got it.");
 });
 
@@ -2802,7 +2798,6 @@ test("a DM remember is private: recalled in that member's DM only, never another
   await bot.onMessage(h.say("mia", true, "remember that I prefer oat milk"), effects);
   const saved = await h.loadMemories(h.file);
   expect(saved).toMatchObject([{ text: "Prefers oat milk", subjectId: "mia" }]);
-  expect(effects.cards[0]).toMatchObject({ kind: "remembered", scope: "private" });
 
   const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
     h.prompts.length = 0;
@@ -2863,7 +2858,9 @@ test("DM auto-capture: a typed fact is saved private with a receipt; guests, cha
   const dm = fx();
   await bot.onMessage(h.say("mia", true, "I prefer oat milk"), dm);
   expect(await h.loadMemories(h.file)).toMatchObject([{ text: "Prefers oat milk", subjectId: "mia" }]);
-  expect(dm.cards).toMatchObject([{ kind: "remembered", text: "Prefers oat milk", scope: "private" }]);
+  expect(dm.cards).toHaveLength(0);
+  expect(dm.posted).toContain("Got it, mia — I'll remember that for next time.");
+  expect(dm.posted.join("\n")).not.toContain("oat milk");
 
   await bot.onMessage(h.say("gus", true, "I prefer rooibos"), fx()); // guest DM
   await bot.onMessage(h.say("max", false, "I prefer rooibos"), fx()); // channel
@@ -2994,8 +2991,6 @@ test("owner DM captures and remembers keep the model's category; member DMs and 
   expect(cat("u1", "Prefers espresso")).toBe("You");
   expect(cat("mia", "Prefers oat milk")).toBeNull();
   expect(cat(undefined, "Prefers oat milk")).toBeNull();
-  expect(owner.cards).toMatchObject([{ kind: "remembered", category: "You" }, { kind: "remembered", category: "You" }]);
-  expect(member.cards[0]).not.toHaveProperty("category", "You");
   // The owner's DM turns carry the category list; a member's never do.
   h.prompts.length = 0;
   await bot.onMessage(h.say("u1", true), fx());
@@ -3011,7 +3006,8 @@ test("DM auto-capture skips a turn that already used remember", async () => {
   const dm = fx();
   await buildTeamsBot(h.deps).onMessage(h.say("mia", true, "remember that I prefer oat milk"), dm);
   expect(await h.loadMemories(h.file)).toHaveLength(1);
-  expect(dm.cards).toHaveLength(1);
+  expect(dm.cards).toHaveLength(0);
+  expect(dm.posted.some((t) => t.startsWith("Got it, mia"))).toBe(false); // no capture line either
   expect(h.prompts.some((p) => p.includes("--- new ---"))).toBe(false); // no extraction call
 });
 
@@ -3020,13 +3016,10 @@ test("a channel remember is shared; explicit wording overrides the default scope
   const bot = buildTeamsBot(h.deps);
   const channel = fx();
   await bot.onMessage(h.say("mia", false, "remember that I prefer oat milk"), channel);
-  expect(channel.cards[0]).toMatchObject({ scope: "shared" });
   const dm = fx();
   await bot.onMessage(h.say("max", true, "remember that I prefer rooibos for everyone"), dm);
-  expect(dm.cards[0]).toMatchObject({ scope: "shared" });
   const chan = fx();
   await bot.onMessage(h.say("max", false, "remember that I prefer espresso just for me"), chan);
-  expect(chan.cards[0]).toMatchObject({ scope: "private" });
   const rows = await h.loadMemories(h.file);
   expect(rows.map((r) => [r.text, r.subjectId])).toEqual([
     ["Prefers oat milk", undefined], ["Prefers rooibos", undefined], ["Prefers espresso", "max"],

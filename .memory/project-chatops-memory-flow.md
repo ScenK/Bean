@@ -27,8 +27,9 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   [project-episode-memory](project-episode-memory.md). Gated
   by `can(role, "memory")` (so guests, even with `allowGuestDms`, never capture), a non-failed
   turn, and a turn that used neither `remember` nor `forget_memory` (a "forget that I live in X"
-  turn must not re-save X). Rows are saved with `subjectId` = speaker (always private) and each
-  gets the normal `rememberedCard` (Forget + Share). Captures run on one serialized chain so each
+  turn must not re-save X). Rows are saved with `subjectId` = speaker (always private); the batch
+  gets one plain `rememberedLine` ("Got it, <name> — I'll remember that…"): no fact text, no
+  card, no buttons (the old Forget/Share card felt noisy and repeated itself). Captures run on one serialized chain so each
   sees the last one's rows; `onMessage`'s `finally` awaits it because Teams' `postCard` rides the
   turn's `context`, which is revoked once the handler returns — don't detach it.
 - **Live steering capture (#861):** the owner's typed text steered into a live session is scoped
@@ -57,12 +58,13 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   So injected page/delegate/history text can't save or delete, in any language. Don't bring
   back regex gates (they missed "忘掉这个", "forget it").
 - Scope (#281, [safety-per-speaker-memory](safety-per-speaker-memory.md)): a DM saves private to
-  the speaker, a channel to the household; the receipt says which.
-- `remember` saves directly (no confirm card); each saved fact gets a `rememberedCard` receipt
-  with a **Forget** button. The button carries the memory id in the generic `proposalId` slot
+  the speaker, a channel to the household.
+- `remember` saves directly with no card at all: the model's reply is the receipt; forgetting
+  goes through `forget_memory` in chat. The retired `rememberedCard` had a **Forget** button;
+  its handler stays so cards already in chat history still work. The button carries the memory id in the generic `proposalId` slot
   (`bean:forget-memory:<uuid>` on Discord, ~55 of 100 custom_id chars); delete is idempotent, so
   no proposal store — a second tap says "Already forgotten."
-- A **private** receipt also gets **Share with everyone** (`bean:share-memory:<uuid>` / Teams
+- The retired card's **private** variant also had **Share with everyone** (`bean:share-memory:<uuid>` / Teams
   `beanAction: "share-memory"`), gated `needs("memory")` before the store is touched. Author-only
   (SQL `AND subject_id = actor`, owner included), same no-proposal-store shape: 0 rows changed →
   "Nothing changed — already shared or forgotten." with no fact text; the success reply quotes the

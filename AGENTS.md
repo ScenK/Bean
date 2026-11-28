@@ -50,7 +50,7 @@ The desktop app is one of **three surfaces**, all sharing the same core brain:
 - **Remote chatops** — `@bean/discord` and `@bean/teams` are standalone Node bot servers
   (`node dist/server.js`), spawned and supervised by the host (in the app or `bean-core`; each
   optional), that let you drive Bean from a Discord server/DM or a Teams chat.
-  They render the same confirm-first cards (run / note / skill; memory saves directly with a Forget receipt) through core's shared
+  They render the same confirm-first cards (run / note / skill; memory saves directly with a one-line note) through core's shared
   `chatops/` layer; the per-surface `*-config.ts` holds tokens/IDs.
 - **Routines** — scheduled work. A routine (`~/.bean/routines/<name>.json`) is a cron- or
   watch-fired (polled feed/command, no model per check) pipeline of `delegate`/`chat`/`command` steps with optional todo-queue draining; `routine-runner.ts`

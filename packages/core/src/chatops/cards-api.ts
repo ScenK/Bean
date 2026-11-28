@@ -186,24 +186,6 @@ export interface TodoResultCardInput {
   note?: string;
 }
 
-/** A fact the remember tool saved directly (no confirm step) — the card is the receipt,
- * and its Forget button carries the memory id. */
-export interface RememberedCardInput {
-  memoryId: string;
-  text: string;
-  /** Resolved display name of the fact's project; absent = a global fact. */
-  projectName?: string;
-  /** The fact's category (owner paths only, #648); absent = uncategorized. */
-  category?: string;
-  /** Who the fact is for — the receipt states it ("saved for you — used in our DMs"). */
-  scope: "private" | "shared";
-}
-
-export function rememberedScopeLine(scope: RememberedCardInput["scope"], category?: string): string {
-  const line = scope === "private" ? "Saved for you — used in our DMs." : "Saved for everyone.";
-  return category ? `Category: ${category} · ${line}` : line;
-}
-
 /** Receipt for a reminder set_reminder saved directly; Cancel carries the reminder id. */
 export interface ReminderCardInput {
   reminderId: string;
@@ -317,7 +299,6 @@ export interface CardBuilders {
   sproutRunCard: (input: SproutRunCardInput) => object;
   /** Optional: only surfaces that wire `send` need it. */
   sendCard?: (input: SendCardInput) => object;
-  rememberedCard: (input: RememberedCardInput) => object;
   /** Optional: only surfaces that wire `reminders` need it. */
   reminderCard?: (input: ReminderCardInput) => object;
   skillProposalCard: (input: SkillProposalCardInput) => object;

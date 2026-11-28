@@ -120,7 +120,7 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
       texts.add(c.text.toLowerCase());
       remembered.push(m);
       return deps.subjectId
-        ? `Remembered: ${m.text}. Saved privately. If this updates a shared fact shown in what you remember, say so and mention the Share with everyone button on the receipt.`
+        ? `Remembered: ${m.text}. Saved privately. If this updates a shared fact shown in what you remember, say so and tell them to ask you to remember it "for everyone" if the whole household should have it.`
         : `Remembered: ${m.text}`;
     },
   };

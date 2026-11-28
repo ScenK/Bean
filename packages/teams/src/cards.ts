@@ -1,12 +1,12 @@
 import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
   NoteArchiveProposalCardInput, NoteArchiveResultCardInput,
-  RememberedCardInput, ReminderCardInput,
+  ReminderCardInput,
   SkillProposalCardInput, SkillResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CardBuilders,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, continueLiveLine, noContinueLine, rememberedScopeLine, todoCardLines, todoCardTitle } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, continueLiveLine, noContinueLine, todoCardLines, todoCardTitle } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -414,26 +414,6 @@ export function routineResultCard(input: RoutineResultCardInput): object {
   };
 }
 
-/** Receipt for a fact the remember tool saved directly; Forget carries the memory id. */
-export function rememberedCard(input: RememberedCardInput): object {
-  return {
-    $schema: SCHEMA,
-    type: "AdaptiveCard",
-    version: "1.4",
-    body: [
-      { type: "TextBlock", weight: "bolder", text: "🧠 Got it — remembered" },
-      { type: "TextBlock", text: `${input.projectName ? `(${input.projectName}) ` : ""}${input.text}`, wrap: true },
-      { type: "TextBlock", text: rememberedScopeLine(input.scope, input.category), isSubtle: true, wrap: true },
-    ],
-    actions: [
-      { type: "Action.Submit", title: "Forget", data: { beanAction: "forget-memory", proposalId: input.memoryId } },
-      ...(input.scope === "private"
-        ? [{ type: "Action.Submit", title: "Share with everyone", data: { beanAction: "share-memory", proposalId: input.memoryId } }]
-        : []),
-    ],
-  };
-}
-
 /** Receipt for a set_reminder; Teams renders {{DATE()}}/{{TIME()}} in each viewer's timezone.
  * They need RFC 3339 with a `Z` and no milliseconds, so normalise whatever `at` the model gave. */
 export function reminderCard(input: ReminderCardInput): object {
@@ -535,7 +515,7 @@ export function liveSessionResultCard(input: LiveSessionResultCardInput): object
 }
 
 export const teamsCards: CardBuilders = {
-  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard, reminderCard,
+  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, reminderCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, sendCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };
