@@ -1,4 +1,4 @@
-import { setBeanGitIdentity, type ConverseDeps, type RankByMeaning } from "@bean/core";
+import { setBeanGitIdentity, type ConverseDeps, type Proactivity, type RankByMeaning } from "@bean/core";
 import type { ConfigFields, ConfigUpdate } from "./config.js";
 
 export interface RuntimeConfigDeps {
@@ -25,6 +25,8 @@ export interface RuntimeConfig {
   getHomeDms: () => { discord: boolean; teams: boolean };
   getGitName: () => string;
   getGitEmail: () => string;
+  /** The proactivity dial (#1158), live. */
+  getProactivity: () => Proactivity;
   /** A patch: omitted (undefined) fields keep their current value. */
   apply: (update: ConfigUpdate) => Promise<void>;
 }
@@ -49,6 +51,7 @@ export function createRuntimeConfig(
   let homeTeamsDm = initial.homeTeamsDm;
   let gitName = initial.gitName;
   let gitEmail = initial.gitEmail;
+  let proactivity = initial.proactivity;
   setBeanGitIdentity(gitName, gitEmail);
   // ponytail: the OpenAI SDK throws in its constructor when apiKey is "", so building the
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
@@ -77,6 +80,7 @@ export function createRuntimeConfig(
     getHomeDms: () => ({ discord: homeDiscordDm, teams: homeTeamsDm }),
     getGitName: () => gitName,
     getGitEmail: () => gitEmail,
+    getProactivity: () => proactivity,
     apply: (patch) => {
       const run = saving.then(() => applyNow(patch));
       saving = run.catch(() => {});
@@ -87,7 +91,7 @@ export function createRuntimeConfig(
   async function applyNow(patch: ConfigUpdate): Promise<void> {
     const update: ConfigFields = {
       openaiApiKey: apiKey, model, terminalApp, editorApp, delegateCli, systemControls,
-      disabledClis, webSearch, autoMemory, homeDiscordDm, homeTeamsDm, gitName, gitEmail,
+      disabledClis, webSearch, autoMemory, homeDiscordDm, homeTeamsDm, gitName, gitEmail, proactivity,
     };
     for (const [k, v] of Object.entries(patch)) if (v !== undefined && Object.hasOwn(update, k)) (update as unknown as Record<string, unknown>)[k] = v;
     const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey) : null;
@@ -106,6 +110,7 @@ export function createRuntimeConfig(
     homeTeamsDm = update.homeTeamsDm;
     gitName = update.gitName;
     gitEmail = update.gitEmail;
+    proactivity = update.proactivity;
     setBeanGitIdentity(gitName, gitEmail);
     converseClient = nextConverseClient;
     rankClient = nextRankClient;

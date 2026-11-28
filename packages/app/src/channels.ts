@@ -240,6 +240,10 @@ export const IPC = {
   todosReorder: "bean:todos-reorder",
   todosClearFinished: "bean:todos-clear-finished",
   todosRetry: "bean:todos-retry",
+  // Seeds (#1158): Bean's own working list — the owner's list, Done / Let it go, and Undo. Local only.
+  listSeeds: "bean:list-seeds",
+  resolveSeed: "bean:resolve-seed",
+  undoSeed: "bean:undo-seed",
   checkForUpdate: "bean:check-for-update",
   installUpdate: "bean:install-update",
   openUpdateReleasePage: "bean:open-update-release-page",

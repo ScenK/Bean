@@ -32,6 +32,19 @@ describe("service contract (#807)", () => {
     for (const key of Object.keys(IPC).filter((k) => k.startsWith("routines") && !reads.includes(k))) expect(Object.hasOwn(REMOTE_OPS, key), key).toBe(false);
   });
 
+  it("Seeds stay local (#1158) and the dial only takes its four levels", () => {
+    for (const k of ["listSeeds", "resolveSeed", "undoSeed"]) expect(Object.hasOwn(REMOTE_OPS, k), k).toBe(false);
+    const ok = (ch: keyof typeof IPC, ...args: unknown[]): boolean => {
+      const c = CHANNEL_CONTRACT[ch];
+      return c.owner === "core" && c.args.length >= args.length && c.args.every((g, i) => g(args[i]));
+    };
+    expect(ok("saveConfig", { proactivity: "high" })).toBe(true);
+    expect(ok("saveConfig", { proactivity: "loud" })).toBe(false);
+    expect(ok("resolveSeed", "s1", "dismissed", 3, "wrong")).toBe(true);
+    expect(ok("resolveSeed", "s1", "deleted", 3)).toBe(false);
+    expect(ok("undoSeed", "s1", "3")).toBe(false);
+  });
+
   it("every channel main registers or the preload calls is in IPC (no string-literal side doors)", () => {
     const src = ["ipc.ts", "main.ts", "avatar-window.ts", "preload.ts"].map((f) => readFileSync(join(__dirname, "../src", f), "utf8")).join("\n");
     expect(src).not.toMatch(/ipc(Main|Renderer)\.(on|handle|send|invoke)\(\s*["'`]/);

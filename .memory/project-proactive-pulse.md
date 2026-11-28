@@ -24,9 +24,11 @@
   `lastPulseAt` or the last failed try (in-memory, so a failing pass never retries faster). No pass
   in quiet hours at all — a step-down notice would be lost with the post. Lease, dial and quiet
   hours are re-checked after the model call; a dial change mid-pass drops the step-down notice.
-  **Dormant behind `PULSE_LIVE = false` until the Settings dial ships (#1158)** — flip it there.
-- The dial is read from `config.json` per use (`loadConfig(...).proactivity`, unreadable = off) on
-  the host and in the bots; #1158 may move it into runtime-config.
+  `PULSE_LIVE` was flipped on with the Settings dial (#1158). The e2e `makeBeanHome` fixture sets
+  `proactivity: "off"`: a boot pass outside quiet hours takes the first queued stub reply (CI's UTC
+  clock hit it; a late-night local run didn't) — test a pulse spec with `TZ` pinned to daytime.
+- The dial: the host reads runtime-config's live `getProactivity()`; the bots read `config.json` per
+  use (`loadConfig(...).proactivity`, unreadable = off).
 - A check-in is a `home_posts` row with `kind = 'pulse'` and `sprout` = the persona name. Its
   main-log turn is `homePostTurn` (core `home-posts.ts`): assistant role, the body as is — the same
   from the Home drain and from the owner-DM copy (`OutboxMessage.kind = "pulse"` → `appendDelivery`
@@ -35,6 +37,17 @@
 - Seeds ride Home turns (host, the mount pinned to Home) and the owner's own 1:1 DM (bot `deps.seeds`)
   as one fenced user-role message after the recall (`seedsData`); none when the dial is off.
 - Host `handlers.seeds` (`list`/`resolve`/`undo`) carry the version the owner saw and throw on a
-  mismatch; `resolve` resets the unanswered streak. Not wired to IPC yet (#1158).
+  mismatch; `resolve` resets the unanswered streak. IPC `listSeeds`/`resolveSeed`/`undoSeed` (#1158)
+  are local only — not in `REMOTE_OPS` (tested).
 - Pre-cutover Home and the renderer's post bubble still treat a pulse like a sprout post (quoted,
   user role, `[sprout "<name>" posted]`) until #1159 renders it as Bean's own.
+
+## Settings dial and Sprouts opt-in (#1158)
+
+- Settings shows the level the pulse runs at (`ConfigView.proactivityLowered.to` while a backoff
+  applies, with "Lowered automatically · <date>") and sends `proactivity` only once the owner picks
+  it: host `applyConfig` calls `clearPulseBackoff` whenever the patch carries `proactivity` — even the
+  level already saved, which `lowered.from` alone would keep lowered. An unrelated save must not.
+- The Sprouts editor's "Let {name} plant seeds…" writes `Routine.feedBrain`, independent of
+  `sinks.home`. A desktop chat replacement keeps the saved `feedBrain: true` (like `projects`); a
+  chatops replacement still drops it (owner re-ticks it) — non-owner drafts must never carry it.

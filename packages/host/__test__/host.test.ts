@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { HOME_DM_MIGRATION_KEY } from "@bean/core";
+import { HOME_DM_MIGRATION_KEY, loadPulseState, updatePulseState } from "@bean/core";
 import { DISCONNECT_GRACE_MS, HEARTBEAT_TIMEOUT_MS } from "../src/attachments.js";
 import { createHost } from "../src/host.js";
 
@@ -195,6 +195,41 @@ test("a failed owner-DM toggle migration shows the keys to set by hand, even wit
     })]));
     expect(host.handlers.getConfig()).toMatchObject({ homeTeamsDm: false });
     expect(new DatabaseSync(join(dir, "bean.db")).prepare("SELECT 1 FROM memory_meta WHERE key = ?").get(HOME_DM_MIGRATION_KEY)).toBeUndefined();
+  } finally {
+    for (const fn of quit) fn();
+  }
+});
+
+// #1158: Settings shows an auto-backoff only while it applies, and the owner's dial pick ends it —
+// even a pick of the level they already had; an unrelated save leaves it alone.
+test("the proactivity dial is live, and picking it ends an auto-backoff", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-host-"));
+  const quit: (() => void)[] = [];
+  const host = await createHost({
+    dir, builtinDir: dir, push: vi.fn(), onJobs: vi.fn(),
+    notification: { name: "notification", available: () => false, send: vi.fn() },
+    isChatClient: () => false, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
+  });
+  const db = join(dir, "bean.db");
+  try {
+    expect(host.handlers.getConfig()).toMatchObject({ proactivity: "medium" });
+    expect(host.handlers.getConfig().proactivityLowered).toBeUndefined();
+    const at = "2026-11-20T10:00:00.000Z";
+    updatePulseState(db, (s) => ({ ...s, unanswered: 2, lowered: { from: "medium", to: "low", at } }));
+    expect(host.handlers.getConfig().proactivityLowered).toEqual({ to: "low", at });
+
+    await host.handlers.applyConfig({ model: "gpt-5" });
+    expect(loadPulseState(db).lowered).toBeDefined();
+
+    await host.handlers.applyConfig({ proactivity: "medium" });
+    expect(loadPulseState(db)).toMatchObject({ unanswered: 0 });
+    expect(loadPulseState(db).lowered).toBeUndefined();
+    expect(host.handlers.getConfig().proactivityLowered).toBeUndefined();
+
+    await host.handlers.applyConfig({ proactivity: "off" });
+    expect(host.handlers.getConfig().proactivity).toBe("off");
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8"))).toMatchObject({ proactivity: "off" });
   } finally {
     for (const fn of quit) fn();
   }

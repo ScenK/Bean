@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import type { CliName } from "@bean/core";
+import type { CliName, Proactivity } from "@bean/core";
 import type { ConfigUpdate, ConfigView } from "../../../channels.js";
 import type { Theme } from "../../../channels.js";
 import type { ChatopsBot, ChatopsState, SinkRecipients } from "@bean/host";
@@ -17,6 +17,14 @@ const PATH_LABELS: { key: keyof ConfigView["paths"]; label: string }[] = [
   { key: "skills", label: "Skills" },
   { key: "projects", label: "Projects" },
   { key: "persona", label: "Persona" },
+];
+
+// The proactivity dial (#1158): how often Bean checks in on its own. Caps mirror core `PULSE_DAILY_CAP`.
+const PROACTIVITY_OPTIONS: { value: Proactivity; label: string }[] = [
+  { value: "off", label: "Only when you ask" },
+  { value: "low", label: "Now and then (up to 1/day)" },
+  { value: "medium", label: "Keeps you posted (up to 3/day)" },
+  { value: "high", label: "Thinks out loud (up to 6/day)" },
 ];
 
 const CHATOPS_BOTS: { key: ChatopsBot; label: string }[] = [
@@ -73,6 +81,11 @@ export function SettingsWindow() {
   // Whether those DMs can be reached; undefined over SSH (not a remote op), so no hint there.
   const [recipients, setRecipients] = useState<SinkRecipients | undefined>(undefined);
   const beanName = usePersonaName();
+  // Shows the level the pulse runs at (auto-backoff's when it lowered the dial); sent only once the
+  // owner picks one, since that choice also ends the backoff — an unrelated save must not.
+  const [proactivity, setProactivity] = useState<Proactivity>("medium");
+  const [proactivityEdited, setProactivityEdited] = useState(false);
+  const [loweredAt, setLoweredAt] = useState<string | undefined>(undefined);
   const [gitName, setGitName] = useState("");
   const [gitEmail, setGitEmail] = useState("");
   const [detectedClis, setDetectedClis] = useState<CliName[]>([]);
@@ -123,6 +136,9 @@ export function SettingsWindow() {
       setGitName(c.gitName ?? "");
       setGitEmail(c.gitEmail ?? "");
       setDisabledClis(c.disabledClis);
+      // An older core has no dial: keep the default shown (it's never sent unless picked).
+      setProactivity(c.proactivityLowered?.to ?? c.proactivity ?? "medium");
+      setLoweredAt(c.proactivityLowered?.at);
       setPaths(c.paths);
       setLoaded(true);
     }, () => {});
@@ -153,6 +169,7 @@ export function SettingsWindow() {
       const patch: ConfigUpdate = {
         model: model.trim(), delegateCli, disabledClis, webSearch, autoMemory,
         ...(homeDmsEdited ? { homeDiscordDm: homeDms.discord, homeTeamsDm: homeDms.teams } : {}),
+        ...(proactivityEdited ? { proactivity } : {}),
         gitName: gitName.trim(), gitEmail: gitEmail.trim(),
         ...(apiKeyEdited ? { openaiApiKey: apiKey.trim() } : {}),
         ...(handoff ? { terminalApp: terminalApp.trim(), editorApp: editorApp.trim() } : {}),
@@ -161,6 +178,7 @@ export function SettingsWindow() {
       await window.bean.saveConfig(patch);
       if (apiKeyEdited) { setApiKeySet(apiKey.trim() !== ""); setApiKeyEdited(false); }
       setHomeDmsEdited(false);
+      if (proactivityEdited) { setProactivityEdited(false); setLoweredAt(undefined); }
       setSave("saved");
     } catch (err) {
       setSave("error");
@@ -339,6 +357,22 @@ export function SettingsWindow() {
                 />
                 <span class="bean-chatops-label">Remember things automatically</span>
               </label>
+            </div>
+          </div>
+          <div class="bean-settings-row">
+            <span class="bean-settings-row-label">Check-ins</span>
+            <div class="bean-settings-row-control bean-settings-proactivity" title={`How often ${beanName} checks in on its own in your chat, from what your opted-in sprouts find.`}>
+              <select
+                class="bean-input"
+                value={proactivity}
+                onChange={(e) => { setProactivity((e.target as HTMLSelectElement).value as Proactivity); setProactivityEdited(true); setSave("idle"); }}
+              >
+                {PROACTIVITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <span class="bean-routines-sink-hint">
+                Never between 10 PM and 7 AM.
+                {loweredAt && !proactivityEdited ? ` Lowered automatically · ${new Date(loweredAt).toLocaleDateString()}` : ""}
+              </span>
             </div>
           </div>
           {handoff ? <div class="bean-settings-row">

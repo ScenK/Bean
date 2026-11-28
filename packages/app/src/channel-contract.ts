@@ -1,3 +1,4 @@
+import { PROACTIVITY_LEVELS } from "@bean/core";
 import { argsOk, guard as g, type Capability, type Guard } from "@bean/host";
 import { IPC, NO_CORE } from "./channels.js";
 
@@ -37,6 +38,7 @@ const configUpdate = shape({
   openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
   systemControls: opt(bool), disabledClis: opt(arr(str)),
   webSearch: opt(bool), autoMemory: opt(bool), homeDiscordDm: opt(bool), homeTeamsDm: opt(bool), gitName: opt(str), gitEmail: opt(str),
+  proactivity: opt(oneOf(...PROACTIVITY_LEVELS)),
 });
 const noteDraft = shape({ title: str, body: str, project: opt(str), source: opt(oneOf("chat", "manual")), slug: opt(str) });
 const memory = shape({
@@ -241,6 +243,9 @@ export const CHANNEL_CONTRACT = {
   todosReorder: core(str, num),
   todosClearFinished: core(str),
   todosRetry: core(str),
+  listSeeds: core(),
+  resolveSeed: core(str, oneOf("done", "dismissed"), num, opt(oneOf("not-interested", "wrong"))),
+  undoSeed: core(str, num),
   checkForUpdate: shell,
   installUpdate: shell,
   openUpdateReleasePage: shell,

@@ -1375,6 +1375,19 @@ export function RoutinesPanel() {
             />
             <span class="bean-routines-sink-name">Post to your chat with {beanName}</span>
           </label>
+          {/* Independent of the Home sink (#1158): a sprout can feed Seeds without posting every run. */}
+          <label class="bean-routines-sink-row bean-routines-feed-brain">
+            <input
+              type="checkbox"
+              checked={draft.feedBrain === true}
+              onChange={(e) => {
+                const { feedBrain: _f, ...rest } = draft;
+                setDraft((e.target as HTMLInputElement).checked ? { ...rest, feedBrain: true } : rest);
+              }}
+            />
+            <span class="bean-routines-sink-name">Let {beanName} plant seeds from what this finds</span>
+            <span class="bean-routines-sink-hint">Leave work sprouts off.</span>
+          </label>
           {draft.sinks.home && homeDms ? (
             <div class="bean-routines-sink-row bean-routines-sink-suboption bean-routines-sink-hint bean-routines-home-dms">
               {dmCopies

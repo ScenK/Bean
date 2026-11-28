@@ -2072,6 +2072,8 @@ button, input, textarea, select, a {
   justify-content: flex-end;
 }
 .bean-settings-row-control .bean-input { text-align: right; }
+/* The proactivity dial: select over its quiet-hours / lowered note. */
+.bean-settings-proactivity { flex-direction: column; align-items: flex-end; gap: 4px; }
 .bean-input--compact {
   flex: none;
   width: 120px;
