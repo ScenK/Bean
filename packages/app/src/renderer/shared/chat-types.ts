@@ -122,7 +122,9 @@ export type ChatItem =
   // A sprout's Home post (#960), appended once per `postId` when Home is shown. Untrusted
   // sprout output: rendered as inert markdown, in history only as a fenced, non-typed user turn.
   // `batch` = drained together (2+ fold into one "While you were away · N" block); `at` = its ISO time.
-  | { kind: "post"; id: string; postId: string; sprout: string; at: string; text: string; batch?: string }
+  // `postKind: "pulse"` (#1159) = Bean's own check-in: a plain Bean bubble, an assistant turn in history,
+  // never batched. Absent = a sprout's post.
+  | { kind: "post"; id: string; postId: string; sprout: string; at: string; text: string; batch?: string; postKind?: "sprout" | "pulse" }
   // One of the owner's DM exchanges in the main conversation (#1000), pulled from the core's log by
   // `seq` (its identity there — a re-pull dedupes by it). Display only: inert, never model history or
   // close-time memory (the log already holds it), labelled with the surface that wrote it.

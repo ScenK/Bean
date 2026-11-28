@@ -385,6 +385,17 @@ describe("Home posts (#960)", () => {
     expect(chatTurns(items, { memory: true })).toEqual([]);
     expect(closeTranscript(items, true)).toEqual([]);
   });
+
+  it("#1159: a check-in keeps its postKind across save/restore, is never batched, and is Bean's own turn", () => {
+    const pulse = { ...post("c1", "Your flight moved to 9:40."), kind: "pulse" as const };
+    const items = newPostItems([], [post("p1", "one"), pulse, post("p2", "two")]);
+    expect(items).toMatchObject([{ postId: "p1", batch: "batch-p1" }, { postId: "c1", postKind: "pulse" }, { postId: "p2", batch: "batch-p1" }]);
+    expect(items[1]).not.toHaveProperty("batch");
+    const restored = restoreItems(JSON.parse(JSON.stringify(normalizeForSave(items))));
+    expect(restored[1]).toMatchObject({ kind: "post", postId: "c1", postKind: "pulse" });
+    expect(restoreItems([{ kind: "post", id: "x", postId: "c", sprout: "Bean", at: "t", text: "hi", postKind: "shout" }])[0]).not.toHaveProperty("postKind");
+    expect(chatTurns([restored[1]!])).toEqual([{ role: "assistant", content: "Your flight moved to 9:40." }]);
+  });
 });
 
 describe("time dividers (#977)", () => {
