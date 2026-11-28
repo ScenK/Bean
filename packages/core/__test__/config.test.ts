@@ -197,3 +197,14 @@ test("ensurePrivateBeanDir creates 0700, tightens 0755, keeps contents, is idemp
   ensurePrivateBeanDir(existing);
   expect(await mode(existing)).toBe(0o700);
 });
+
+test("proactivity (#1156) defaults to medium, rejects junk, and survives a save that omits it", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect((await loadConfig(file, "/b")).proactivity).toBe("medium");
+  await writeFile(file, JSON.stringify({ openaiApiKey: "sk-x", proactivity: "loud" }));
+  expect((await loadConfig(file, "/b")).proactivity).toBe("medium");
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m", proactivity: "low" });
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect((await loadConfig(file, "/b")).proactivity).toBe("low");
+});

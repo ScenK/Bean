@@ -42,10 +42,13 @@ const PENDING = "drained_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
 export const homePostBody = (body: string): string =>
   body.length > HOME_POST_MAX_CHARS ? body.slice(0, HOME_POST_MAX_CHARS - CUT_TAIL.length) + CUT_TAIL : body;
 
+/** Who wrote a Home post: a sprout's `sinks.home` digest, or Bean's own proactive check-in. */
+export type HomePostKind = "sprout" | "pulse";
+
 /** Adds one pending post (`ttlMinutes` = expires that long after now) and drops the oldest
  * undrained rows past HOME_PENDING_CAP. Returns the post id. */
 export function insertHomePost(
-  file: string, p: { sprout: string; body: string; ttlMinutes?: number },
+  file: string, p: { sprout: string; body: string; ttlMinutes?: number; kind?: HomePostKind },
   newId: () => string = randomUUID, now: () => Date = () => new Date(),
 ): string {
   const id = newId();
@@ -55,8 +58,8 @@ export function insertHomePost(
   const db = openDb(file);
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.prepare("INSERT INTO home_posts (id, sprout, body, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
-      .run(id, p.sprout, body, at.toISOString(), expires);
+    db.prepare("INSERT INTO home_posts (id, sprout, body, created_at, expires_at, kind) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, p.sprout, body, at.toISOString(), expires, p.kind ?? "sprout");
     db.prepare(
       "DELETE FROM home_posts WHERE drained_at IS NULL AND id NOT IN " +
       "(SELECT id FROM home_posts WHERE drained_at IS NULL ORDER BY created_at DESC, rowid DESC LIMIT ?)",

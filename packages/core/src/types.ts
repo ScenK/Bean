@@ -95,5 +95,11 @@ export interface BeanConfig {
   /** Model for the first-person sprout chat brief; absent = the brain model. No Settings UI —
    * edit config.json; applies after a core restart. */
   briefModel?: string;
+  /** How often Bean checks in on its own (the proactive pulse, #1155): the Settings dial. Default
+   * `medium`; `off` = only when asked. Auto-backoff never rewrites it (pulse.ts keeps that apart). */
+  proactivity: Proactivity;
   beanDir: string; // resolved absolute path to ~/.bean
 }
+
+export const PROACTIVITY_LEVELS = ["off", "low", "medium", "high"] as const;
+export type Proactivity = (typeof PROACTIVITY_LEVELS)[number];
