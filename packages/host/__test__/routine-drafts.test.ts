@@ -81,6 +81,13 @@ describe("desktop sprout drafts (#982)", () => {
     expect(s.store).toEqual([{ ...cron, projects: ["/p/app"] }]);
   });
 
+  test("a replacement keeps the owner's Seeds opt-in (#1158)", async () => {
+    const s = setup([{ ...cron, enabled: false, until: "2026-10-01", feedBrain: true }]);
+    await s.propose(cron);
+    expect(await s.h.save("d1")).toMatchObject({ ok: true });
+    expect(s.store).toEqual([{ ...cron, feedBrain: true }]);
+  });
+
   test("Save re-checks the replace target, the end date and the draft itself", async () => {
     const s = setup();
     await s.propose(cron);

@@ -3,7 +3,7 @@ import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDro
 import type {
   RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
-  RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
+  RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome, MindItem, DismissReason,
 } from "@bean/core";
 import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, MainPull, SproutPush, TodoDispatchAnswer } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "./terminal-tasks.js";
@@ -178,6 +178,10 @@ contextBridge.exposeInMainWorld("bean", {
   todosReorder: (id: string, newOrder: number): Promise<void> => ipcRenderer.invoke(IPC.todosReorder, id, newOrder),
   todosClearFinished: (routine: string): Promise<void> => ipcRenderer.invoke(IPC.todosClearFinished, routine),
   todosRetry: (id: string): Promise<void> => ipcRenderer.invoke(IPC.todosRetry, id),
+  listSeeds: (): Promise<MindItem[]> => ipcRenderer.invoke(IPC.listSeeds),
+  resolveSeed: (id: string, status: "done" | "dismissed", version: number, reason?: DismissReason): Promise<MindItem | undefined> =>
+    ipcRenderer.invoke(IPC.resolveSeed, id, status, version, reason),
+  undoSeed: (id: string, version: number): Promise<MindItem | undefined> => ipcRenderer.invoke(IPC.undoSeed, id, version),
   listMemories: (): Promise<Memory[]> => ipcRenderer.invoke(IPC.listMemories),
   appendMemories: (additions: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.appendMemories, additions),
   updateMemory: (id: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.updateMemory, id, text),

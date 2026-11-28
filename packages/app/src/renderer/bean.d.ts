@@ -1,7 +1,7 @@
 import type {
   RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
-  RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
+  RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome, MindItem, DismissReason,
 } from "@bean/core";
 import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult, CoreListing, CoreStatus, CoreSwitchOutcome, CoreUpdateStatus, RemoteUpdateResult } from "../channels.js";
 import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, MainPull, SproutPush, TodoDispatchAnswer } from "@bean/host";
@@ -188,6 +188,11 @@ declare global {
       todosReorder(id: string, newOrder: number): Promise<void>;
       todosClearFinished(routine: string): Promise<void>;
       todosRetry(id: string): Promise<void>;
+      /** Seeds (#1158): active ones plus the ones closed in the last week. Local core only. */
+      listSeeds(): Promise<MindItem[]>;
+      /** Throws when the seed changed since `version`; undefined = it wasn't active. */
+      resolveSeed(id: string, status: "done" | "dismissed", version: number, reason?: DismissReason): Promise<MindItem | undefined>;
+      undoSeed(id: string, version: number): Promise<MindItem | undefined>;
       listMemories(): Promise<Memory[]>;
       appendMemories(additions: Memory[]): Promise<void>;
       updateMemory(id: string, text: string): Promise<void>;

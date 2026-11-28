@@ -6,9 +6,9 @@ import {
 // The proactive brain's scheduler (#1157): core's `runProactivePulse` on the level's cadence, under
 // the scheduler lease, and delivery of what it says as Bean's own Home post (+ owner-DM copies).
 
-/** Dormant until the Settings dial ships (#1158): the default level is `medium`, and pulses must not
- * start before the owner can see and turn the dial. */
-export const PULSE_LIVE = false;
+/** Live since the Settings dial shipped (#1158): the default level is `medium`, so pulses wait for the
+ * owner to be able to see and turn the dial. */
+export const PULSE_LIVE = true;
 
 const CHECK_EVERY_MS = 10 * 60_000;
 

@@ -84,9 +84,11 @@ export function buildRoutineDraftHandlers(deps: RoutineDraftDeps) {
       if (draftReplaces(name, routines, at) !== p.replaces || snapshot(name, routines) !== p.prior) return { ok: false, error: `"${name}" changed since this card — ask me again.` };
       if (hasEnded(p.routine, at)) return { ok: false, error: "Its end date has passed — ask me again with a later one." };
       pending.delete(id as string);
-      // A replacement keeps its display-only "Listed under" (as chatops does).
+      // A replacement keeps its display-only "Listed under" (as chatops does), and the owner's
+      // Seeds opt-in (#1158) — the model never writes it, so a rewrite would silently drop it.
       const prior = routines.find((r) => r.name === name);
-      const draft = prior?.projects && p.routine.projects === undefined ? { ...p.routine, projects: prior.projects } : p.routine;
+      const listed = prior?.projects && p.routine.projects === undefined ? { ...p.routine, projects: prior.projects } : p.routine;
+      const draft = prior?.feedBrain && listed.feedBrain === undefined ? { ...listed, feedBrain: true } : listed;
       try {
         if (draft.watch) {
           // Saved off, then seeded from now: items already in the feed aren't news. Replacing an

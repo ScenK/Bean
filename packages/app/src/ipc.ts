@@ -569,6 +569,11 @@ export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   ipcMain.handle(IPC.todosReorder, (_e, id: string, newOrder: number) => todos.reorder(id, newOrder));
   ipcMain.handle(IPC.todosClearFinished, (_e, routine: string) => todos.clearFinished(routine));
   ipcMain.handle(IPC.todosRetry, (_e, id: string) => todos.retry(id));
+  // The host handler re-checks every argument (the renderer is untrusted) and the version the owner saw.
+  const seeds = host.seeds;
+  ipcMain.handle(IPC.listSeeds, () => seeds.list());
+  ipcMain.handle(IPC.resolveSeed, (_e, id: unknown, status: unknown, version: unknown, reason?: unknown) => seeds.resolve(id, status, version, reason));
+  ipcMain.handle(IPC.undoSeed, (_e, id: unknown, version: unknown) => seeds.undo(id, version));
 
   // Core half of a drop on a skill tile: the plan, from the host's skills and projects. The avatar
   // shows it through the shell's proposeRun.

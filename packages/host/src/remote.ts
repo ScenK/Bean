@@ -1,4 +1,4 @@
-import { coreSocketFile } from "@bean/core";
+import { coreSocketFile, PROACTIVITY_LEVELS } from "@bean/core";
 import { chmodSync, lstatSync, statSync, unlinkSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { connect, createServer, type Socket } from "node:net";
@@ -108,6 +108,7 @@ const configPatch = shape({
   openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
   systemControls: opt(bool), disabledClis: opt(arr(str)),
   webSearch: opt(bool), autoMemory: opt(bool), homeDiscordDm: opt(bool), homeTeamsDm: opt(bool), gitName: opt(str), gitEmail: opt(str),
+  proactivity: opt(oneOf(...PROACTIVITY_LEVELS)),
 });
 const project = shape({ name: str, path: str, skills: opt(arr(str)) });
 

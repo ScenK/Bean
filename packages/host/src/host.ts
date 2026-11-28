@@ -17,7 +17,7 @@ import {
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
   saveModelMemory, resolveDelegateSelection, cliOffersModel, resolveWireModel, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID, MAIN_CONVERSATION_ID,
-  activeSeeds, runProactivePulse, type Proactivity,
+  activeSeeds, runProactivePulse, loadPulseState, clearPulseBackoff, type Proactivity,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -25,7 +25,7 @@ import { buildActionTools } from "./action-tools.js";
 import { createAttachments } from "./attachments.js";
 import { buildChatHandler, buildChatThreadHandlers, buildModelMemoryHandlers, buildModelsHandler } from "./chat.js";
 import { createChatSessions } from "./chat-sessions.js";
-import type { ConfigView } from "./config.js";
+import type { ConfigUpdate, ConfigView } from "./config.js";
 import { createDelegateTasks, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
 import {
@@ -172,7 +172,7 @@ export async function createHost(deps: HostDeps) {
   if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false });
   const cfg = await loadConfig(cfgPath, dir);
   const runtime = createRuntimeConfig(
-    { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory, homeDiscordDm: cfg.homeDiscordDm, homeTeamsDm: cfg.homeTeamsDm, gitName: cfg.gitName, gitEmail: cfg.gitEmail },
+    { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory, homeDiscordDm: cfg.homeDiscordDm, homeTeamsDm: cfg.homeTeamsDm, gitName: cfg.gitName, gitEmail: cfg.gitEmail, proactivity: cfg.proactivity },
     {
       makeConverse: makeOpenAIConverse,
       makeRankByMeaning: (key) => makeRankByMeaning(db, makeOpenAIEmbed(key)),
@@ -514,9 +514,8 @@ export async function createHost(deps: HostDeps) {
     projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), projectsFile: projectsFile(dir),
     personaFile: personaFile(dir), projectPersonaFile: personaFile(projectDir), dbFile: db,
   };
-  // The proactivity dial (#1155), read from config.json per use so a change applies live; unreadable = off.
-  // ponytail: a file read per Home turn / pulse check; move into runtime-config with the Settings dial (#1158).
-  const proactivity = (): Promise<Proactivity> => loadConfig(cfgPath, dir).then((c) => c.proactivity, () => "off" as const);
+  // The proactivity dial (#1155): runtime-config's live value, so a Settings change applies at once.
+  const proactivity = (): Promise<Proactivity> => Promise.resolve(runtime.getProactivity());
   // The main conversation's log (#997): read per request, so the cutover (#999) switches it on live.
   let mainStore: ConversationStore | undefined;
   const mainLog = (): ConversationStore | undefined => {
@@ -624,6 +623,17 @@ export async function createHost(deps: HostDeps) {
   deliverDesktopSprout = sessions.deliverSprout;
   threadsOfChat = sessions.threadsOf;
 
+  // Auto-backoff as Settings shows it: only while it still applies to the dial (pulse.ts `effectiveProactivity`).
+  const loweredView = (): Pick<ConfigView, "proactivityLowered"> => {
+    const l = loadPulseState(db).lowered;
+    return l && l.from === runtime.getProactivity() ? { proactivityLowered: { to: l.to, at: l.at } } : {};
+  };
+  // The owner turned the dial (#1158): their choice ends any auto-backoff and its unanswered streak —
+  // even when they picked the level they had, which `lowered.from` alone would keep lowered.
+  const applyConfig = async (update: ConfigUpdate): Promise<void> => {
+    await runtime.apply(update);
+    if (update.proactivity !== undefined) clearPulseBackoff(db);
+  };
   const getConfig = (): ConfigView => ({
     openaiApiKey: runtime.getApiKey(),
     model: runtime.getModel(),
@@ -638,6 +648,8 @@ export async function createHost(deps: HostDeps) {
     homeTeamsDm: runtime.getHomeDms().teams,
     gitName: runtime.getGitName(),
     gitEmail: runtime.getGitEmail(),
+    proactivity: runtime.getProactivity(),
+    ...loweredView(),
     apiKeySet: runtime.getApiKey() !== "",
     paths: { config: cfgPath, skills: skillsDir(dir), projects: projectsFile(dir), persona: personaFile(dir) },
   });
@@ -736,7 +748,7 @@ export async function createHost(deps: HostDeps) {
       setAlias, clearAlias, retargetAlias,
     }),
     getConfig,
-    applyConfig: runtime.apply,
+    applyConfig,
     getModel: runtime.getModel,
     availableClis: enabledClis,
     detectedClis,

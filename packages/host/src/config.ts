@@ -1,3 +1,5 @@
+import type { Proactivity } from "@bean/core";
+
 /** Settings' view of `config.json` (+ the paths it shows). */
 export interface ConfigView {
   openaiApiKey: string;
@@ -13,6 +15,11 @@ export interface ConfigView {
   homeTeamsDm: boolean;
   gitName: string;
   gitEmail: string;
+  /** The dial as the owner set it (#1158). */
+  proactivity: Proactivity;
+  /** Auto-backoff is holding the pulse below the dial (#1157): the level it runs at and since when
+   * (ISO). Read-only; any dial change from Settings ends it. */
+  proactivityLowered?: { to: Proactivity; at: string };
   /** Whether a key is saved — a remote shell gets `openaiApiKey: ""` (#812), never the key itself. */
   apiKeySet: boolean;
   paths: { config: string; skills: string; projects: string; persona: string };
@@ -32,6 +39,7 @@ export interface ConfigFields {
   homeTeamsDm: boolean;
   gitName: string;
   gitEmail: string;
+  proactivity: Proactivity;
 }
 /** A Settings save is a patch (#812): an omitted field — the API key above all — keeps its value. */
 export type ConfigUpdate = Partial<ConfigFields>;
