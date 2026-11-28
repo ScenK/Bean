@@ -810,9 +810,10 @@ client.once("clientReady", async () => {
 // `ownerDm` = the delivery's id when it provably went to the owner's own 1:1 DM: once the cutover is
 // done it joins the main conversation instead (#998), so a member's digest never does.
 // `mainTurnKey` = a Home post's copy (#1067): its main-log row is the post's own (`post:<id>`).
-const appendDelivered = (conversationId: string, body: string, ownerDm?: string, mainTurnKey?: string): void =>
+// `postKind` "pulse" = Bean's own check-in (#1157): logged as Bean's turn, as the Home drain logs it.
+const appendDelivered = (conversationId: string, body: string, ownerDm?: string, mainTurnKey?: string, postKind?: "pulse"): void =>
   appendDelivery(conversations, conversationId, body, { chat: converseChat, model: beanConfig.model },
-    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined, mainTurnKey);
+    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined, mainTurnKey, postKind);
 
 // A failed sprout delivered (#1136): Bean's diagnosis turn, replying under the notice. In the
 // background — the drain never waits on a model turn — and after the notice is in history.
@@ -862,7 +863,7 @@ setInterval(() => {
       }
       // No userId, or the owner's own = the owner's DM; any other user's DM never maps.
       const toOwner = !!discordConfig.ownerId && (!msg.userId || msg.userId === discordConfig.ownerId);
-      if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body, toOwner ? msg.id : undefined, msg.mainTurnKey);
+      if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body, toOwner ? msg.id : undefined, msg.mainTurnKey, msg.kind);
       if (toOwner && dmChannelId) diagnose(msg, dmChannelId, messageId);
       return;
     }
@@ -872,7 +873,7 @@ setInterval(() => {
     destinations.seen(channel);
     // A named destination can be the owner's own DM channel: that one maps too (#998).
     const ownerDm = channel.type === ChannelType.DM && !!discordConfig.ownerId && channel.recipientId === discordConfig.ownerId;
-    if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body, ownerDm ? msg.id : undefined, msg.mainTurnKey);
+    if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body, ownerDm ? msg.id : undefined, msg.mainTurnKey, msg.kind);
     diagnose(msg, msg.channel, sent.at(-1)?.id);
   }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed:", outboxErrorLine(err)));
 }, OUTBOX_POLL_MS);

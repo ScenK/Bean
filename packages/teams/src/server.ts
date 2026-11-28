@@ -416,9 +416,10 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 // `ownerDm` = the delivery's id when it provably went to the owner's own 1:1 DM: once the cutover is
 // done it joins the main conversation instead (#998), so a member's digest never does.
 // `mainTurnKey` = a Home post's copy (#1067): its main-log row is the post's own (`post:<id>`).
-const appendDelivered = (conversationId: string, body: string, ownerDm?: string, mainTurnKey?: string): void =>
+// `postKind` "pulse" = Bean's own check-in (#1157): logged as Bean's turn, as the Home drain logs it.
+const appendDelivered = (conversationId: string, body: string, ownerDm?: string, mainTurnKey?: string, postKind?: "pulse"): void =>
   appendDelivery(conversations, conversationId, body, { chat: converseChat, model: beanConfig.model },
-    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined, mainTurnKey);
+    ownerDm !== undefined && shared.mainLog ? { mainLog: shared.mainLog, deliveryId: ownerDm } : undefined, mainTurnKey, postKind);
 
 const OUTBOX_POLL_MS = 5_000;
 // One owner-DM notice for a given-up channel message. A failed owner DM gets none — the notice
@@ -473,7 +474,7 @@ setInterval(() => {
         // The owner's own 1:1 (by the ref's user, `29:` or AAD id) — never a member's or a shared chat.
         else if (save) {
           const ownerDm = ownerDmRefs({ ref }, teamsConfig.ownerId).length > 0;
-          appendDelivered(save.key, save.body, ownerDm ? msg.id : undefined, msg.mainTurnKey);
+          appendDelivered(save.key, save.body, ownerDm ? msg.id : undefined, msg.mainTurnKey, msg.kind);
           // A failed sprout (#1136): Bean's diagnosis in the notice's thread (`save.key` is the post's
           // reply chain in a channel), in the background; a member's DM never gets one.
           const at = refFor({ [save.key]: ref }, save.key);

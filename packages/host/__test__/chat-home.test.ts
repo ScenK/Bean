@@ -83,6 +83,18 @@ describe("Home thread", () => {
     expect(pending()).toEqual([]);
   });
 
+  it("Bean's check-in (#1157) is handed with Home and drains with a postKind item; an unknown postKind drains nothing", () => {
+    const { threads, dbFile, pending, home } = setup();
+    const p1 = insertHomePost(dbFile, { sprout: "Pip", body: "hi", kind: "pulse" });
+    const got = threads.get("a", HOME_TARGET);
+    expect("home" in got && got.home?.posts).toEqual([expect.objectContaining({ id: p1, kind: "pulse" })]);
+    const [item] = posts(p1);
+    threads.save("a", { id: home, title: "Home", items: [{ ...item!, postKind: "memo" }] });
+    expect(pending()).toEqual([p1]);
+    threads.save("a", { id: home, title: "Home", items: [{ ...item!, postKind: "pulse" }] });
+    expect(pending()).toEqual([]);
+  });
+
   it("stays one thread across midnight: posts handed before it drain with a save after it (#976)", () => {
     const { threads, clock, post, pending, home } = setup(new Date(2026, 10, 19, 23, 59));
     const p1 = post("one");

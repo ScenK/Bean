@@ -8,6 +8,7 @@ import { conversationDispatches } from "../dispatch-store.js";
 import { listDestinations } from "../destinations.js";
 import { appendMemories, deleteMemories, loadMemories, makeRankByMeaning, shareMemory } from "../memory/store.js";
 import { mainCutover } from "../main-conversation.js";
+import { activeSeeds } from "../pulse.js";
 import { loadModelMemory, saveModelMemory } from "../model-memory.js";
 import { saveNoteImage } from "../note-images.js";
 import { archiveNote, restoreNoteOutcome, saveNote, searchNotes } from "../note-store.js";
@@ -44,7 +45,7 @@ export type SharedBotDeps = Pick<TeamsBotDeps,
   | "todoProposals" | "queueTodo" | "queueTodoDispatch" | "pendingTodos" | "listTodoRoutines" | "listOpenTodos" | "cancelTodo" | "backgroundWork"
   | "skillProposals" | "saveSkill"
   | "appendMemories" | "deleteMemories" | "shareMemory" | "autoMemoryEnabled"
-  | "systemControlsEnabled" | "webSearchEnabled" | "imageGen"
+  | "systemControlsEnabled" | "webSearchEnabled" | "seeds" | "imageGen"
   | "catalog" | "mainLog" | "chatter" | "away" | "reminders" | "send"
 > & {
   routines: Omit<NonNullable<TeamsBotDeps["routines"]>, "recipients" | "sprouts">;
@@ -109,6 +110,8 @@ export function sharedBotDeps(opts: {
     autoMemoryEnabled: () => loadConfig(configFile(dir), dir).then((c) => c.autoMemory, () => false),
     systemControlsEnabled: () => config.systemControls,
     webSearchEnabled: () => config.webSearch,
+    // Re-read per owner DM so the Settings dial applies without a restart; unreadable config = none.
+    seeds: () => loadConfig(configFile(dir), dir).then((c) => activeSeeds(db, c.proactivity), () => []),
     imageGen: { generate: makeOpenAIImageGen(config.openaiApiKey), model: config.imageModel, imagesDir: imagesDir(dir) },
     catalog: new ConversationCatalog(db, transport),
     // Read per use: the cutover (#999) switches a running bot over with no restart.

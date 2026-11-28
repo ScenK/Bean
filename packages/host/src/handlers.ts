@@ -1,4 +1,5 @@
 import {
+  getMindItem, listMindItems, resolveMindItem, undoMindItem, updatePulseState, type DismissReason, type MindItem,
   foldDefaultSkills, listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash, resolveTodoRoutine, isArchived, skillUsage,
   type SkillProposal, type ProposalOutcome, type Project, type LegacyProject, type Skill, type Persona, type Routine, type TodoItem,
 } from "@bean/core";
@@ -160,6 +161,37 @@ export function buildTodoHandlers(deps: TodoHandlerDeps) {
         if (routine && isArchived(routine, new Date())) throw new Error(`sprout "${routine.name}" is archived — restore it first`);
         return deps.retryTodo(deps.dbFile, id);
       });
+    },
+  };
+}
+
+/** Seeds (#1157): the owner's list, Done / Let it go, and Undo. The renderer is untrusted, so every
+ * argument is checked. A write carries the version the owner saw: a seed that changed since (the
+ * pulse reworded or closed it) throws, so the owner never acts on text they didn't read. */
+export function buildSeedHandlers(deps: { dbFile: string; now?: () => Date }) {
+  const now = (): Date => deps.now?.() ?? new Date();
+  const seen = (id: unknown, version: unknown): MindItem | undefined => {
+    if (typeof id !== "string" || id === "" || !Number.isSafeInteger(version)) throw new Error("malformed seed request");
+    const cur = getMindItem(deps.dbFile, id);
+    if (cur && cur.version !== version) throw new Error("That seed just changed — have another look.");
+    return cur;
+  };
+  return {
+    /** Active seeds, plus the ones closed in the last week (the "Crossed off" line and its Undo). */
+    list: (): MindItem[] => listMindItems(deps.dbFile, { recentDays: 7, now: now() }),
+    /** Undefined = it wasn't active (already closed). Answers a check-in: resets the backoff streak. */
+    resolve: (id: unknown, status: unknown, version: unknown, reason?: unknown): MindItem | undefined => {
+      if (status !== "done" && status !== "dismissed") throw new Error("malformed seed request");
+      if (reason !== undefined && (status !== "dismissed" || (reason !== "not-interested" && reason !== "wrong"))) throw new Error("malformed seed request");
+      if (seen(id, version)?.status !== "active") return undefined;
+      const item = resolveMindItem(deps.dbFile, id as string, status, reason as DismissReason | undefined, now());
+      if (item) updatePulseState(deps.dbFile, (s) => ({ ...s, unanswered: 0 }));
+      return item;
+    },
+    /** Back to active; undefined = it wasn't closed. */
+    undo: (id: unknown, version: unknown): MindItem | undefined => {
+      const cur = seen(id, version);
+      return cur && cur.status !== "active" ? undoMindItem(deps.dbFile, cur.id, now()) : undefined;
     },
   };
 }

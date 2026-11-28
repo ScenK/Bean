@@ -47,6 +47,9 @@ export interface OutboxMessage {
   // after the cutover, joins the main log under this key instead of `delivery:<id>` — so it and
   // the Home drain's copy, whichever lands first, leave one row.
   mainTurnKey?: string;
+  // With `mainTurnKey`: who wrote the post (#1157). "pulse" = Bean's own check-in — `body` is its
+  // words, posted as is (no title) and logged as Bean's (assistant) turn, as the Home drain logs it.
+  kind?: "pulse";
   // The sprout that produced this post (#1134): set by every sprout enqueue (chat sinks, Home phone
   // copies, dispatch notices), absent for everything else. Discord records it per delivered chunk.
   sprout?: string;
