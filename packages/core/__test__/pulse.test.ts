@@ -114,6 +114,22 @@ describe("runProactivePulse — seeds", () => {
     expect(b?.sourceSprout).toBeUndefined();
   });
 
+  it("an id it never saw is a new seed (invented id); a closed seed's id is a dropped stale reword", async () => {
+    applyPulsePlan(file, { upserts: [{ topicKey: "old", text: "old" }], resolve: [] }, at(26, 10));
+    const closed = listMindItems(file)[0]!.id;
+    resolveMindItem(file, closed, "done", undefined, at(26, 11));
+    const chat = reply({
+      seeds: [
+        { id: "github-refund", topicKey: "refund", text: "Waiting on the refund reply" },
+        { id: closed, topicKey: "old-again", text: "reworded closed" },
+      ],
+      resolve: [], post: null,
+    });
+    const r = await runProactivePulse(deps({ chat }));
+    expect(r.outcome?.added).toHaveLength(1);
+    expect(listMindItems(file).filter((s) => s.status === "active").map((s) => s.topicKey)).toEqual(["refund"]);
+  });
+
   it("a failed .state.json read skips every resolution", async () => {
     applyPulsePlan(file, { upserts: [{ topicKey: "a", text: "a" }], resolve: [] }, at(26, 10));
     const id = listMindItems(file)[0]!.id;
