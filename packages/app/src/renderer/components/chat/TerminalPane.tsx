@@ -232,7 +232,7 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
       // no WebGL2 or a lost context falls back to the DOM renderer.
       try {
         const gl = new WebglAddon();
-        gl.onContextLoss(() => gl.dispose());
+        gl.onContextLoss(() => { gl.dispose(); v.term.options.letterSpacing = 0; fitNow(); });
         v.term.loadAddon(gl);
         // WebGL floors the cell to whole device pixels (Menlo 12px: 7.22 → 7), so glyphs crowd; 1 device px
         // back (the DOM renderer keeps the true pitch, so it stays 0 there).

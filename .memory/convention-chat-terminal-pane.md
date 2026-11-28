@@ -27,7 +27,7 @@
   No WebGL2 / context loss → DOM. The font list leads with Menlo: canvas resolves neither
   `ui-monospace` nor `SF Mono` to a monospace face. Chromium 156 rejects a leading space in a canvas
   `font` and the addon emits ` normal 12px …`, so `TerminalPane.tsx` trims the `font` setter — without
-  it the atlas silently draws 10px sans-serif (spaced-out, proportional text). WebGL also floors the cell to whole device px (Menlo 12px 7.22 → 7), so the pane sets `letterSpacing: 1` once the addon loads — never in the constructor, or the DOM fallback spreads out. e2e stubs `getContext("webgl2")` → null in
+  it the atlas silently draws 10px sans-serif (spaced-out, proportional text). WebGL also floors the cell to whole device px (Menlo 12px 7.22 → 7), so the pane sets `letterSpacing: 1` once the addon loads and back to 0 on context loss — never in the constructor, or the DOM fallback spreads out. e2e stubs `getContext("webgl2")` → null in
   `launch-app.ts` (Chromium's `--disable-webgl` doesn't take in Electron) so specs keep reading `.xterm-rows`.
 - jsdom (unit tests) has no `ResizeObserver` — the pane guards it rather than a test shim.
 - **Start folder has no picker.** New tabs start in the agent's project in agent mode and in Scratch in Bean mode (`ChatPanel` passes `""`); the header label only shows it.
