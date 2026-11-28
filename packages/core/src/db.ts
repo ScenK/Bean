@@ -448,6 +448,28 @@ CREATE TABLE IF NOT EXISTS home_posts (
   drained_at TEXT
 );
 CREATE INDEX IF NOT EXISTS home_posts_pending ON home_posts(drained_at, created_at);
+
+-- Seeds (mind-store.ts): Bean's own short-lived follow-ups, kept by the proactive pulse (#1156).
+-- version bumps on every write, so a pulse commit built from an older snapshot loses to the owner's
+-- Done / Let it go. Terminal rows (done/dismissed/expired) are pruned 90 days after updated_at.
+CREATE TABLE IF NOT EXISTS mind_items (
+  id                TEXT PRIMARY KEY,
+  topic_key         TEXT NOT NULL,
+  text              TEXT NOT NULL,
+  excerpt           TEXT,
+  source_sprout     TEXT,
+  source_started_at TEXT,
+  status            TEXT NOT NULL DEFAULT 'active',
+  dismiss_reason    TEXT,
+  version           INTEGER NOT NULL DEFAULT 1,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  next_review_at    TEXT,
+  last_nudged_at    TEXT,
+  suppressed_until  TEXT,
+  reconciled_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS mind_items_status ON mind_items(status, updated_at);
 `;
 
 const cache = new Map<string, DatabaseSync>();
@@ -524,6 +546,8 @@ export function openDb(file: string): DatabaseSync {
     ["chatops_turns", "turn_key", "TEXT"],
     // Which sprout produced a delivered chunk (#1134): NULL = not a sprout post.
     ["chatops_chunks", "sprout", "TEXT"],
+    // Who wrote a Home post (#1156): 'sprout' (sinks.home) or 'pulse' (Bean's own check-in).
+    ["home_posts", "kind", "TEXT NOT NULL DEFAULT 'sprout'"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");

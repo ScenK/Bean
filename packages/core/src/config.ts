@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLI_NAMES } from "./launcher.js";
 import type { CliName } from "./launcher.js";
-import type { BeanConfig } from "./types.js";
+import { PROACTIVITY_LEVELS, type BeanConfig, type Proactivity } from "./types.js";
 
 export function beanDir(): string {
   return join(homedir(), ".bean");
@@ -87,13 +87,14 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     homeDiscordDm: parsed.homeDiscordDm === true,
     homeTeamsDm: parsed.homeTeamsDm === true,
     ...(typeof parsed.briefModel === "string" && parsed.briefModel.trim() ? { briefModel: parsed.briefModel.trim() } : {}),
+    proactivity: PROACTIVITY_LEVELS.find((l) => l === parsed.proactivity) ?? "medium",
     beanDir: beanDirPath,
   };
 }
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; imageModel?: string; gitName?: string; gitEmail?: string; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean; homeDiscordDm?: boolean; homeTeamsDm?: boolean; briefModel?: string },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; imageModel?: string; gitName?: string; gitEmail?: string; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean; homeDiscordDm?: boolean; homeTeamsDm?: boolean; briefModel?: string; proactivity?: Proactivity },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   // Settings has no toggle for some fields (e.g. imageModel), so a desktop
@@ -119,6 +120,7 @@ export async function saveConfig(
     homeDiscordDm: config.homeDiscordDm ?? existing.homeDiscordDm ?? false,
     homeTeamsDm: config.homeTeamsDm ?? existing.homeTeamsDm ?? false,
     briefModel: config.briefModel ?? existing.briefModel, // absent stays absent (JSON drops undefined)
+    proactivity: config.proactivity ?? existing.proactivity, // absent = loadConfig's default
   };
   await writeFile(file, JSON.stringify(out, null, 2) + "\n", "utf8");
 }

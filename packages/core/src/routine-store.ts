@@ -104,6 +104,10 @@ export interface Routine {
   /** Opt-in: this routine's chat steps may search the public web. Off by default — report
    * routines don't need it and each search is billed. No panel toggle; set it in the JSON. */
   webSearch?: boolean;
+  /** Owner-only opt-in (#1156): the proactive pulse reads this sprout's run history (quiet runs
+   * included), whatever its sinks. Absent = false. Only the owner sets it — chat drafts outside the
+   * owner's 1:1 and the routine builder never carry it. */
+  feedBrain?: boolean;
   /** Display only: the registered project paths this sprout is listed under (usage-sections.ts)
    * — never a cwd, command, permission or recipient. Unknown paths are kept and ignored; `[]` is
    * stored as absent. Absent = derived from the steps' folders. */
@@ -325,6 +329,7 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
   }
   if (r.todoDriven !== undefined && typeof r.todoDriven !== "boolean") return "todoDriven must be true or false";
   if (r.webSearch !== undefined && typeof r.webSearch !== "boolean") return "webSearch must be true or false";
+  if (r.feedBrain !== undefined && typeof r.feedBrain !== "boolean") return "feedBrain must be true or false";
   if (r.projects !== undefined && (!Array.isArray(r.projects) || r.projects.some((p) => !str(p) || !p))) {
     return "projects must be a list of folder paths";
   }
@@ -683,10 +688,15 @@ export async function deleteRoutine(dir: string, name: string): Promise<void> {
   await rm(join(dir, `${name}.json`), { force: true });
 }
 
-export async function loadRoutineStates(file: string): Promise<Record<string, RoutineState>> {
+/** `strict` = throw on an unreadable or malformed file instead of returning `{}` (a missing file is
+ * still `{}`: no runs yet) — for a reader that must not mistake a failed read for "nothing ran". */
+export async function loadRoutineStates(file: string, strict = false): Promise<Record<string, RoutineState>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      if (strict) throw new Error(`malformed sprout state: ${file}`);
+      return {};
+    }
     const out: Record<string, RoutineState> = {};
     for (const [name, s] of Object.entries(parsed as Record<string, unknown>)) {
       const st = s as Partial<RoutineState> | null;
@@ -700,7 +710,8 @@ export async function loadRoutineStates(file: string): Promise<Record<string, Ro
       };
     }
     return out;
-  } catch {
+  } catch (err) {
+    if (strict && (err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     return {};
   }
 }

@@ -331,12 +331,14 @@ export interface TeamsBotDeps {
 
 /** Home is the owner's own chat with Bean: only the owner's draft in their 1:1 (`ownerDm`) may set
  * it, and its owner-DM chat sinks become Home (#1070). Elsewhere a draft loses `home` and any
- * owner-DM chat sink, which would fold into Home on save (#1068). */
+ * owner-DM chat sink, which would fold into Home on save (#1068), and `feedBrain` — the owner's
+ * personal pulse reads what that sprout finds (#1156). */
 export function draftHome(r: Routine, ownerDm: boolean): Routine {
   if (ownerDm) return { ...r, sinks: foldOwnerDmSinks(r.sinks) };
+  const { feedBrain: _feedBrain, ...routine } = r;
   const { home: _home, chatops, ...rest } = r.sinks;
   const kept = chatops?.filter((c) => !isOwnerDmSink(c));
-  return { ...r, sinks: { ...rest, ...(kept && kept.length > 0 ? { chatops: kept } : {}) } };
+  return { ...routine, sinks: { ...rest, ...(kept && kept.length > 0 ? { chatops: kept } : {}) } };
 }
 
 const SPROUT_BLOCKED: Record<SproutRunBlock, (name: string) => string> = {
