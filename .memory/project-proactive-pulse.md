@@ -24,7 +24,9 @@
   `lastPulseAt` or the last failed try (in-memory, so a failing pass never retries faster). No pass
   in quiet hours at all — a step-down notice would be lost with the post. Lease, dial and quiet
   hours are re-checked after the model call; a dial change mid-pass drops the step-down notice.
-  `PULSE_LIVE` was flipped on with the Settings dial (#1158).
+  `PULSE_LIVE` was flipped on with the Settings dial (#1158). The e2e `makeBeanHome` fixture sets
+  `proactivity: "off"`: a boot pass outside quiet hours takes the first queued stub reply (CI's UTC
+  clock hit it; a late-night local run didn't) — test a pulse spec with `TZ` pinned to daytime.
 - The dial: the host reads runtime-config's live `getProactivity()`; the bots read `config.json` per
   use (`loadConfig(...).proactivity`, unreadable = off).
 - A check-in is a `home_posts` row with `kind = 'pulse'` and `sprout` = the persona name. Its

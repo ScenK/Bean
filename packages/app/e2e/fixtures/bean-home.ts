@@ -32,6 +32,9 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
       model: "gpt-4o-mini",
       disabledClis: options.disabledClis ?? [],
       autoMemory: options.autoMemory ?? true,
+      // The proactive pulse (#1158) runs at boot outside quiet hours and would take the first queued
+      // stub reply — a pass on the CI clock, never on a late-night local run. No spec is about it yet.
+      proactivity: "off",
     }, null, 2),
     "utf8",
   );
