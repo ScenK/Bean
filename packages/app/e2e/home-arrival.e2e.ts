@@ -111,3 +111,23 @@ test("main conversation: named after the persona, the avatar's default; a drop o
     await Promise.allSettled([app.close(), home.cleanup()]);
   }
 });
+
+// A chat-window reload (Cmd+R) keeps its webContents: main must free the old page's chats, or the
+// reloaded page's Home restore is refused ("that chat is already open").
+test("home: reopens after the chat window reloads", async () => {
+  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["claude", "codex", "opencode", "agy"] });
+  insertHomePost(dbFile(join(home.homeDir, ".bean")), { sprout: "digest", body: "left over" });
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const avatar = await app.firstWindow();
+    const [chat] = await Promise.all([app.waitForEvent("window"), avatar.locator('.bean-bubble[data-id="home:posts"]').click()]);
+    await expect(chat.locator(".bean-post")).toHaveCount(1);
+    await chat.reload();
+    await chat.locator(".bean-chat-sidebar-home .bean-chat-sidebar-open").click();
+    await expect(chat.locator(".bean-chat-sidebar-home")).toHaveClass(/bean-chat-sidebar-home--active/);
+    await expect(chat.locator(".bean-post")).toHaveCount(1);
+    await expect(chat.getByText("Couldn't open that chat")).toHaveCount(0);
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});

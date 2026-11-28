@@ -519,6 +519,14 @@ app.whenReady().then(async () => {
       });
       // Captured now: the webContents is destroyed by the time `closed` fires.
       const clientId = win.webContents.id;
+      // A reload (Cmd+R) keeps this webContents but drops the page without its unmount releases: free
+      // the old page's chats, or their threads stay held and the new page's restore is refused.
+      // did-navigate, not did-start-navigation: a link click starts one that will-navigate cancels.
+      win.webContents.on("did-navigate", () => {
+        host?.liveTasks.stopClient(clientId);
+        host?.handlers.chat.releaseClient(clientId);
+        remoteIpc?.releaseClient(clientId);
+      });
       win.on("closed", () => {
         host?.delegateTasks.cancelAll();
         host?.liveTasks.stopClient(clientId);
