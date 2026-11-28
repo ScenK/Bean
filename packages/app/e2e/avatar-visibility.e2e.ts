@@ -31,7 +31,8 @@ test("theme is ready at boot and failed theme IPC retains a visible fallback", {
     await expect(page.locator(".bean-orb-body")).toBeAttached();
     expect(await page.locator(".bean-orb-body").evaluate((el) => getComputedStyle(el).fill)).not.toBe("none");
     await openMenu(page);
-    expect(await page.locator("#bean").evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    // Poll: the expanded box fades in from transparent (0.22s), so a slow runner can read it mid-render.
+    await expect.poll(() => page.locator("#bean").evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
     expect(errors).toEqual([]);
   } finally { await app.close(); await home.cleanup(); }
 });
