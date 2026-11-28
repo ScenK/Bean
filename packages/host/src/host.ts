@@ -17,6 +17,7 @@ import {
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
   saveModelMemory, resolveDelegateSelection, cliOffersModel, resolveWireModel, liveRuns, ConversationStore, mainCutover, runMainCutover, HOME_THREAD_ID, MAIN_CONVERSATION_ID,
+  activeSeeds, runProactivePulse, type Proactivity,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -29,11 +30,12 @@ import { createDelegateTasks, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
 import {
   buildDeleteSkillHandler, buildListProjectsHandler, buildListSkillsHandler, buildSaveProjectsHandler, buildSaveSkillHandler,
-  buildPersonaHandlers, buildSkillProposalHandlers, buildTodoHandlers,
+  buildPersonaHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildSeedHandlers,
 } from "./handlers.js";
 import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
 import { buildMemoryHandlers } from "./memory.js";
 import { startMemoryDigest } from "./memory-digest.js";
+import { PULSE_LIVE, startPulse } from "./pulse.js";
 import { startBots, type HostBotsOptions } from "./bots.js";
 import { buildNotesHandlers } from "./notes.js";
 import { createRoutineBuilder } from "./routine-builder.js";
@@ -512,6 +514,9 @@ export async function createHost(deps: HostDeps) {
     projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), projectsFile: projectsFile(dir),
     personaFile: personaFile(dir), projectPersonaFile: personaFile(projectDir), dbFile: db,
   };
+  // The proactivity dial (#1155), read from config.json per use so a change applies live; unreadable = off.
+  // ponytail: a file read per Home turn / pulse check; move into runtime-config with the Settings dial (#1158).
+  const proactivity = (): Promise<Proactivity> => loadConfig(cfgPath, dir).then((c) => c.proactivity, () => "off" as const);
   // The main conversation's log (#997): read per request, so the cutover (#999) switches it on live.
   let mainStore: ConversationStore | undefined;
   const mainLog = (): ConversationStore | undefined => {
@@ -522,6 +527,8 @@ export async function createHost(deps: HostDeps) {
     ...paths,
     // `threads` is built just below; a turn only runs after both exist.
     mainLog: (mountId) => (mountId !== undefined && threads.isMain(mountId) ? mainLog() : undefined),
+    // Seeds (#1157) ride Home's turns only — the main conversation, never a task chat.
+    seeds: async (mountId) => (mountId !== undefined && threads.pinnedOf(mountId) === HOME_THREAD_ID ? activeSeeds(db, await proactivity()) : []),
     loadMemories, appendMemories, deleteMemories,
     ownerSubjectIds: () => ownerSubjectIds(db, dir),
     converse: runtime.converse,
@@ -713,6 +720,7 @@ export async function createHost(deps: HostDeps) {
         builds: routineBuilder,
       },
     }),
+    seeds: buildSeedHandlers({ dbFile: db }),
     todos: buildTodoHandlers({
       dbFile: db,
       loadRoutines: () => loadRoutines(routinesPath),
@@ -757,6 +765,25 @@ export async function createHost(deps: HostDeps) {
   deps.onQuit(startMemoryDigest({
     dbFile: db, canRun: schedulerLease.held, ownerIds: () => ownerSubjectIds(db, dir), labels: sourceLabels,
     runningBots: () => (["discord", "teams"] as const).filter((b) => bots.status()[b].running),
+    enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID),
+  }));
+
+  // The proactive brain (#1157): one pass per the dial's cadence, under the scheduler lease.
+  if (PULSE_LIVE) deps.onQuit(startPulse({
+    dbFile: db,
+    canRun: () => schedulerLease.held() && !updating,
+    proactivity,
+    pulse: (dial, signal) => runProactivePulse({
+      chat: runtime.converse, model: runtime.getModel(), dbFile: db, proactivity: dial,
+      loadRoutines: () => loadRoutines(routinesPath),
+      loadRoutineStates: () => loadRoutineStates(routineStateFile(dir), true),
+      ownerSubjectIds: () => ownerSubjectIds(db, dir),
+      signal,
+    }),
+    name: () => loadPersonaNameSync(personaFile(dir), personaFile(projectDir)),
+    onHomePost: () => homeBubble?.refresh(),
+    homeDms: () => runtime.getHomeDms(),
+    reach: () => sinkRecipients(dir),
     enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID),
   }));
 

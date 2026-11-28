@@ -14,6 +14,7 @@ import type { Destination, SendCard } from "./destinations.js";
 import type { RoutineDraftCard } from "./chatops/routine-proposals.js";
 import type { CliModels } from "./cli-models.js";
 import type { SproutRunPlan } from "./sprout-trigger.js";
+import { seedsData, type MindItem } from "./mind-store.js";
 
 /** The raster formats OpenAI vision input accepts — every ingest surface must filter to
  * these (a bare image/* check lets HEIC/SVG/TIFF through and fails the whole turn at the
@@ -826,6 +827,9 @@ export interface ConverseInput {
   /** The chat's continuable agent session: offers propose_delegate `continue` and rides as quoted
    * data in the per-turn context. Absent = no `continue`. */
   activeSession?: ActiveAgentSession;
+  /** The main conversation's active Seeds (Home, the owner's DM; #1157): one framed read-only data
+   * message after the recall. Absent / empty = none. */
+  seeds?: MindItem[];
   /** Abort the turn: the model call and any running action are abandoned promptly and the
    * result is `{ reply: "", stopped: true }`. Absent = the turn can't be stopped. */
   signal?: AbortSignal;
@@ -900,6 +904,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     routineAuthoring,
     sendAvailable = false,
     activeSession,
+    seeds = [],
     signal,
   } = input;
   // The leading system message must stay byte-stable for the life of a chat: OpenAI prompt
@@ -957,6 +962,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       : []),
     ...history.map((t): ConvoMsg => ({ role: t.role, content: t.content })),
     ...(recall ? [{ role: "user", content: recall } satisfies ConvoMsg] : []),
+    ...(seeds.length > 0 ? [{ role: "user", content: seedsData(seeds) } satisfies ConvoMsg] : []),
     ...(activeSession && delegateOffered ? [{ role: "user", content: activeSessionData(activeSession) } satisfies ConvoMsg] : []),
     ...(contextParts.length > 0
       ? [{ role: "system", content: contextParts.join("\n\n") } satisfies ConvoMsg]

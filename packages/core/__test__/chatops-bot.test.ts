@@ -4622,6 +4622,27 @@ describe("sprout runs from chat (#636)", () => {
   });
 });
 
+describe("Seeds in the owner's DM (#1157)", () => {
+  test("the owner's 1:1 sees the active Seeds as data; a member's DM and a channel never do", async () => {
+    const seen: string[][] = [];
+    const seed = { id: "s1", topicKey: "dentist", text: "Dentist follow-up", status: "active" as const, version: 1, createdAt: "t", updatedAt: "t" };
+    const made = makeDeps({
+      chat: async ({ messages }) => { seen.push(messages.map((m) => String(m.content))); return { content: "ok", toolCalls: [] }; },
+      seeds: async () => [seed],
+    });
+    made.deps.roles = makeRoles({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-seeds-"))), surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
+    const bot = buildTeamsBot(made.deps);
+    const hasSeeds = (): boolean => seen.at(-1)!.some((c) => c.startsWith("Seeds") && c.includes("Dentist follow-up"));
+    await bot.onMessage({ conversationId: "dm-1", fromId: "u1", fromName: "Scen", text: "what are you watching?", direct: true }, fx());
+    expect(hasSeeds()).toBe(true);
+    await bot.onMessage({ conversationId: "dm-2", fromId: "mia", fromName: "Mia", text: "what are you watching?", direct: true }, fx());
+    expect(hasSeeds()).toBe(false);
+    await bot.onMessage({ conversationId: "c1", fromId: "u1", fromName: "Scen", text: "what are you watching?", direct: false }, fx());
+    expect(seen).toHaveLength(3);
+    expect(hasSeeds()).toBe(false);
+  });
+});
+
 describe("owner-DM send cards (#689)", () => {
   const row = (conversationId: string, extra: Partial<Destination> = {}): Destination =>
     ({ surface: "discord", conversationId, kind: "channel", lastSeen: "2026-11-01T00:00:00.000Z", ...extra });
@@ -5521,6 +5542,20 @@ describe("appendDelivery (#998)", () => {
       if (!phoneFirst) phone();
       expect(conversations.history(MAIN_CONVERSATION_ID)).toEqual([{ role: "user", content: body }]);
       expect(conversations.history("a:dm1")).toEqual([]);
+    }
+  });
+
+  test("Bean's check-in (#1157): the phone copy and the drain leave one assistant row, either order", () => {
+    for (const phoneFirst of [true, false]) {
+      const { conversations, mainLog, deps, file } = setup(true);
+      const post = insertHomePost(file, { sprout: "Bean", body: "How did the dentist go?", kind: "pulse" });
+      expect(listPendingHomePosts(file)).toEqual([expect.objectContaining({ id: post, kind: "pulse" })]);
+      const phone = (): void =>
+        appendDelivery(conversations, "a:dm1", "How did the dentist go?", deps, { mainLog, deliveryId: `o-${phoneFirst}` }, `post:${post}`, "pulse");
+      if (phoneFirst) phone();
+      saveDesktopChatDraining(file, { id: HOME_THREAD_ID, title: "Home", itemsJson: "[]" }, [post], new Date(), { mainLog: true });
+      if (!phoneFirst) phone();
+      expect(conversations.history(MAIN_CONVERSATION_ID)).toEqual([{ role: "assistant", content: "How did the dentist go?" }]);
     }
   });
 

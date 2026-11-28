@@ -173,10 +173,12 @@ export function appendDelivery(
   conversations: ConversationStore, conversationId: string, body: string, deps: ConverseDeps,
   ownerDm?: { mainLog: { surface: TurnSurface; cutover: () => boolean }; deliveryId: string },
   mainTurnKey?: string,
+  postKind?: "pulse",
 ): void {
   // A Home post's copy (OutboxMessage.mainTurnKey, #1067) is the post's own turn, written as the
-  // Home drain writes it (user role, surface desktop, its `post:` key).
-  const turn: ChatTurn = { role: mainTurnKey ? "user" : "assistant", content: body };
+  // Home drain writes it (surface desktop, its `post:` key; user role — Bean's own check-in, #1157,
+  // assistant — home-posts.ts homePostTurn).
+  const turn: ChatTurn = { role: mainTurnKey && postKind !== "pulse" ? "user" : "assistant", content: body };
   if (ownerDm?.mainLog.cutover()) {
     conversations.append(MAIN_CONVERSATION_ID, turn, mainTurnKey
       ? { surface: "desktop", turnKey: mainTurnKey }

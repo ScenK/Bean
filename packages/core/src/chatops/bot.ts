@@ -18,6 +18,7 @@ import {
 } from "../routine-store.js";
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
+import type { MindItem } from "../mind-store.js";
 import type { TodoItem } from "../todo-store.js";
 import { answerCard, answerTodoText } from "../sprout-answers.js";
 import type { SproutTriggerClient } from "./sprout-bridge.js";
@@ -248,6 +249,9 @@ export interface TeamsBotDeps {
   systemControlsEnabled: () => boolean;
   /** Config `webSearch`: offer converse() the built-in public web search. */
   webSearchEnabled?: () => boolean;
+  /** The main conversation's active Seeds (#1157), read per turn — none when the dial is off. Shown
+   * to the owner's own 1:1 DM only, as read-only data. Absent = never. */
+  seeds?: () => Promise<MindItem[]>;
   /** Active chat-bridged agent sessions; while a channel is bound, its messages bypass converse. */
   liveSessions: LiveSessionRegistry;
   /** Where a steer's images are staged for the agent to read by path, one subdir per
@@ -2802,8 +2806,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           routineAuthoring,
           sendAvailable: sendHere,
         };
+        // Seeds are the owner's (#1157): their own 1:1 only; an unreadable list = none.
+        const seeds = ownerDm ? await deps.seeds?.().catch(() => []) ?? [] : [];
         const result = await converse({
           ...converseBase,
+          seeds,
           actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? []), ...todoTools],
           sproutCatalog: sproutRoutines.map((r) => ({ name: r.name, description: r.description, takesTask: r.todoDriven })),
           history: [...history, ...repliedHint], latestUserText: msg.text, latestUserImages: msg.images,

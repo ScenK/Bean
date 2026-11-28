@@ -29,6 +29,10 @@ export const isQuietHours = (d: Date): boolean => d.getHours() >= 22 || d.getHou
 /** One level quieter, never below `low` (off would hide Seeds); `off` stays off. */
 export const stepDown = (l: Proactivity): Proactivity => (l === "high" ? "medium" : l === "medium" ? "low" : l);
 
+/** The seeds a main-conversation turn sees (#1157): the active ones, none when the dial is off. */
+export const activeSeeds = (file: string, dial: Proactivity): MindItem[] =>
+  dial === "off" ? [] : listMindItems(file).filter((s) => s.status === "active");
+
 /** The pulse's bookkeeping in memory_meta (plain KV, one JSON value). */
 export interface PulseState {
   /** Check-ins in a row with no owner reply or seed action since. */

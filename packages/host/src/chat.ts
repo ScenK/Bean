@@ -4,7 +4,7 @@ import {
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona, type HomeDms,
   type ActiveAgentSession, type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   type ProposedRoutine, type RoutineAuthoring, type RoutineDraftCard,
-  DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, DEFAULT_PERSONA, type HomePost, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
+  DESKTOP_CHAT_MAX_BYTES, HOME_THREAD_ID, DEFAULT_PERSONA, type HomePost, type MindItem, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
   CHAT_GAP_MS, MAIN_CONVERSATION_ID, checkKeyedTurns, desktopTurnKey, boundMainLog, type ChatTurn, type ConversationStore, type KeyedTurn,
   mainSince, homeMainCursor, setHomeMainCursor, type MainSince,
 } from "@bean/core";
@@ -72,6 +72,8 @@ export interface ChatHandlerDeps {
   /** The main conversation's log (#997) when this chat (mount) is Home and the cutover is done; else
    * undefined and the turn runs on the shell's history as before. */
   mainLog?: (mountId: string | undefined) => ConversationStore | undefined;
+  /** The active Seeds this chat (mount) sees (#1157): Home only, none when the dial is off. */
+  seeds?: (mountId: string | undefined) => Promise<MindItem[]>;
 }
 
 /** Appends a shell's keyed turns to the main log; a key already there appends nothing. */
@@ -166,8 +168,12 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       // remote shell can't know. It rides back so the shell keeps it on the turn, frozen.
       if (req.gap === true) gapMarker = gapMarkerLine(arrived);
     }
+    // An unreadable list never fails the turn: it just has none.
+    let seeds: MindItem[] = [];
+    try { seeds = (await deps.seeds?.(mountId)) ?? []; } catch { /* none this turn */ }
     const result = await converse({
       history,
+      seeds,
       latestUserText: req.message,
       gapMarker,
       latestUserImages: req.images,
@@ -360,9 +366,12 @@ export const cutoverLine = (name: string): string =>
 /** A saved `post` item the shell's restore keeps (chat-thread.ts normalizeItem — keep in step): only
  * such an item may drain its post, so a drained post always comes back with the transcript. */
 function postShape(it: unknown): { postId: string } | undefined {
-  const p = it as { kind?: unknown; id?: unknown; postId?: unknown; sprout?: unknown; at?: unknown; text?: unknown } | null;
+  const p = it as { kind?: unknown; id?: unknown; postId?: unknown; sprout?: unknown; at?: unknown; text?: unknown; postKind?: unknown } | null;
+  // `postKind` (#1157): optional; "pulse" = Bean's own check-in. The drain's main-log role comes from
+  // the stored row, never from this item.
   return typeof p === "object" && p !== null && p.kind === "post" && typeof p.id === "string" && typeof p.postId === "string"
-    && typeof p.sprout === "string" && typeof p.at === "string" && typeof p.text === "string" ? { postId: p.postId } : undefined;
+    && typeof p.sprout === "string" && typeof p.at === "string" && typeof p.text === "string"
+    && (p.postKind === undefined || p.postKind === "sprout" || p.postKind === "pulse") ? { postId: p.postId } : undefined;
 }
 
 /** `chatThreadGet`'s name for today's Home thread (#960) — the shell can't know the core-local date. */

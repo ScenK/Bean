@@ -17,6 +17,8 @@ export interface HomePost {
   createdAt: string;
   /** Absent = never expires. */
   expiresAt?: string;
+  /** Set only for Bean's own check-in (#1157); absent = a sprout's post. */
+  kind?: "pulse";
 }
 
 /** The renderer's per-text transcript cap (chat-thread.ts THREAD_TEXT_MAX) — keep in step, so a
@@ -28,11 +30,12 @@ export const HOME_PENDING_CAP = 50;
 /** Drained rows are only bookkeeping: pruned this long after their drain. */
 const DRAINED_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
-interface HomePostRow { id: string; sprout: string; body: string; created_at: string; expires_at: string | null }
+interface HomePostRow { id: string; sprout: string; body: string; created_at: string; expires_at: string | null; kind: string }
 
 const toPost = (r: HomePostRow): HomePost => ({
   id: r.id, sprout: r.sprout, body: r.body, createdAt: r.created_at,
   ...(r.expires_at !== null ? { expiresAt: r.expires_at } : {}),
+  ...(r.kind === "pulse" ? { kind: "pulse" as const } : {}),
 });
 
 const PENDING = "drained_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
@@ -44,6 +47,12 @@ export const homePostBody = (body: string): string =>
 
 /** Who wrote a Home post: a sprout's `sinks.home` digest, or Bean's own proactive check-in. */
 export type HomePostKind = "sprout" | "pulse";
+
+/** A Home post's main-log turn, the same from the drain and the owner-DM copy (appendDelivery), so
+ * arrival order never flips it: a sprout's post is quoted data (user role); Bean's own check-in is
+ * its own words (assistant role, the body as is). */
+export const homePostTurn = (kind: HomePostKind, sprout: string, body: string): { role: "user" | "assistant"; content: string } =>
+  kind === "pulse" ? { role: "assistant", content: body } : { role: "user", content: postTurn({ sprout, text: body }) };
 
 /** Adds one pending post (`ttlMinutes` = expires that long after now) and drops the oldest
  * undrained rows past HOME_PENDING_CAP. Returns the post id. */
@@ -75,7 +84,7 @@ export function insertHomePost(
 
 /** Undrained, unexpired posts, oldest first. */
 export function listPendingHomePosts(file: string, now: () => Date = () => new Date()): HomePost[] {
-  return (openDb(file).prepare(`SELECT id, sprout, body, created_at, expires_at FROM home_posts WHERE ${PENDING} ORDER BY created_at, rowid`)
+  return (openDb(file).prepare(`SELECT id, sprout, body, created_at, expires_at, kind FROM home_posts WHERE ${PENDING} ORDER BY created_at, rowid`)
     .all(now().toISOString()) as unknown as HomePostRow[]).map(toPost);
 }
 
@@ -114,14 +123,14 @@ export function saveDesktopChatDraining(
   try {
     const title = saveDesktopChat(file, chat, now);
     // Only posts this save drains: a replayed drain must not re-add one compaction already folded away.
-    const get = db.prepare("SELECT sprout, body FROM home_posts WHERE id = ? AND drained_at IS NULL");
+    const get = db.prepare("SELECT sprout, body, kind FROM home_posts WHERE id = ? AND drained_at IS NULL");
     const fresh = opts.mainLog ? drained.flatMap((id) => {
-      const p = get.get(id) as { sprout: string; body: string } | undefined;
+      const p = get.get(id) as { sprout: string; body: string; kind: string } | undefined;
       return p ? [{ id, ...p }] : [];
     }) : [];
     markHomePostsDrained(file, drained, () => now);
     for (const p of fresh) {
-      insertTurn(db, MAIN_CONVERSATION_ID, { role: "user", content: postTurn({ sprout: p.sprout, text: p.body }) }, { surface: "desktop", turnKey: postTurnKey(p.id) });
+      insertTurn(db, MAIN_CONVERSATION_ID, homePostTurn(p.kind === "pulse" ? "pulse" : "sprout", p.sprout, p.body), { surface: "desktop", turnKey: postTurnKey(p.id) });
     }
     db.exec("COMMIT");
     return title;
