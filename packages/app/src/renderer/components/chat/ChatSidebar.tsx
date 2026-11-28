@@ -9,6 +9,7 @@ import type { SyncedChatListing } from "../../../synced-chats.js";
 import { kindChip, SURFACE_NAMES, syncedKey } from "./SyncedChat.js";
 import { MOD_LABEL, modKey } from "../../shared/mod-key.js";
 import { usePersonaName } from "../../shared/persona-name.js";
+import { homeSubLabel, useSeeds } from "./seeds.js";
 
 /** Below this window width the sidebar is an overlay (always opening collapsed). */
 export const SIDEBAR_INLINE_MIN = 640;
@@ -180,6 +181,7 @@ export function rowTime(iso: string, now: Date): string {
 export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, homeActive, homePending = false, onNew, onOpen, onDelete, onStar, onRename, onGroup, onRenameGroup }: Props) {
   const now = new Date();
   const beanName = usePersonaName(); // the main conversation's name (#1001)
+  const seeds = useSeeds(); // the Home row's "Watching N seeds" (#1159)
   // Home is the pinned row, never a dated one (the old daily Home threads, pre-#976, are plain history).
   // Filtered here, not into `threads`: effects key on that prop's identity.
   const homeId = threads.find((t) => t.home)?.id;
@@ -388,7 +390,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
             <span class="bean-dash-orb bean-chat-sidebar-home-orb" aria-hidden="true" />
             <span class="bean-chat-sidebar-home-text">
               <span class="bean-chat-sidebar-home-title">{beanName}</span>
-              <span class="bean-chat-sidebar-home-sub">Superagent</span>
+              <span class="bean-chat-sidebar-home-sub">{homeSubLabel(seeds)}</span>
             </span>
             {homeId !== undefined && working.has(homeId) ? marker(homeId) : null}
             {/* Pending posts show even beside a running Home turn's spinner (#961). */}

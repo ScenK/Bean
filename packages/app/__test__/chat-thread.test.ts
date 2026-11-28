@@ -385,6 +385,19 @@ describe("Home posts (#960)", () => {
     expect(chatTurns(items, { memory: true })).toEqual([]);
     expect(closeTranscript(items, true)).toEqual([]);
   });
+
+  it("#1159: a check-in keeps its postKind across save/restore, is never batched, and is Bean's own turn", () => {
+    const pulse = { ...post("c1", "Your flight moved to 9:40."), kind: "pulse" as const };
+    // A check-in splits the sprout runs around it, so no fold reorders the transcript.
+    const items = newPostItems([], [post("p1", "one"), post("p2", "two"), pulse, post("p3", "three")]);
+    expect(items).toMatchObject([{ postId: "p1", batch: "batch-p1" }, { postId: "p2", batch: "batch-p1" }, { postId: "c1", postKind: "pulse" }, { postId: "p3" }]);
+    expect(items[2]).not.toHaveProperty("batch");
+    expect(items[3]).not.toHaveProperty("batch");
+    const restored = restoreItems(JSON.parse(JSON.stringify(normalizeForSave(items))));
+    expect(restored[2]).toMatchObject({ kind: "post", postId: "c1", postKind: "pulse" });
+    expect(restoreItems([{ kind: "post", id: "x", postId: "c", sprout: "Bean", at: "t", text: "hi", postKind: "shout" }])[0]).not.toHaveProperty("postKind");
+    expect(chatTurns([restored[2]!])).toEqual([{ role: "assistant", content: "Your flight moved to 9:40." }]);
+  });
 });
 
 describe("time dividers (#977)", () => {

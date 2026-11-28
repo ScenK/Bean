@@ -39,8 +39,9 @@
 - Host `handlers.seeds` (`list`/`resolve`/`undo`) carry the version the owner saw and throw on a
   mismatch; `resolve` resets the unanswered streak. IPC `listSeeds`/`resolveSeed`/`undoSeed` (#1158)
   are local only — not in `REMOTE_OPS` (tested).
-- Pre-cutover Home and the renderer's post bubble still treat a pulse like a sprout post (quoted,
-  user role, `[sprout "<name>" posted]`) until #1159 renders it as Bean's own.
+- The renderer keeps `postKind: "pulse"` on a Home `post` item (chat-thread `normalizeItem`, in step
+  with host `postShape`): a plain Bean bubble captioned `{name} noticed · <time>`, never batched, an
+  assistant turn in shell history (#1159).
 
 ## Settings dial and Sprouts opt-in (#1158)
 
@@ -51,3 +52,13 @@
 - The Sprouts editor's "Let {name} plant seeds…" writes `Routine.feedBrain`, independent of
   `sinks.home`. A desktop chat replacement keeps the saved `feedBrain: true` (like `projects`); a
   chatops replacement still drops it (owner re-ticks it) — non-owner drafts must never carry it.
+
+## Home Seeds UI (#1159)
+
+- One per-window store (`chat/seeds.ts` `useSeeds`/`refreshSeeds`) feeds the Home header chip/popover
+  and the sidebar's "Watching N seeds". Re-read on Home open, window focus, and when Home's post
+  fetch returns posts — no push. Dial off or any failed read (a remote core: Seeds aren't a remote
+  op) = hidden.
+- Discuss prefills the composer in place (never `runPushedPrompt`, which opens a task chat from Home).
+- "Crossed off from your reply" = `done` with `reconciledAt === updatedAt` (the pulse's write); shown
+  once per `id:version`, remembered in localStorage.

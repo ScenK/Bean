@@ -98,6 +98,8 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
         ? {
           kind: "post", id: it.id, postId: it.postId.slice(0, 100), sprout: it.sprout.slice(0, 100), at: it.at.slice(0, 40), text: cap(it.text),
           ...(typeof it.batch === "string" ? { batch: it.batch.slice(0, 100) } : {}),
+          // Kept in step with host chat.ts postShape: an unknown postKind is dropped, never half-kept.
+          ...(it.postKind === "sprout" || it.postKind === "pulse" ? { postKind: it.postKind } : {}),
         }
         : undefined;
     case "summary":
@@ -304,17 +306,31 @@ export const dividerLabel = (at: string): string => {
   return `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 };
 
+type PostIn = { id: string; sprout: string; body: string; createdAt: string; kind?: "pulse" };
+
 /** A Home post as a chat item. Posts drained together share `batch`. */
-export function postItem(p: { id: string; sprout: string; body: string; createdAt: string }, batch?: string): Extract<ChatItem, { kind: "post" }> {
-  return { kind: "post", id: newId(), postId: p.id, sprout: p.sprout, at: p.createdAt, text: cap(p.body), ...(batch ? { batch } : {}) };
+export function postItem(p: PostIn, batch?: string): Extract<ChatItem, { kind: "post" }> {
+  return {
+    kind: "post", id: newId(), postId: p.id, sprout: p.sprout, at: p.createdAt, text: cap(p.body),
+    ...(batch ? { batch } : {}), ...(p.kind === "pulse" ? { postKind: "pulse" as const } : {}),
+  };
 }
 
-/** Posts not already in the transcript (by post id), as items — one batch when there are several. */
-export function newPostItems(items: readonly ChatItem[], posts: ReadonlyArray<{ id: string; sprout: string; body: string; createdAt: string }>): ChatItem[] {
+/** Posts not already in the transcript (by post id), as items — each run of 2+ consecutive sprout
+ * posts is one batch. Bean's own check-ins (`pulse`) are never batched and split a run, so the fold
+ * never reorders the transcript around one. */
+export function newPostItems(items: readonly ChatItem[], posts: ReadonlyArray<PostIn>): ChatItem[] {
   const held = new Set(items.flatMap((it) => (it.kind === "post" ? [it.postId] : [])));
   const fresh = posts.filter((p) => !held.has(p.id));
-  const batch = fresh.length > 1 ? `batch-${fresh[0]!.id}` : undefined;
-  return fresh.map((p) => postItem(p, batch));
+  const out: ChatItem[] = [];
+  for (let i = 0; i < fresh.length;) {
+    if (fresh[i]!.kind === "pulse") { out.push(postItem(fresh[i]!)); i++; continue; }
+    let j = i;
+    while (j < fresh.length && fresh[j]!.kind !== "pulse") j++;
+    const batch = j - i > 1 ? `batch-${fresh[i]!.id}` : undefined;
+    for (; i < j; i++) out.push(postItem(fresh[i]!, batch));
+  }
+  return out;
 }
 
 /** A pull of the owner's DM exchanges (#1000), as the core hands it to Home (host `MainPull`). */

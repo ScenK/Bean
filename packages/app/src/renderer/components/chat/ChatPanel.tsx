@@ -29,6 +29,8 @@ import { coreOffline, useCoreStatus } from "../../shared/core-status.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 import type { ChatDrop, DroppedImage } from "../../../channels.js";
 import { MOD_LABEL } from "../../shared/mod-key.js";
+import { SeedsPopover } from "./SeedsPopover.js";
+import { activeSeeds, discussText, refreshSeeds, useSeeds } from "./seeds.js";
 
 /** Esc Esc: the window for the second press. */
 const ESC_STOP_MS = 800;
@@ -324,6 +326,12 @@ export function ChatPanel({
   const [labelChips, setLabelChips] = useState<Array<{ n: number; preview: string }>>([]);
   // A preview landing after its label was sent: re-render so the bubble picks it up.
   const [, setPreviewTick] = useState(0);
+  // Seeds (#1159): Home only, hidden completely when the dial is off (or the core can't list them).
+  const seeds = useSeeds();
+  const showSeeds = !!home && seeds.enabled;
+  const [seedsOpen, setSeedsOpen] = useState(false);
+  useEffect(() => { if (home && !hidden) refreshSeeds(); }, [home, hidden]);
+  useEffect(() => { if (!showSeeds || hidden) setSeedsOpen(false); }, [showSeeds, hidden]);
 
   const agentMode = mode !== "bean";
   const liveAgents = clis.filter(isLiveAgent);
@@ -561,6 +569,18 @@ export function ChatPanel({
     resizeInput();
   }, [prefillUrl]);
 
+  // Discuss a seed: an editable reference prepended to the composer, focused — never sent, and never a
+  // task chat (a pushed prompt would open one from Home).
+  const discuss = (text: string): void => {
+    setSeedsOpen(false);
+    const el = inputRef.current;
+    if (!el) return;
+    el.value = el.value ? `${text}${el.value}` : text;
+    el.focus();
+    el.setSelectionRange(text.length, text.length);
+    resizeInput();
+  };
+
   useEffect(() => {
     const el = inputRef.current;
     if (!refill || !el) return;
@@ -704,6 +724,17 @@ export function ChatPanel({
         </span>
         {core.kind === "remote" ? (
           <span class={`bean-chat-host${offline ? " bean-chat-host--off" : ""}`} title={`This chat runs on ${core.host}`}>{core.host}</span>
+        ) : null}
+        {showSeeds ? (
+          <span class="bean-seeds-anchor">
+            <button
+              type="button" class="bean-seeds-chip" data-seeds-toggle aria-expanded={seedsOpen} aria-haspopup="dialog"
+              title={`What ${beanName} is keeping an eye on`} onClick={() => setSeedsOpen((o) => !o)}
+            >
+              {activeSeeds(seeds.items).length > 0 ? `Seeds · ${activeSeeds(seeds.items).length}` : "Seeds"}
+            </button>
+            {seedsOpen ? <SeedsPopover view={seeds} onDiscuss={(s) => discuss(discussText(s))} onClose={() => setSeedsOpen(false)} /> : null}
+          </span>
         ) : null}
         <span class="bean-chat-meta-spacer" />
         {/* The linked-note chip replaces the model id (mockup 1d) — both don't fit. */}
@@ -849,6 +880,24 @@ export function ChatPanel({
                 <summary>{it.text} ▸</summary>
                 {it.details.map((d) => <div class="bean-status-detail">{d}</div>)}
               </details>
+            );
+          }
+          if (it.kind === "post" && it.postKind === "pulse") {
+            // Bean's own check-in (#1159): a plain Bean bubble — no sprout head, no cards — whose caption
+            // opens Seeds.
+            const time = new Date(it.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+            const caption = `${beanName} noticed · ${time}`;
+            return (
+              <div key={it.id} class="bean-chat-row">
+                <span class="bean-chat-row-avatar"><AgentAvatar agent="bean" /></span>
+                <div class="bean-bubble bean-bubble--bean bean-pulse">
+                  <span class="bean-sr-only">{beanName}: </span>
+                  <Markdown text={it.text} />
+                  {showSeeds
+                    ? <button type="button" class="bean-pulse-caption" data-seeds-toggle title="Open Seeds" onClick={() => setSeedsOpen(true)}>{caption}</button>
+                    : <div class="bean-pulse-caption">{caption}</div>}
+                </div>
+              </div>
             );
           }
           if (it.kind === "post") {

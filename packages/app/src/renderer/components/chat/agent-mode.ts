@@ -145,6 +145,8 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     }
     // A Home post: sprout output, never the user's words — a fenced user-role turn the model reads as
     // data, not typed (no memory evidence), and left out of the close-time memory transcript.
+    // Bean's own check-in (#1159) is Bean's words: an assistant turn, like a reply (host homePostTurn).
+    if (it.kind === "post" && it.postKind === "pulse") return [{ role: "assistant", content: it.text }];
     if (it.kind === "post") return opts.memory ? [] : [{ role: "user", content: postTurn(it), source: "loopback" }];
     // A pulled owner-DM row (#1000) is already in the main log, and was never typed here.
     if (it.kind === "dm") return [];

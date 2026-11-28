@@ -10,6 +10,7 @@ import {
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
 import { applyMainPull, applySproutEnd, boundLive, continuedTo, newPostItems, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, resumesAfterGap, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
+import { refreshSeeds } from "./seeds.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt, delegateOutcomeTurn, linkedNoteData, type DelegateOutcome } from "@bean/core/prompt";
@@ -629,6 +630,8 @@ export function ChatSession({
       if (!hiddenRef.current) {
         for (const p of t.home.posts) undrainedRef.current.add(p.id);
         waitingPostsRef.current = t.home.posts;
+        // A drained post (a check-in above all) may come with new Seeds (#1159).
+        if (t.home.posts.length > 0) refreshSeeds();
         if (appendPosts()) setItems(itemsRef.current);
         else void saveThread();
       }
