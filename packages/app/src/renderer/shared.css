@@ -790,19 +790,6 @@ button, input, textarea, select, a {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.bean-term-head .bean-chip-menu { margin-left: auto; min-width: 0; }
-.bean-chat-window .bean-term-project-trigger {
-  height: 22px;
-  padding: 0 6px;
-  margin-bottom: 3px;
-  border: none;
-  background: transparent;
-  color: var(--bean-text-dim);
-  font-size: 11px;
-  gap: 4px;
-}
-.bean-chat-window .bean-term-project-trigger:hover { background: var(--bean-surface-2); color: var(--bean-text); }
-.bean-chat-window .bean-term-project-trigger .bean-term-project { margin-left: 0; padding: 0; }
 .bean-term-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .bean-term-host {
   flex: 1;

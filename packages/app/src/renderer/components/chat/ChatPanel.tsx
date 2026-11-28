@@ -1268,7 +1268,7 @@ export function ChatPanel({
       {pty ? <TerminalPane
         mountId={mountId}
         open={terminalOpen}
-        projectPath={agentProject}
+        projectPath={mode === "bean" ? "" : agentProject}
         projects={projects}
         onOpenChange={onTerminalOpen}
         onShells={onShells}

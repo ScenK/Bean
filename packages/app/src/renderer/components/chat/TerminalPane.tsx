@@ -5,7 +5,6 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { Project } from "@bean/core";
 import type { TerminalEvent } from "../../../terminal-tasks.js";
-import { ChipMenu } from "../../shared/ChipMenu.js";
 import { rootedPaths } from "./chat-links.js";
 
 // The chat's own terminals (#663, tabs #674): each shell lives in main (terminal-tasks.ts), this pane
@@ -182,23 +181,16 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
   onShellsRef.current = onShells;
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
-  // The terminal's own start-folder pick: follows `projectPath` (agent mode) when it changes, and
-  // can also be picked right from the terminal header in Bean mode (where the chat composer has no project).
-  const [pickedProject, setPickedProject] = useState(projectPath);
-  const prevProjectProp = useRef(projectPath);
-  if (prevProjectProp.current !== projectPath) {
-    prevProjectProp.current = projectPath;
-    if (pickedProject !== projectPath) setPickedProject(projectPath);
-  }
-  const projectRef = useRef(pickedProject);
-  projectRef.current = pickedProject;
+  // Agent mode: the agent's project; Bean mode: "" (Scratch) — the Brain has no folder to start in.
+  const projectRef = useRef(projectPath);
+  projectRef.current = projectPath;
   const [visible, setVisible] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [height, setHeight] = useState<number | undefined>(savedHeight);
   const [dragging, setDragging] = useState(false);
 
   const current = tabs.find((t) => t.id === active);
-  const shownPath = current?.startedIn ?? pickedProject;
+  const shownPath = current?.startedIn ?? projectPath;
   const name = shownPath ? projects.find((p) => p.path === shownPath)?.name ?? shownPath.split("/").pop() ?? shownPath : "Scratch";
   const live = tabs.filter((t) => t.alive).length;
   const liveSent = useRef(0);
@@ -240,8 +232,11 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
       // no WebGL2 or a lost context falls back to the DOM renderer.
       try {
         const gl = new WebglAddon();
-        gl.onContextLoss(() => gl.dispose());
+        gl.onContextLoss(() => { gl.dispose(); v.term.options.letterSpacing = 0; fitNow(); });
         v.term.loadAddon(gl);
+        // WebGL floors the cell to whole device pixels (Menlo 12px: 7.22 → 7), so glyphs crowd; 1 device px
+        // back (the DOM renderer keeps the true pitch, so it stays 0 there).
+        v.term.options.letterSpacing = 1;
       } catch { /* DOM renderer */ }
     })();
   };
@@ -590,30 +585,7 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
         >
           +
         </button>
-        {projects.length > 0 ? (
-          <ChipMenu
-            chipClass="bean-term-project-trigger"
-            chipLabel={<span class="bean-term-project" title={shownPath || undefined}>{name}</span>}
-          >
-            {(close) => (
-              <div class="bean-chip-menu-list">
-                <div class="bean-chip-menu-hint">New terminals start in</div>
-                {[{ path: "", name: "Scratch" }, ...projects].map((p) => (
-                  <button
-                    key={p.path || "__scratch__"}
-                    type="button"
-                    class={`bean-chip-menu-row${p.path === pickedProject ? " bean-chip-menu-row--on" : ""}${p.path ? "" : " bean-chip-menu-row--no-project"}`}
-                    onClick={() => { setPickedProject(p.path); close(); }}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </ChipMenu>
-        ) : (
-          <span class="bean-term-project" title={shownPath || undefined}>{name}</span>
-        )}
+        <span class="bean-term-project" title={shownPath || undefined}>{name}</span>
       </div>
       <div class="bean-term-body" ref={bodyRef}>
         {tabs.map((t) => (
