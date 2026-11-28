@@ -189,32 +189,6 @@ test("note proposal clamps a long body to Discord's 4096-char embed description 
   expect(desc).toContain("the full note is saved");
 });
 
-test("remembered card shows the fact and a Forget button carrying the memory id within Discord's 100-char custom_id", () => {
-  const id = "0f8c2a4e-6b1d-4c3e-9a7f-2d5b8e1c4a90";
-  const card = discordCards.rememberedCard({ memoryId: id, text: "uses vitest", projectName: "bean", scope: "private" }) as {
-    components: { components: { custom_id: string; label: string }[] }[];
-  };
-  const s = JSON.stringify(card);
-  expect(s).toContain("(bean) uses vitest");
-  expect(s).toContain("Saved for you — used in our DMs.");
-  const button = card.components[0]!.components[0]!;
-  expect(button.label).toBe("Forget");
-  expect(button.custom_id).toBe(`bean:forget-memory:${id}`);
-  expect(button.custom_id.length).toBeLessThanOrEqual(100);
-  const share = card.components[0]!.components[1]!;
-  expect(share.label).toBe("Share with everyone");
-  expect(share.custom_id).toBe(`bean:share-memory:${id}`);
-  expect(share.custom_id.length).toBeLessThanOrEqual(100);
-  const shared = discordCards.rememberedCard({ memoryId: id, text: "uses vitest", scope: "shared" });
-  expect(JSON.stringify(shared)).not.toContain("share-memory");
-});
-
-test("remembered card shows the fact's category in the footer (#648)", () => {
-  const s = JSON.stringify(discordCards.rememberedCard({ memoryId: "m", text: "uses vitest", category: "You", scope: "private" }));
-  expect(s).toContain("Category: You · Saved for you — used in our DMs.");
-  expect(JSON.stringify(discordCards.rememberedCard({ memoryId: "m", text: "uses vitest", scope: "private" }))).not.toContain("Category:");
-});
-
 test("live-session card renders project/skill/cli/model dropdowns, edit+start+cancel, defaults selected", () => {
   const card = discordCards.liveSessionProposalCard({
     proposalId: "live-1", projectName: "bean", instruction: "investigate the auth bug",

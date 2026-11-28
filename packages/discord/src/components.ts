@@ -1,10 +1,10 @@
 import type {
-  CardBuilders, FinishedCardInput, RememberedCardInput, ReminderCardInput,
+  CardBuilders, FinishedCardInput, ReminderCardInput,
   NoteProposalCardInput, NoteResultCardInput, NoteArchiveProposalCardInput, NoteArchiveResultCardInput, ProposalCardInput, RunningCardInput,
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, continueLiveLine, noContinueLine, rememberedScopeLine, todoCardLines, todoCardTitle } from "@bean/core";
+import { BROWSER_SKILL_NOTE, DELEGATE_GRANT_LINE, FOLLOW_UP_MAX, SKILL_BROWSER_NOTES, continueLiveLine, noContinueLine, todoCardLines, todoCardTitle } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -364,23 +364,6 @@ function noteArchiveResultCard(input: NoteArchiveResultCardInput): object {
   };
 }
 
-// custom_id caps at 100 chars; a UUID memory id plus the prefix is ~55.
-function rememberedCard(input: RememberedCardInput): object {
-  return {
-    embeds: [{
-      title: "🧠 Got it — remembered",
-      description: `${input.projectName ? `(${input.projectName}) ` : ""}${input.text}`.slice(0, 4096),
-      footer: { text: rememberedScopeLine(input.scope, input.category) },
-    }],
-    components: [row([
-      { type: BUTTON, style: 2, label: "Forget", custom_id: `bean:forget-memory:${input.memoryId}` },
-      ...(input.scope === "private"
-        ? [{ type: BUTTON, style: 2, label: "Share with everyone", custom_id: `bean:share-memory:${input.memoryId}` }]
-        : []),
-    ])],
-  };
-}
-
 // Discord renders <t:unix:F> in each viewer's own timezone.
 function reminderCard(input: ReminderCardInput): object {
   return {
@@ -487,7 +470,7 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
 
 export const discordCards: CardBuilders = {
   proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard,
-  rememberedCard, reminderCard,
+  reminderCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, sendCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };

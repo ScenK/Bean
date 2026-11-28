@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  finishedCard, rememberedCard, reminderCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
+  finishedCard, reminderCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard, sendCard,
 } from "../src/cards.js";
@@ -115,25 +115,6 @@ test("todo result card states the outcome and has no actions", () => {
   const card = todoResultCard({ routine: "morning-triage", queuedBy: "bob", outcome: "queued" }) as { actions?: unknown[] };
   expect(card.actions ?? []).toHaveLength(0);
   expect(flatten(card)).toContain("Queued by bob");
-});
-
-test("remembered card shows the fact and a Forget action carrying the memory id", () => {
-  const s = flatten(rememberedCard({ memoryId: "m-1", text: "prefers tabs" }));
-  expect(s).toContain("prefers tabs");
-  expect(s).toContain('"beanAction":"forget-memory"');
-  expect(s).toContain('"proposalId":"m-1"');
-});
-
-test("remembered card offers Share with everyone only on a private fact", () => {
-  const priv = flatten(rememberedCard({ memoryId: "m-1", text: "prefers tabs", scope: "private" }));
-  expect(priv).toContain('"title":"Share with everyone","data":{"beanAction":"share-memory","proposalId":"m-1"}');
-  const shared = flatten(rememberedCard({ memoryId: "m-1", text: "prefers tabs", scope: "shared" }));
-  expect(shared).not.toContain("share-memory");
-});
-
-test("remembered card shows the fact's category (#648)", () => {
-  expect(flatten(rememberedCard({ memoryId: "m-1", text: "prefers tabs", category: "You", scope: "private" })))
-    .toContain("Category: You · Saved for you — used in our DMs.");
 });
 
 test("reminder card shows the text, a Z-normalised DATE/TIME, and a Cancel carrying the reminder id", () => {

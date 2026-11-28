@@ -392,6 +392,11 @@ interface RunActor { id: string; altId?: string; scopeId?: string; name: string 
 const FOLLOW_UP_REPLIED = "Follow-up skipped — you replied, so I'll go with that instead.";
 const FOLLOW_UP_CAPPED = "Follow-up skipped — daily limit reached.";
 
+/** The one-line note after a DM auto-capture: friendly, no fact text, no buttons. */
+export function rememberedLine(name: string): string {
+  return `Got it, ${name.trim() || "friend"} — I'll remember that for next time.`;
+}
+
 export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;
   onCardAction: (action: CardAction, fx: BotEffects) => Promise<void>;
@@ -539,14 +544,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   }
 
   // DM auto-capture (#462): after the reply, the latest typed turn's facts are saved private to
-  // the speaker, each with the usual Forget/Share receipt. Captures run one at a time so each
+  // the speaker, with one short "got it" line (no card, no fact text). Captures run one at a time so each
   // sees what the last one saved; never rejects. ponytail: one chain for every DM; per-speaker
   // chains if capture latency ever queues up.
   let captureChain: Promise<void> = Promise.resolve();
   // `owner` = the owner's own DM: facts keep the model's English category (#648); a member's don't.
-  // No `fx` = no receipt card (live steering, #861: a card would interrupt the agent's thread).
+  // No `fx` = no receipt (live steering, #861: a line would interrupt the agent's thread).
   function captureDm(
-    speakerId: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects | undefined, owner: boolean,
+    speakerId: string, speakerName: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects | undefined, owner: boolean,
   ): Promise<void> {
     return captureChain = captureChain.then(async () => {
       if (!(await deps.autoMemoryEnabled?.())) return;
@@ -565,10 +570,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ...(c.kind ? { kind: c.kind } : {}), ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}), ...(c.evidence ? { evidence: c.evidence } : {}),
       }));
       await deps.appendMemories(batch);
-      if (fx) for (const m of batch) {
-        const projectName = m.projectPath ? projects.find((p) => p.path === m.projectPath)?.name : undefined;
-        await fx.postCard(deps.cards.rememberedCard({ memoryId: m.id, text: m.text, projectName, category: m.category, scope: "private" }));
-      }
+      if (fx) await fx.post(rememberedLine(speakerName));
     }).catch((err: unknown) => {
       console.error(`[memory] DM capture failed: ${err instanceof Error ? err.message : String(err)}`);
     });
@@ -2062,7 +2064,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       : `Saved sprout "${name}" — it's off. Say \`enable ${name}\` to turn it on.`);
   }
 
-  // Forget button on a remembered card. The id rides the button itself and delete is
+  // Forget button on a remembered card (no longer posted; old cards in chat history still work). The id rides the button itself and delete is
   // idempotent, so no proposal store: a second tap (or a stale card) just says so.
   // A member forgets only their own private facts; the owner (`subject` undefined) forgets any.
   async function handleForget(memoryId: string | undefined, actor: string, subject: string | undefined, fx: BotEffects): Promise<void> {
@@ -2632,7 +2634,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             const transcript: ChatTurn[] = [...context, { role: "user", content: steered, source: "typed" }];
             if (msg.direct) {
               capture = captureDm(
-                msg.fromId, [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])], transcript, await deps.loadProjects(), undefined, true,
+                msg.fromId, msg.fromName, [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])], transcript, await deps.loadProjects(), undefined, true,
               );
             } else if (msg.scopeId && channelCapture) {
               capture = channelCapture.steer(msg.scopeId, msg.channelName, transcript, await deps.loadProjects());
@@ -2845,18 +2847,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           }
         };
         await deliverImages();
-        if (memoryTools.remembered.length > 0) {
-          const nameFor = (path: string): string => projects.find((p) => p.path === path)?.name ?? path;
-          for (const m of memoryTools.remembered) {
-            await fx.postCard(deps.cards.rememberedCard({
-              memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined, category: m.category, scope,
-            }));
-          }
-        }
+        // An explicit remember gets no receipt: the reply itself already says so.
         // Only the speaker's typed words are citable (never an audio transcript); a turn that
         // already remembered or forgot something explicitly is left alone.
         if (msg.direct && canMemory && !turnFailed && typed.trim() && memoryTools.remembered.length === 0 && memoryTools.forgotten.length === 0) {
-          capture = captureDm(msg.fromId, recall ?? msg.fromId, [...history, { role: "user", content: typed, source: "typed" }], projects, fx, ownerDm);
+          capture = captureDm(msg.fromId, msg.fromName, recall ?? msg.fromId, [...history, { role: "user", content: typed, source: "typed" }], projects, fx, ownerDm);
         }
         for (const r of reminderTools?.set ?? []) {
           if (deps.cards.reminderCard) await fx.postCard(deps.cards.reminderCard({ reminderId: r.id, text: r.text, at: r.at }));
