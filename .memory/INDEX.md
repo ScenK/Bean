@@ -43,6 +43,7 @@
 - [safety-node-pty-terminal-host.md](safety-node-pty-terminal-host.md) — chat terminals' `node-pty` is the one native module: `spawn-helper` chmod (postinstall + afterPack), shipped not bundled (external + asarUnpack, `allowBuilds: false`), lazy-required; stop = SIGHUP to the kill-tree snapshot → SIGKILL, on release/window close/quit/update relaunch, for every tab.
 - [safety-plan-delegate-read-only.md](safety-plan-delegate-read-only.md) — `mode: "plan"` delegates are read-only by argv: claude plan + hooks off + `--tools Read,Glob,Grep` + strict empty MCP + no Chrome; codex read-only sandbox + `--ignore-user-config` (a `-c mcp_servers={}` merges, leaving MCP live) + `--ignore-rules` (allow rules bypass the sandbox) + features off, fresh only; opencode refused before spawn. Re-probe on CLI upgrades.
 - [safety-agy-delegate.md](safety-agy-delegate.md) — agy: prompt glued to `-p=`/`--prompt-interactive=`, an unknown `--conversation` id silently starts fresh (compare `init.conversation_id`), signed-out stderr carries the OAuth URL so agy errors never append stderr; auth reads as unknown (keychain).
+- [safety-model-json-real-replies.md](safety-model-json-real-replies.md) — parsing a model's JSON: be lenient about ids the model was never shown (the pulse dropped every new seed because the model made up ids), mark optional template fields as optional, and replay once against the real model on a copy of `bean.db` before shipping.
 
 ## convention — how we do things here
 
