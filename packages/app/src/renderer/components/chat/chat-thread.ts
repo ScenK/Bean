@@ -316,14 +316,21 @@ export function postItem(p: PostIn, batch?: string): Extract<ChatItem, { kind: "
   };
 }
 
-/** Posts not already in the transcript (by post id), as items — one batch when there are several
- * sprout posts. Bean's own check-ins (`pulse`) are never folded into a batch. */
+/** Posts not already in the transcript (by post id), as items — each run of 2+ consecutive sprout
+ * posts is one batch. Bean's own check-ins (`pulse`) are never batched and split a run, so the fold
+ * never reorders the transcript around one. */
 export function newPostItems(items: readonly ChatItem[], posts: ReadonlyArray<PostIn>): ChatItem[] {
   const held = new Set(items.flatMap((it) => (it.kind === "post" ? [it.postId] : [])));
   const fresh = posts.filter((p) => !held.has(p.id));
-  const sprouts = fresh.filter((p) => p.kind !== "pulse");
-  const batch = sprouts.length > 1 ? `batch-${sprouts[0]!.id}` : undefined;
-  return fresh.map((p) => postItem(p, p.kind === "pulse" ? undefined : batch));
+  const out: ChatItem[] = [];
+  for (let i = 0; i < fresh.length;) {
+    if (fresh[i]!.kind === "pulse") { out.push(postItem(fresh[i]!)); i++; continue; }
+    let j = i;
+    while (j < fresh.length && fresh[j]!.kind !== "pulse") j++;
+    const batch = j - i > 1 ? `batch-${fresh[i]!.id}` : undefined;
+    for (; i < j; i++) out.push(postItem(fresh[i]!, batch));
+  }
+  return out;
 }
 
 /** A pull of the owner's DM exchanges (#1000), as the core hands it to Home (host `MainPull`). */
